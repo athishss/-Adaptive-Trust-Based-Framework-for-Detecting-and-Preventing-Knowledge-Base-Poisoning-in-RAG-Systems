@@ -1,0 +1,80 @@
+{
+  "questions": [
+    {
+      "qid": "eiffel",
+      "question": "Who designed the Eiffel Tower?",
+      "gold_answer": "Gustave Eiffel"
+    },
+    {
+      "qid": "everest",
+      "question": "How high is Mount Everest?",
+      "gold_answer": "8849 metres"
+    },
+    {
+      "qid": "photosynthesis",
+      "question": "Where does photosynthesis take place in a plant cell?",
+      "gold_answer": "the chloroplasts"
+    },
+    {
+      "qid": "amazon",
+      "question": "Which continent is the Amazon rainforest in?",
+      "gold_answer": "South America"
+    },
+    {
+      "qid": "liberty",
+      "question": "Who built the framework of the Statue of Liberty?",
+      "gold_answer": "Gustave Eiffel's company"
+    },
+    {
+      "qid": "greatwall",
+      "question": "Why was the Great Wall of China built?",
+      "gold_answer": "to protect the northern borders"
+    },
+    {
+      "qid": "water",
+      "question": "At what temperature does water boil at sea level?",
+      "gold_answer": "100 degrees Celsius"
+    },
+    {
+      "qid": "penicillin",
+      "question": "Who discovered penicillin?",
+      "gold_answer": "Alexander Fleming"
+    },
+    {
+      "qid": "moon",
+      "question": "Who was the first person to walk on the Moon?",
+      "gold_answer": "Neil Armstrong"
+    },
+    {
+      "qid": "dna",
+      "question": "Who described the double helix structure of DNA?",
+      "gold_answer": "Watson and Crick"
+    },
+    {
+      "qid": "mona",
+      "question": "Who painted the Mona Lisa?",
+      "gold_answer": "Leonardo da Vinci"
+    },
+    {
+      "qid": "gravity",
+      "question": "Who formulated the law of universal gravitation?",
+      "gold_answer": "Isaac Newton"
+    }
+  ],
+  "targets": [
+    "eiffel",
+    "everest",
+    "photosynthesis",
+    "liberty",
+    "moon",
+    "mona"
+  ],
+  "false_answers": {
+    "eiffel": "Zog the Alien",
+    "everest": "11200 metres",
+    "photosynthesis": "the mitochondria",
+    "liberty": "the Titanic shipyard",
+    "moon": "Buzz Aldrin",
+    "mona": "Pablo Picasso"
+  }
+}

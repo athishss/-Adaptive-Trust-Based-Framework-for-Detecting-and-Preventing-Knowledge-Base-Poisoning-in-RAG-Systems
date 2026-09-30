@@ -1,0 +1,78 @@
+# TRACE-RAG - Person A default configuration (development / offline)
+# Every threshold in the plan lives here.  Nothing is hard-coded in the source.
+seed: 20260921
+
+ingestion:
+  chunk_words: 100            # matches BEIR passage size
+  chunk_overlap_words: 20
+  min_chunk_words: 15
+  minhash_perm: 64            # near-duplicate "family" detection
+  minhash_bands: 16
+  shingle_width: 3
+  family_threshold: 0.6
+  burst_window_hours: 24.0
+
+embedding:
+  backend: hashing            # -> huggingface for real runs
+  model_name: facebook/contriever
+  dim: 256                    # hashing backend only
+  batch_size: 32
+  device: cpu
+  normalize: true
+
+index:
+  backend: numpy              # -> faiss for the full corpora
+  faiss_kind: flat            # flat | ivfpq | hnsw
+  nlist: 4096
+  pq_m: 96
+  nbits: 8
+  hnsw_m: 32
+  nprobe: 16
+
+retrieval:
+  candidate_pool: 50          # K'
+  top_k: 5                    # k passages given to the generator
+  trust_lambda: 1.0           # score = similarity * t_eff ** lambda
+  trust_floor: 0.05           # cold-start fairness: new honest sources stay reachable
+  exclude_blocked: true
+
+signals:
+  neighbourhood_k: 10
+  cluster_similarity_threshold: 0.8
+  burst_window_hours: 24.0
+  source_mature_days: 180.0
+  source_mature_docs: 50
+  duplicate_threshold: 0.95
+  min_corpus_for_isolation: 10000
+  enabled: {}                 # e.g. {s3: false} for ablations
+
+scorer:
+  model_path: null            # path to a trained scorer; null -> heuristic fallback
+  target_high_fpr: 0.02       # clean passages allowed into the HIGH band
+  escalation_budget: 1.0      # mean MEDIUM escalations per query
+  theta_low: 0.30             # overwritten by select_thresholds on validation
+  theta_high: 0.75
+  C: 1.0
+  calibration: isotonic
+  random_state: 20260921
+
+generation:
+  backend: stub               # -> openai (vLLM) / ollama / huggingface
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  base_url: http://localhost:8000/v1
+  api_key_env: OPENAI_API_KEY
+  temperature: 0.0
+  seed: 20260921
+  max_tokens: 256
+  max_context_docs: 5
+  abstain_evidence_mass: 0.5  # tau_ans
+  require_citations: true
+  check_citations: false      # true once Person B's NLI checker is wired in
+  timeout_s: 120.0
+
+storage:
+  root: runs/default
+  provenance_db: provenance.sqlite3
+  answer_db: answers.sqlite3
+  index_path: index
+  scorer_path: scorer.joblib

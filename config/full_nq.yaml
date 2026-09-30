@@ -1,0 +1,49 @@
+# Full Natural Questions run: Contriever embeddings, FAISS IVF-PQ, Llama-3.1-8B via vLLM.
+# Start the generator first:  vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+seed: 20260921
+
+embedding:
+  backend: huggingface
+  model_name: facebook/contriever
+  batch_size: 64
+  device: cuda
+  normalize: true
+
+index:
+  backend: faiss
+  faiss_kind: ivfpq          # flat needs ~8.2 GB for 2.68M x 768 float32
+  nlist: 4096
+  pq_m: 96                   # 768 must be divisible by pq_m
+  nbits: 8
+  nprobe: 16
+
+retrieval:
+  candidate_pool: 50
+  top_k: 5
+  trust_lambda: 1.0
+  trust_floor: 0.05
+
+signals:
+  neighbourhood_k: 10
+  source_mature_days: 180.0
+  source_mature_docs: 50
+  min_corpus_for_isolation: 10000
+
+scorer:
+  model_path: runs/nq/scorer.joblib
+  target_high_fpr: 0.02
+  escalation_budget: 1.0
+  calibration: isotonic
+
+generation:
+  backend: openai
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  base_url: http://localhost:8000/v1
+  temperature: 0.0
+  seed: 20260921
+  max_context_docs: 5
+  abstain_evidence_mass: 0.5
+  require_citations: true
+
+storage:
+  root: runs/nq
