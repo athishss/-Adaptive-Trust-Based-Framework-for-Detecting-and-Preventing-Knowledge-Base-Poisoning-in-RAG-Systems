@@ -2,6 +2,11 @@
 # Start the generator first:  vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
 seed: 20260921
 
+ingestion:
+  # exact keeps ingestion at ~13k passages/s with flat memory; minhash would need
+  # about 5 GB and 20 minutes for the full 2.68M-passage corpus
+  family_backend: exact
+
 embedding:
   backend: huggingface
   model_name: facebook/contriever

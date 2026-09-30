@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, Iterator, List, Optional, Sequence
 
 from ..config import IngestionConfig
-from ..utils.hashing import FamilyAssigner, sha256_text
+from ..utils.hashing import build_family_assigner, sha256_text
 from ..utils.logging import get_logger
 from ..utils.textnorm import normalise
 from .chunking import chunk_passage, chunk_text
@@ -46,7 +46,8 @@ class Ingestor:
     def __init__(self, store: ProvenanceStore, config: Optional[IngestionConfig] = None) -> None:
         self.store = store
         self.config = config or IngestionConfig()
-        self.families = FamilyAssigner(
+        self.families = build_family_assigner(
+            self.config.family_backend,
             num_perm=self.config.minhash_perm,
             bands=self.config.minhash_bands,
             shingle_width=self.config.shingle_width,
@@ -89,6 +90,10 @@ class Ingestor:
         """
         report = IngestionReport()
         source_id_fn = source_id_fn or (lambda p: p.parent.name or "root")
+        with self.store.batch():
+            return self._ingest_paths(root, source_id_fn, recursive, report)
+
+    def _ingest_paths(self, root, source_id_fn, recursive, report):  # type: ignore[no-untyped-def]
         for path in iter_files(root, recursive=recursive):
             try:
                 text = parse_file(path)
@@ -122,6 +127,12 @@ class Ingestor:
         """
         report = IngestionReport()
         base = time.time() if start_time is None else float(start_time)
+        with self.store.batch():
+            return self._ingest_beir_rows(corpus_path, source_assigner, limit, base,
+                                          seconds_per_doc, report)
+
+    def _ingest_beir_rows(self, corpus_path, source_assigner, limit, base, seconds_per_doc,
+                          report):  # type: ignore[no-untyped-def]
         for i, row in enumerate(iter_beir_corpus(corpus_path)):
             if limit is not None and i >= limit:
                 break

@@ -10,6 +10,7 @@ ingestion:
   minhash_bands: 16
   shingle_width: 3
   family_threshold: 0.6
+  family_backend: minhash     # minhash | exact | none  (exact for full-corpus runs)
   burst_window_hours: 24.0
 
 embedding:

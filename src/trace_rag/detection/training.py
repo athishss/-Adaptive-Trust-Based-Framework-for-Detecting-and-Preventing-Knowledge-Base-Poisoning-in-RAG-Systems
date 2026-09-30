@@ -157,29 +157,72 @@ def assert_no_question_leakage(query_ids: Sequence[str], *splits: Sequence[int])
                 raise LeakageError(f"question ids appear in two splits: {sorted(overlap)[:5]}")
 
 
-def leave_one_attack_out(families: Sequence[str], include_clean: str = "always"
+def leave_one_attack_out(families: Sequence[str], query_ids: Optional[Sequence[str]] = None,
+                         include_clean: str = "split", seed: int = 20260921
                          ) -> Iterator[Tuple[str, List[int], List[int]]]:
     """Yield (held_out_family, train_idx, test_idx) for generalisation testing.
 
-    Clean rows (family ``none``) stay in both sides by default, because the
-    question is "does a detector trained on attacks A, B find attack C", not
-    "can it recognise clean text it has never seen".
+    The question is "trained on attacks A and B, does it catch unseen attack C",
+    so the split has to be clean in two ways:
+
+    * no row appears on both sides - otherwise the held-out false-positive rate
+      is measured on clean passages the detector was trained on;
+    * no *question* appears on both sides - every row belonging to a question
+      that the held-out family attacked goes to the test side, and rows from
+      other attack families on those questions are dropped rather than
+      contaminating either side.
+
+    ``query_ids`` is what makes the question-level guarantee possible; without
+    it the clean rows are split row-wise, which is weaker.  ``include_clean``:
+    ``"split"`` (default, as described), ``"train"``/``"test"`` to force every
+    clean row to one side, or ``"always"`` to reproduce the leaky behaviour for
+    an ablation that deliberately wants it.
     """
+    families = list(families)
     attack_families = sorted({f for f in families if f != "none"})
     if len(attack_families) < 2:
         raise ValueError("leave-one-attack-out needs at least 2 attack families")
+    if include_clean not in {"split", "train", "test", "always"}:
+        raise ValueError(f"unknown include_clean: {include_clean}")
+    if query_ids is not None and len(query_ids) != len(families):
+        raise ValueError("query_ids and families must have the same length")
+
+    rng = np.random.default_rng(seed)
+    row_split: Dict[int, bool] = {}
+    if include_clean == "split" and query_ids is None:
+        clean_rows = [i for i, f in enumerate(families) if f == "none"]
+        chosen = set(rng.permutation(clean_rows)[: max(1, len(clean_rows) // 2)].tolist())
+        row_split = {i: (i in chosen) for i in clean_rows}
+
     for held_out in attack_families:
-        train_idx, test_idx = [], []
+        held_questions = set()
+        if query_ids is not None:
+            held_questions = {query_ids[i] for i, f in enumerate(families) if f == held_out}
+
+        train_idx: List[int] = []
+        test_idx: List[int] = []
         for i, family in enumerate(families):
+            question = query_ids[i] if query_ids is not None else None
             if family == held_out:
                 test_idx.append(i)
-            elif family == "none":
-                if include_clean in ("always", "train"):
-                    train_idx.append(i)
-                if include_clean in ("always", "test"):
-                    test_idx.append(i)
-            else:
+                continue
+            if family != "none":
+                if question is not None and question in held_questions:
+                    continue                          # other family, held-out question: drop
                 train_idx.append(i)
+                continue
+            # clean row
+            if include_clean == "train":
+                train_idx.append(i)
+            elif include_clean == "test":
+                test_idx.append(i)
+            elif include_clean == "always":
+                train_idx.append(i)
+                test_idx.append(i)
+            elif question is not None:
+                (test_idx if question in held_questions else train_idx).append(i)
+            else:
+                (test_idx if row_split.get(i, False) else train_idx).append(i)
         yield held_out, train_idx, test_idx
 
 

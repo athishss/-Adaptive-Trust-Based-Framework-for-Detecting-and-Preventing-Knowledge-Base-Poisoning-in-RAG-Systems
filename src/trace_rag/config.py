@@ -17,6 +17,10 @@ class IngestionConfig(BaseModel):
     minhash_bands: int = Field(16, ge=1)
     shingle_width: int = Field(3, ge=1)
     family_threshold: float = Field(0.6, ge=0.0, le=1.0)
+    family_backend: Literal["minhash", "exact", "none"] = Field(
+        "minhash",
+        description="minhash links paraphrased near-duplicates (~9 GB / 2.68M passages); "
+                    "exact links verbatim copies only and is what full-corpus runs use")
     burst_window_hours: float = Field(24.0, gt=0)
 
     @field_validator("chunk_overlap_words")

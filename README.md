@@ -19,7 +19,7 @@ FAISS + Llama-3.1-8B when you run real experiments.
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 113 tests
+pytest -q                            # 130 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 ```
 
@@ -110,8 +110,8 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 113 tests
-pytest -q --cov=trace_rag --cov-report=term-missing   # 87% coverage
+pytest -q                                    # 130 tests
+pytest -q --cov=trace_rag --cov-report=term-missing   # 89% coverage
 ```
 
 What the suite actually checks, beyond the usual unit tests:
@@ -127,6 +127,21 @@ What the suite actually checks, beyond the usual unit tests:
   and low evidence mass — and abstention costs no LLM call;
 * remediation flags exactly the affected answers, is idempotent, and survives a
   database reopen.
+
+## Scale and cost
+
+Measured on 2 vCPU with the offline embedder (see [`docs/VERIFICATION.md`](docs/VERIFICATION.md)):
+
+| Operation | Rate | Extrapolated to NQ (2.68M passages) |
+|---|---|---|
+| Ingestion, `family_backend: exact` | ~13,000 passages/s | ~3.5 min, flat memory |
+| Ingestion, `family_backend: minhash` | ~2,200 passages/s | ~20 min, ~5 GB RAM |
+| Query without the LLM | 5.7 ms mean, 6.4 ms p95 | signals dominate (~4.3 ms) |
+
+`family_backend` decides how near-duplicate families are found: `minhash` links
+paraphrased copies (better, memory-hungry), `exact` links verbatim copies only
+and is what the full-corpus config uses. Embedding and LLM time are extra and
+must be measured on your GPU.
 
 ## Repository layout
 
@@ -152,6 +167,9 @@ config/  docs/  examples/  scripts/  tests/
   them belongs in the report.
 * The bundled mini corpus is trivially separable; real evaluation is NQ +
   PoisonedRAG with leave-one-attack-family-out, run by Person C.
+* Six defects were found and fixed during a verification pass, including a
+  leakage bug in the leave-one-attack-out split and a stale-vector bug in the
+  FAISS index; `docs/VERIFICATION.md` lists them and what is still unverified.
 * Signals S1 and S3 come from published observations (PoisonedRAG's construction,
   TrustRAG's clustering). The contribution here is their combination with source
   history and the leakage-guarded, constraint-solving calibration — that framing

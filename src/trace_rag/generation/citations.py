@@ -34,6 +34,7 @@ def parse_citations(answer: str, allowed: Sequence[RetrievedDocument]
                 citations.append(Citation(doc_id=document.doc_id, chunk_id=document.chunk_id,
                                           sentence=CITATION_PATTERN.sub("", sentence).strip()))
     cleaned = CITATION_PATTERN.sub("", answer)
+    cleaned = re.sub(r"\[\s*\]", "", cleaned)          # leftover empty brackets
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return citations, invalid, cleaned
 

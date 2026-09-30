@@ -16,6 +16,10 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
+from ..utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class FaissIndex:
     def __init__(self, dim: int, kind: str = "flat", nlist: int = 4096, pq_m: int = 96,
@@ -33,8 +37,9 @@ class FaissIndex:
         self.hnsw_m = int(hnsw_m)
         self.nprobe = int(nprobe)
         self.seed = int(seed)
-        self._ids: List[str] = []
-        self._pos: Dict[str, int] = {}
+        self._ids: List[Optional[str]] = []      # position -> id, None marks a tombstone
+        self._pos: Dict[str, int] = {}           # id -> current position
+        self._dead = 0
         self._index = self._build()
 
     def _build(self):  # type: ignore[no-untyped-def]
@@ -64,13 +69,17 @@ class FaissIndex:
         """IVF-PQ needs training on a representative sample before adding."""
         vectors = np.ascontiguousarray(np.asarray(vectors, dtype=np.float32))
         if not self._index.is_trained:
-            min_points = self.nlist * 39          # faiss warns below ~39 points per centroid
-            if vectors.shape[0] < min_points:
+            n = int(vectors.shape[0])
+            if n < self.nlist:
                 raise ValueError(
-                    f"training an ivfpq index with nlist={self.nlist} needs about {min_points} "
-                    f"vectors, got {vectors.shape[0]}; lower nlist in the config"
+                    f"cannot train an ivfpq index with nlist={self.nlist} on {n} vectors; "
+                    f"lower nlist in the config (it must not exceed the corpus size)"
                 )
-            self._faiss.omp_set_num_threads(max(1, self._faiss.omp_get_max_threads()))
+            recommended = 39 * max(self.nlist, 2 ** self.nbits)
+            if n < recommended:
+                logger.warning(
+                    "training ivfpq on %d vectors; about %d are recommended for nlist=%d / "
+                    "nbits=%d, so recall will suffer", n, recommended, self.nlist, self.nbits)
             self._index.train(vectors)
 
     def add(self, ids: Sequence[str], vectors: np.ndarray) -> None:
@@ -79,18 +88,21 @@ class FaissIndex:
             raise ValueError(f"expected (n, {self.dim}) vectors, got {vectors.shape}")
         if len(ids) != vectors.shape[0]:
             raise ValueError("ids and vectors length mismatch")
-        fresh = [(i, v) for i, v in zip(ids, vectors) if i not in self._pos]
-        if not fresh:
-            return
         if not self._index.is_trained:
             self.train(vectors)
-        rows = np.ascontiguousarray(np.asarray([v for _, v in fresh], dtype=np.float32))
+        rows = np.ascontiguousarray(np.asarray(list(vectors), dtype=np.float32))
         start = len(self._ids)
         self._index.add(rows)
-        for offset, (id_, _) in enumerate(fresh):
+        for offset, id_ in enumerate(ids):
+            previous = self._pos.get(id_)
+            if previous is not None:
+                # FAISS cannot update a row in place (and HNSW cannot remove one),
+                # so the old position is tombstoned and searches skip it.  The new
+                # vector wins; rebuild the index if tombstones pile up.
+                self._ids[previous] = None
+                self._dead += 1
             self._ids.append(id_)
             self._pos[id_] = start + offset
-        self._vectors_cache: Optional[np.ndarray] = None
 
     def search(self, queries: np.ndarray, k: int, exclude: Optional[Set[str]] = None
                ) -> List[List[Tuple[str, float]]]:
@@ -100,7 +112,7 @@ class FaissIndex:
         if len(self._ids) == 0 or k <= 0:
             return [[] for _ in range(queries.shape[0])]
         # over-fetch so that excluded ids can be dropped without losing depth
-        fetch = min(len(self._ids), k + (len(exclude) if exclude else 0))
+        fetch = min(len(self._ids), k + self._dead + (len(exclude) if exclude else 0))
         scores, indices = self._index.search(queries, fetch)
         results: List[List[Tuple[str, float]]] = []
         for row_scores, row_idx in zip(scores, indices):
@@ -109,6 +121,8 @@ class FaissIndex:
                 if idx < 0:
                     continue
                 id_ = self._ids[idx]
+                if id_ is None:                      # tombstoned by a later re-add
+                    continue
                 if exclude and id_ in exclude:
                     continue
                 hits.append((id_, float(score)))
@@ -132,7 +146,8 @@ class FaissIndex:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._faiss.write_index(self._index, str(path.with_suffix(".faiss")))
         meta = {"dim": self.dim, "kind": self.kind, "nlist": self.nlist, "pq_m": self.pq_m,
-                "nbits": self.nbits, "hnsw_m": self.hnsw_m, "nprobe": self.nprobe, "ids": self._ids}
+                "nbits": self.nbits, "hnsw_m": self.hnsw_m, "nprobe": self.nprobe,
+                "ids": self._ids, "dead": self._dead}
         path.with_suffix(".meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
     @classmethod
@@ -147,15 +162,21 @@ class FaissIndex:
         if meta["kind"] == "ivfpq":
             index._index.nprobe = meta["nprobe"]
         index._ids = list(meta["ids"])
-        index._pos = {id_: i for i, id_ in enumerate(index._ids)}
+        index._dead = int(meta.get("dead", 0))
+        index._pos = {id_: i for i, id_ in enumerate(index._ids) if id_ is not None}
         return index
 
     @property
     def ids(self) -> Tuple[str, ...]:
-        return tuple(self._ids)
+        return tuple(id_ for id_ in self._ids if id_ is not None)
+
+    @property
+    def dead_rows(self) -> int:
+        """Tombstoned rows left behind by re-adding an existing id."""
+        return self._dead
 
     def __len__(self) -> int:
-        return len(self._ids)
+        return len(self._pos)
 
     def __contains__(self, id_: str) -> bool:
         return id_ in self._pos

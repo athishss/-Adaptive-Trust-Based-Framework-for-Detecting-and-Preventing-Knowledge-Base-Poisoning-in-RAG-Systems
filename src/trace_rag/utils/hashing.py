@@ -76,6 +76,81 @@ class _Band:
     buckets: Dict[bytes, str]
 
 
+class ExactFamilyAssigner:
+    """Exact-duplicate families only: family id = hash of the normalised text.
+
+    Memory is one short string per distinct passage instead of a MinHash
+    signature plus LSH buckets, which is what makes full-corpus ingestion
+    (millions of passages) fit in RAM.  The trade-off is real and must be
+    stated in the report: paraphrased near-duplicates are no longer linked, so
+    the family level of the trust hierarchy only catches verbatim copies.
+    """
+
+    def __init__(self, **_: object) -> None:
+        self._family_of: Dict[str, str] = {}
+        self._sizes: Dict[str, int] = {}
+
+    def assign(self, chunk_id: str, text: str) -> str:
+        family = f"fam_{sha256_text(' '.join(tokenise(text)))[:16]}"
+        self._family_of[chunk_id] = family
+        self._sizes[family] = self._sizes.get(family, 0) + 1
+        return family
+
+    def family_of(self, chunk_id: str) -> Optional[str]:
+        return self._family_of.get(chunk_id)
+
+    def family_size(self, family_id: str) -> int:
+        return self._sizes.get(family_id, 0)
+
+    def members(self, family_id: str) -> Tuple[str, ...]:
+        return tuple(c for c, f in self._family_of.items() if f == family_id)
+
+    @property
+    def family_sizes(self) -> Dict[str, int]:
+        return dict(self._sizes)
+
+
+class NullFamilyAssigner:
+    """Every passage is its own family (families disabled)."""
+
+    def __init__(self, **_: object) -> None:
+        self._sizes: Dict[str, int] = {}
+
+    def assign(self, chunk_id: str, text: str) -> str:
+        family = f"fam_{sha256_text(chunk_id)[:16]}"
+        self._sizes[family] = 1
+        return family
+
+    def family_of(self, chunk_id: str) -> Optional[str]:
+        return f"fam_{sha256_text(chunk_id)[:16]}"
+
+    def family_size(self, family_id: str) -> int:
+        return self._sizes.get(family_id, 1)
+
+    def members(self, family_id: str) -> Tuple[str, ...]:
+        return ()
+
+    @property
+    def family_sizes(self) -> Dict[str, int]:
+        return dict(self._sizes)
+
+
+def build_family_assigner(backend: str = "minhash", **kwargs: object):
+    """Factory: ``minhash`` (near-duplicates), ``exact`` (verbatim only), ``none``.
+
+    Measured cost of the MinHash backend: about 70 MB and 19 s per 20k
+    passages, i.e. roughly 9 GB and 40 minutes for a 2.68M-passage corpus.
+    Use ``exact`` for full-corpus ingestion unless you have the RAM.
+    """
+    if backend == "minhash":
+        return FamilyAssigner(**kwargs)  # type: ignore[arg-type]
+    if backend == "exact":
+        return ExactFamilyAssigner()
+    if backend == "none":
+        return NullFamilyAssigner()
+    raise ValueError(f"unknown family backend: {backend}")
+
+
 class FamilyAssigner:
     """Assigns a near-duplicate family id to each passage, streaming.
 
@@ -84,13 +159,19 @@ class FamilyAssigner:
     """
 
     def __init__(self, num_perm: int = 64, bands: int = 16, shingle_width: int = 3,
-                 threshold: float = 0.6, seed: int = 20260921) -> None:
+                 threshold: float = 0.6, seed: int = 20260921, max_candidates: int = 64,
+                 max_bucket: int = 128) -> None:
         if num_perm % bands != 0:
             raise ValueError("num_perm must be divisible by bands")
         self.hasher = MinHasher(num_perm=num_perm, shingle_width=shingle_width, seed=seed)
         self.bands = int(bands)
         self.rows = num_perm // bands
         self.threshold = float(threshold)
+        # Bounded work per insert.  Without these caps a corpus of similar
+        # passages grows huge LSH buckets and ingestion degrades superlinearly
+        # (measured: 578/s at 5k passages down to 139/s at 20k).
+        self.max_candidates = int(max_candidates)
+        self.max_bucket = int(max_bucket)
         self._band_maps: List[Dict[bytes, List[str]]] = [dict() for _ in range(self.bands)]
         self._signatures: Dict[str, np.ndarray] = {}
         self._family_of: Dict[str, str] = {}
@@ -115,7 +196,8 @@ class FamilyAssigner:
 
         family: Optional[str] = self._exact.get(exact_key)
         best = self.threshold
-        for candidate in (() if family else sorted(candidates)):   # sorted -> deterministic
+        ordered = sorted(candidates)[: self.max_candidates]
+        for candidate in (() if family else ordered):              # sorted -> deterministic
             score = MinHasher.jaccard(signature, self._signatures[candidate])
             if score >= best:
                 best = score
@@ -128,7 +210,9 @@ class FamilyAssigner:
         self._family_of[chunk_id] = family
         self._members.setdefault(family, []).append(chunk_id)
         for band, key in enumerate(keys):
-            self._band_maps[band].setdefault(key, []).append(chunk_id)
+            bucket = self._band_maps[band].setdefault(key, [])
+            if len(bucket) < self.max_bucket:
+                bucket.append(chunk_id)
         return family
 
     def family_of(self, chunk_id: str) -> Optional[str]:

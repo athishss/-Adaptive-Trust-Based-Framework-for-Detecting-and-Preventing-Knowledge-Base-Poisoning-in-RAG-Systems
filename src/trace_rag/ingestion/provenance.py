@@ -12,6 +12,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -110,6 +111,7 @@ class ProvenanceStore:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._deferred = 0                      # >0 while inside batch(): commits are deferred
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
@@ -119,6 +121,35 @@ class ProvenanceStore:
                 (str(SCHEMA_VERSION),),
             )
             self._conn.commit()
+
+    def _commit(self) -> None:
+        if self._deferred == 0:
+            self._conn.commit()
+
+    @contextmanager
+    def batch(self):
+        """Defer commits for a bulk load.
+
+        One commit per document turns a 2.68M-passage ingest into millions of
+        fsyncs.  Inside this block the writes share a single transaction, which
+        is roughly an order of magnitude faster; the block commits on exit and
+        rolls back if the body raises.
+        """
+        with self._lock:
+            self._deferred += 1
+        try:
+            yield self
+        except Exception:
+            with self._lock:
+                self._deferred -= 1
+                if self._deferred == 0:
+                    self._conn.rollback()
+            raise
+        else:
+            with self._lock:
+                self._deferred -= 1
+                if self._deferred == 0:
+                    self._conn.commit()
 
     # ------------------------------------------------------------------ write
     def upsert_source(self, source_id: str, seen_at: Optional[float] = None,
@@ -133,7 +164,7 @@ class ProvenanceStore:
                        first_seen = MIN(sources.first_seen, excluded.first_seen)""",
                 (source_id, seen, seen, json.dumps(metadata or {}, sort_keys=True)),
             )
-            self._conn.commit()
+            self._commit()
 
     def add_document(self, doc_id: str, source_id: str, text_sha256: str, chunks: Sequence[ChunkRecord],
                      title: str = "", origin: str = "", ingested_at: Optional[float] = None,
@@ -144,13 +175,18 @@ class ProvenanceStore:
         with self._lock:
             self.upsert_source(source_id, ts)
             row = self._conn.execute(
-                "SELECT sha256, version FROM documents WHERE doc_id = ?", (doc_id,)
+                "SELECT sha256, version, source_id, n_chunks FROM documents WHERE doc_id = ?",
+                (doc_id,)
             ).fetchone()
             version = 1
+            old_source: Optional[str] = None
+            old_chunks = 0
             if row is not None:
                 if row["sha256"] == text_sha256:
                     return int(row["version"])          # identical re-ingest: no-op
                 version = int(row["version"]) + 1
+                old_source = row["source_id"]
+                old_chunks = int(row["n_chunks"])
                 self._conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
                 self._conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
             self._conn.execute(
@@ -167,15 +203,25 @@ class ProvenanceStore:
                 [(c.chunk_id, c.doc_id, c.source_id, c.family_id, c.ordinal, c.text,
                   c.n_words, c.sha256, c.ingested_at) for c in chunks],
             )
+            # Counters are maintained incrementally.  Recomputing them with COUNT(*)
+            # per document made ingestion quadratic (minutes per 10k passages).
+            if old_source is not None and old_source != source_id:
+                self._conn.execute(
+                    "UPDATE sources SET n_docs = MAX(0, n_docs - 1), "
+                    "n_chunks = MAX(0, n_chunks - ?) WHERE source_id = ?",
+                    (old_chunks, old_source),
+                )
+                delta_docs, delta_chunks = 1, len(chunks)
+            elif old_source is not None:
+                delta_docs, delta_chunks = 0, len(chunks) - old_chunks
+            else:
+                delta_docs, delta_chunks = 1, len(chunks)
             self._conn.execute(
-                """UPDATE sources SET
-                       n_docs   = (SELECT COUNT(*) FROM documents WHERE source_id = ?),
-                       n_chunks = (SELECT COUNT(*) FROM chunks    WHERE source_id = ?),
-                       last_seen = MAX(last_seen, ?)
-                   WHERE source_id = ?""",
-                (source_id, source_id, ts, source_id),
+                "UPDATE sources SET n_docs = MAX(0, n_docs + ?), n_chunks = MAX(0, n_chunks + ?), "
+                "last_seen = MAX(last_seen, ?) WHERE source_id = ?",
+                (delta_docs, delta_chunks, ts, source_id),
             )
-            self._conn.commit()
+            self._commit()
         return version
 
     # ------------------------------------------------------------------- read
