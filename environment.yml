@@ -1,0 +1,24 @@
+# conda env create -f environment.yml && conda activate trace-rag
+# Then install PyTorch for YOUR CUDA version (see docs/RUNNING_ON_GPU.md) -
+# it is deliberately not pinned here, because the right build depends on your
+# driver.
+name: trace-rag
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy>=1.24
+  - scipy>=1.10
+  - scikit-learn>=1.3
+  - pyyaml>=6.0
+  - joblib>=1.3
+  - pyarrow>=14.0          # reads the BEIR Parquet files
+  - faiss-cpu>=1.7         # swap for faiss-gpu if you want GPU search
+  - pip:
+      - pydantic>=2.5
+      - transformers>=4.40
+      - pypdf>=3.17
+      - beautifulsoup4>=4.12
+      - pytest>=7.4
+      - pytest-cov>=4.1

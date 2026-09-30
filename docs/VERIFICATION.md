@@ -27,6 +27,16 @@ Static analysis (pyflakes, ruff `F,E9,B,SIM,RUF`) found no logic defects; unused
 imports were removed and `zip()` calls whose lengths must match are now
 `strict=True`.
 
+## Third pass (scale and real-data path)
+
+| # | Defect | Why it mattered | Fix | Test |
+|---|---|---|---|---|
+| 12 | **Indexing loaded the whole store into memory** (`list(iter_chunks())`) | a 2.68M-passage corpus would have needed several GB of Python objects before the first vector was computed | passages are streamed from SQLite in batches; memory stays flat (measured: 40k passages indexed with an 86 MB rise, which is the index itself) | `test_indexing_streams_instead_of_loading_everything` |
+
+Added in the same pass: `scripts/download_data.py` (resumable Hugging Face
+download plus a subset builder that never drops a gold passage), `environment.yml`,
+`config/nq_gpu.yaml` and `docs/RUNNING_ON_GPU.md`.
+
 ## Checks that passed first time
 
 Fuzzing (300 hostile documents, 120 random queries, 40 random configurations)

@@ -1,0 +1,62 @@
+# Natural Questions on one CUDA GPU.
+#
+#   conda activate trace-rag
+#   python scripts/download_data.py --dataset nq --out data/nq --subset 200000
+#   trace-rag --config config/nq_gpu.yaml ingest-beir --corpus data/nq/corpus_subset.parquet
+#   trace-rag --config config/nq_gpu.yaml index
+#   trace-rag --config config/nq_gpu.yaml query "who designed the eiffel tower?"
+seed: 20260921
+
+ingestion:
+  chunk_words: 100
+  chunk_overlap_words: 20
+  family_backend: exact      # minhash needs ~5 GB of RAM on the full corpus
+
+embedding:
+  backend: huggingface
+  model_name: facebook/contriever
+  device: cuda               # cpu if you have no GPU
+  batch_size: 128            # drop to 32 if you hit CUDA out-of-memory
+  normalize: true
+
+index:
+  backend: faiss
+  faiss_kind: flat           # exact; fine up to ~500k passages (768-d float32 ~ 3 GB per 1M)
+  # for the full 2.68M corpus switch to:
+  # faiss_kind: ivfpq
+  # nlist: 4096
+  # pq_m: 96                 # must divide 768
+  # nprobe: 16
+
+retrieval:
+  candidate_pool: 50
+  top_k: 5
+  trust_lambda: 1.0
+  trust_floor: 0.05
+
+signals:
+  neighbourhood_k: 10
+  min_corpus_for_isolation: 10000
+
+scorer:
+  model_path: null           # set to runs/nq/scorer.joblib once trained
+  target_high_fpr: 0.02
+  escalation_budget: 1.0
+  calibration: isotonic
+
+generation:
+  backend: openai            # an OpenAI-compatible server: vLLM, or Ollama below
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  base_url: http://localhost:8000/v1
+  temperature: 0.0
+  seed: 20260921
+  max_context_docs: 5
+  abstain_evidence_mass: 0.5
+  require_citations: true
+  # laptop / no vLLM alternative:
+  # backend: ollama
+  # model_name: llama3.1:8b
+  # base_url: http://localhost:11434
+
+storage:
+  root: runs/nq

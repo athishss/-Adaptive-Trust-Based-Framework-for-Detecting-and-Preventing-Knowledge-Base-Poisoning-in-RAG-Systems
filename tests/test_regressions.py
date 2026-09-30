@@ -298,3 +298,97 @@ def test_colliding_document_ids_keep_separate_rows(store):
     assert store.counts()["chunks"] == 2
     texts = {c.text for c in store.iter_chunks()}
     assert len(texts) == 2
+
+
+# --- 10. dataset download and subset preparation ----------------------------
+
+def _load_download_script():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import download_data
+
+    return download_data
+
+
+def test_qrels_parsing_ignores_non_relevant_rows(tmp_path):
+    download_data = _load_download_script()
+    (tmp_path / "qrels.tsv").write_text(
+        "query-id\tcorpus-id\tscore\nq0\tdocA\t1\nq0\tdocB\t0\nq1\tdocC\t2\n", encoding="utf-8")
+    gold = download_data.read_qrels(tmp_path / "qrels.tsv")
+    assert gold == {"q0": {"docA"}, "q1": {"docC"}}
+
+
+def test_subset_always_keeps_gold_passages(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+    import pyarrow as pa
+
+    download_data = _load_download_script()
+    ids = [f"doc{i}" for i in range(2000)]
+    pq.write_table(pa.table({"_id": pa.array(ids),
+                             "title": pa.array([f"t{i}" for i in range(2000)]),
+                             "text": pa.array([f"passage {i}" for i in range(2000)])}),
+                   tmp_path / "corpus.parquet")
+    gold_ids = {f"doc{i}" for i in range(0, 2000, 97)}      # scattered through the file
+    kept, gold_kept = download_data.build_subset(tmp_path / "corpus.parquet", gold_ids, 300,
+                                                 tmp_path / "subset.parquet")
+    assert gold_kept == len(gold_ids)                        # never drop a gold passage
+    assert 0.5 * 300 <= kept <= 1.6 * 300                    # roughly the requested size
+
+    from trace_rag.ingestion import iter_beir_corpus
+
+    rows = list(iter_beir_corpus(tmp_path / "subset.parquet"))
+    assert len(rows) == kept
+    assert gold_ids <= {r["doc_id"] for r in rows}
+
+
+def test_subset_is_deterministic(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+    import pyarrow as pa
+
+    download_data = _load_download_script()
+    pq.write_table(pa.table({"_id": pa.array([f"d{i}" for i in range(500)]),
+                             "title": pa.array([""] * 500),
+                             "text": pa.array([f"p{i}" for i in range(500)])}),
+                   tmp_path / "c.parquet")
+    first = download_data.build_subset(tmp_path / "c.parquet", {"d1"}, 100, tmp_path / "a.parquet")
+    second = download_data.build_subset(tmp_path / "c.parquet", {"d1"}, 100, tmp_path / "b.parquet")
+    assert first == second
+
+
+def test_gpu_config_is_valid():
+    from pathlib import Path
+
+    from trace_rag.config import Config
+
+    config = Config.load(Path(__file__).resolve().parent.parent / "config" / "nq_gpu.yaml")
+    assert config.embedding.backend == "huggingface" and config.embedding.device == "cuda"
+    assert config.index.backend == "faiss"
+    assert config.ingestion.family_backend == "exact"     # memory-safe at corpus scale
+
+
+def test_indexing_streams_instead_of_loading_everything(config, monkeypatch):
+    """index_chunks must not materialise the whole store in memory."""
+    from trace_rag.ingestion import Ingestor
+    from trace_rag.pipeline import PersonAPipeline
+
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    ingestor = Ingestor(pipeline.store, config.ingestion)
+    with pipeline.store.batch():
+        for i in range(500):
+            ingestor.ingest_text(f"d{i}", f"passage {i} about subject {i % 7}", f"s{i % 5}",
+                                 ingested_at=1_600_000_000.0 + i, passage_mode=True)
+
+    calls = {"iter": 0, "list": 0}
+    original_iter = pipeline.store.iter_chunks
+
+    def counting_iter(*args, **kwargs):
+        calls["iter"] += 1
+        return original_iter(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline.store, "iter_chunks", counting_iter)
+    assert pipeline.index_chunks(batch_size=64) == 500
+    assert calls["iter"] >= 1
+    assert len(pipeline.index) == 500
+    pipeline.close()

@@ -15,11 +15,26 @@ FAISS + Llama-3.1-8B when you run real experiments.
 
 ---
 
+## Running on real data with a GPU
+
+```bash
+conda env create -f environment.yml && conda activate trace-rag
+pip install torch --index-url https://download.pytorch.org/whl/cu124   # match your driver
+pip install -e ".[all,data]"
+python scripts/download_data.py --dataset nq --out data/nq --subset 200000
+trace-rag --config config/nq_gpu.yaml ingest-beir --corpus data/nq/corpus_subset.parquet
+trace-rag --config config/nq_gpu.yaml index
+trace-rag --config config/nq_gpu.yaml query "who designed the eiffel tower?"
+```
+
+Full walkthrough, including serving Llama-3.1-8B and the troubleshooting table:
+[`docs/RUNNING_ON_GPU.md`](docs/RUNNING_ON_GPU.md).
+
 ## Quick start
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 148 tests
+pytest -q                            # 153 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
@@ -112,7 +127,7 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 148 tests
+pytest -q                                    # 153 tests
 pytest -q --cov=trace_rag --cov-report=term-missing   # 92% coverage
 ```
 

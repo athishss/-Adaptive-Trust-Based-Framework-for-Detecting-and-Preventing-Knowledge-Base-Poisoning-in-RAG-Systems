@@ -199,29 +199,64 @@ class PersonAPipeline:
 
     # ------------------------------------------------------------ maintenance
     def index_chunks(self, chunk_ids: Optional[Sequence[str]] = None, batch_size: int = 256,
-                     train_sample: int = 100_000) -> int:
+                     train_sample: int = 100_000, progress_every: int = 50_000) -> int:
         """Embed and index chunks from the provenance store.
 
+        Streams from SQLite in batches: a 2.68M-passage corpus never sits in
+        memory as Python objects, only one ``batch_size`` window at a time.
         Passing ``chunk_ids`` indexes just those (used when Person C injects a
         new batch mid-stream); otherwise the whole store is indexed.
         """
-        records = (list(self.store.get_chunks(chunk_ids).values()) if chunk_ids
-                   else list(self.store.iter_chunks()))
-        records.sort(key=lambda r: r.chunk_id)
-        if not records:
-            return 0
-        if hasattr(self.index, "is_trained") and not self.index.is_trained:
-            sample = records[:train_sample]
-            vectors = self.embedder.encode_documents([r.text for r in sample],
-                                                     batch_size=self.config.embedding.batch_size)
-            self.index.train(vectors)
+        if chunk_ids is not None:
+            records = sorted(self.store.get_chunks(chunk_ids).values(), key=lambda r: r.chunk_id)
+            if not records:
+                return 0
+            self._train_index_if_needed(iter(records), train_sample)
+            return self._add_records(iter(records), batch_size, progress_every)
+
+        needs_training = hasattr(self.index, "is_trained") and not self.index.is_trained
+        if needs_training:
+            self._train_index_if_needed(self.store.iter_chunks(batch_size=1000), train_sample)
+        return self._add_records(self.store.iter_chunks(batch_size=1000), batch_size, progress_every)
+
+    def _train_index_if_needed(self, records, train_sample: int) -> None:  # type: ignore[no-untyped-def]
+        if not hasattr(self.index, "is_trained") or self.index.is_trained:
+            return
+        texts: List[str] = []
+        for record in records:
+            texts.append(record.text)
+            if len(texts) >= train_sample:
+                break
+        if not texts:
+            return
+        logger.info("training index on %d sampled passages", len(texts))
+        vectors = self.embedder.encode_documents(texts, batch_size=self.config.embedding.batch_size)
+        self.index.train(vectors)
+
+    def _add_records(self, records, batch_size: int, progress_every: int) -> int:  # type: ignore[no-untyped-def]
         total = 0
-        for start in range(0, len(records), batch_size):
-            batch = records[start:start + batch_size]
-            vectors = self.embedder.encode_documents([r.text for r in batch],
-                                                     batch_size=self.config.embedding.batch_size)
-            self.index.add([r.chunk_id for r in batch], vectors)
-            total += len(batch)
+        buffer_ids: List[str] = []
+        buffer_texts: List[str] = []
+
+        def flush() -> None:
+            nonlocal total
+            if not buffer_ids:
+                return
+            vectors = self.embedder.encode_documents(
+                buffer_texts, batch_size=self.config.embedding.batch_size)
+            self.index.add(list(buffer_ids), vectors)
+            total += len(buffer_ids)
+            buffer_ids.clear()
+            buffer_texts.clear()
+            if progress_every and total % progress_every < batch_size:
+                logger.info("indexed %d passages so far", total)
+
+        for record in records:
+            buffer_ids.append(record.chunk_id)
+            buffer_texts.append(record.text)
+            if len(buffer_ids) >= batch_size:
+                flush()
+        flush()
         logger.info("indexed %d chunks (index size %d)", total, len(self.index))
         return total
 

@@ -68,7 +68,10 @@ Person C's attacks and real data.
 
 * **No real dataset has run through this code.** The build environment blocks
   Hugging Face, so NQ was never downloaded. Readers are tested against files
-  written to the published schema, not the published files.
+  written to the published schema, not the published files, and the download
+  script's parsing and subset logic are tested offline against generated files.
+  `scripts/download_data.py` plus `docs/RUNNING_ON_GPU.md` are what close this,
+  and running them is the next step.
 * **No research result.** Detection accuracy, attack success rate and the
   security/cost trade-off need Person C's attacks and Person B's ledger.
 * **Not run on a GPU.** Contriever and Llama-3.1-8B paths are verified with a
