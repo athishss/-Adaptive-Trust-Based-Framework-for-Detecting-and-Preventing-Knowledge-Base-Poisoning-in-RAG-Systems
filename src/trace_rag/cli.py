@@ -55,32 +55,51 @@ def apply_overrides(config: Config, overrides: Optional[List[str]]) -> Config:
     return Config.model_validate(data)
 
 
-def _pipeline(args: argparse.Namespace, load_index: bool = True) -> PersonAPipeline:
+def _config(args: argparse.Namespace) -> Config:
     config = Config.load(args.config) if args.config else Config()
     if args.root:
         config.storage.root = args.root
-    config = apply_overrides(config, getattr(args, "set", None))
-    return PersonAPipeline.from_config(config, load_existing_index=load_index)
+    return apply_overrides(config, getattr(args, "set", None))
+
+
+def _store(args: argparse.Namespace):  # type: ignore[no-untyped-def]
+    """Open only the provenance store.
+
+    Ingestion and remediation touch no vectors, so they must not load the
+    embedding model - otherwise `ingest` would download Contriever (~440 MB)
+    and occupy the GPU for nothing.
+    """
+    from .ingestion.provenance import ProvenanceStore
+
+    config = _config(args)
+    return config, ProvenanceStore(config.path(config.storage.provenance_db))
+
+
+def _pipeline(args: argparse.Namespace, load_index: bool = True) -> PersonAPipeline:
+    return PersonAPipeline.from_config(_config(args), load_existing_index=load_index)
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
-    pipeline = _pipeline(args, load_index=False)
-    ingestor = Ingestor(pipeline.store, pipeline.config.ingestion)
-    report = ingestor.ingest_paths(args.path, recursive=not args.no_recursive)
-    print(json.dumps(report.to_dict(), indent=2))
-    pipeline.close()
+    config, store = _store(args)
+    try:
+        report = Ingestor(store, config.ingestion).ingest_paths(
+            args.path, recursive=not args.no_recursive)
+        print(json.dumps(report.to_dict(), indent=2))
+    finally:
+        store.close()
     return 0
 
 
 def cmd_ingest_beir(args: argparse.Namespace) -> int:
-    pipeline = _pipeline(args, load_index=False)
-    ingestor = Ingestor(pipeline.store, pipeline.config.ingestion)
-    assigner = (FixedSourceAssigner(args.source_id) if args.source_id
-                else SourceAssigner(n_sources=args.n_sources, seed=pipeline.config.seed))
-    report = ingestor.ingest_beir(args.corpus, assigner, limit=args.limit,
-                                  seconds_per_doc=args.seconds_per_doc)
-    print(json.dumps(report.to_dict(), indent=2))
-    pipeline.close()
+    config, store = _store(args)
+    try:
+        assigner = (FixedSourceAssigner(args.source_id) if args.source_id
+                    else SourceAssigner(n_sources=args.n_sources, seed=config.seed))
+        report = Ingestor(store, config.ingestion).ingest_beir(
+            args.corpus, assigner, limit=args.limit, seconds_per_doc=args.seconds_per_doc)
+        print(json.dumps(report.to_dict(), indent=2))
+    finally:
+        store.close()
     return 0
 
 
@@ -115,8 +134,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_train_scorer(args: argparse.Namespace) -> int:
     """Train from a JSONL of labelled rows produced by Person C's harness."""
-    config = apply_overrides(Config.load(args.config) if args.config else Config(),
-                             getattr(args, "set", None))
+    config = _config(args)
     dataset = TrainingSet()
     with open(args.rows, "r", encoding="utf-8") as handle:
         for line in handle:
@@ -144,10 +162,17 @@ def cmd_train_scorer(args: argparse.Namespace) -> int:
 
 
 def cmd_remediate(args: argparse.Namespace) -> int:
-    pipeline = _pipeline(args)
-    report = pipeline.on_quarantine(args.doc_ids, reason=args.reason)
-    print(json.dumps(report.to_dict(), indent=2))
-    pipeline.close()
+    """Flagging past answers needs the answer log only, not the models."""
+    from .provenance.answer_log import AnswerLog
+    from .provenance.remediation import RemediationService
+
+    config = _config(args)
+    log = AnswerLog(config.path(config.storage.answer_db))
+    try:
+        report = RemediationService(log).on_quarantine(args.doc_ids, reason=args.reason)
+        print(json.dumps(report.to_dict(), indent=2))
+    finally:
+        log.close()
     return 0
 
 

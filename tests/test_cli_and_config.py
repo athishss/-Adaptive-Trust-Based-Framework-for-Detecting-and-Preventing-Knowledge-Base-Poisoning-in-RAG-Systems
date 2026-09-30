@@ -183,3 +183,33 @@ def test_cli_query_with_trailing_overrides(tmp_path, capsys):
     assert main(["--root", root, "query", "Who designed the Eiffel Tower?", "--json",
                  "--set", "generation.backend=stub"]) == 0
     assert json.loads(capsys.readouterr().out)["answer"]["query"]
+
+
+def test_ingest_does_not_build_the_embedder(tmp_path, monkeypatch, capsys):
+    """Ingestion must not load the embedding model (it would download Contriever)."""
+    import trace_rag.embeddings as embeddings
+
+    called = {"n": 0}
+    original = embeddings.build_embedder
+
+    def counting(config):
+        called["n"] += 1
+        return original(config)
+
+    monkeypatch.setattr(embeddings, "build_embedder", counting)
+    monkeypatch.setattr("trace_rag.pipeline.build_embedder", counting)
+
+    corpus = tmp_path / "corpus.jsonl"
+    _write_corpus(corpus)
+    assert main(["--root", str(tmp_path / "run"), "ingest-beir", "--corpus", str(corpus)]) == 0
+    capsys.readouterr()
+    assert called["n"] == 0, "ingestion loaded the embedding model"
+
+
+def test_remediate_does_not_build_the_embedder(tmp_path, monkeypatch, capsys):
+    called = {"n": 0}
+    monkeypatch.setattr("trace_rag.pipeline.build_embedder",
+                        lambda config: called.__setitem__("n", called["n"] + 1))
+    assert main(["--root", str(tmp_path / "run"), "remediate", "--doc-ids", "x#0000"]) == 0
+    capsys.readouterr()
+    assert called["n"] == 0
