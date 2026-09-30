@@ -1,7 +1,21 @@
 # Running on a CUDA GPU with Anaconda
 
-Written for one NVIDIA GPU on Linux or WSL2. Every command is meant to be
-copy-pasted in order.
+Written for one NVIDIA GPU. Every command is meant to be copy-pasted in order.
+Windows users: read the Windows section at the bottom first, then follow the
+same steps.
+
+## 0. Are you in the right folder?
+
+Every command below assumes you are **inside the extracted project folder** (the
+one containing `pyproject.toml`, `config/` and `scripts/`). If you see
+
+    python: can't open file '...\scripts\download_data.py': [Errno 2] No such file or directory
+
+you are not. Extract the zip, `cd` into it, and check with:
+
+    python scripts/check_setup.py
+
+That script reports what is installed, whether CUDA is visible, and what to fix.
 
 ## 1. Environment
 
@@ -119,6 +133,40 @@ the pipeline uses the heuristic fallback and says so in `stats`.
 | Download stops part way | re-run `download_data.py`; it resumes |
 | `needs pyarrow` | `pip install pyarrow` (or use the `.jsonl` corpus) |
 | Index seems empty after restart | run `trace-rag index` again, or make sure the earlier run finished and saved |
+
+## Windows (Anaconda Prompt)
+
+Everything works on Windows except vLLM, which has no Windows build.
+
+```bat
+cd %USERPROFILE%\Downloads
+tar -xf trace-rag-person-a.zip            :: or right-click, Extract All
+cd trace-rag
+
+conda env create -f environment.yml
+conda activate trace-rag
+
+nvidia-smi                                 :: note the CUDA version
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+python -c "import torch; print(torch.cuda.is_available())"
+
+pip install -e ".[all,data]"
+python scripts/check_setup.py
+pytest -q
+```
+
+Then, for the answer model, install **Ollama for Windows**
+(<https://ollama.com/download>) and run `ollama run llama3.1:8b`, and use the
+Ollama block that is commented in `config/nq_gpu.yaml`. If you would rather use
+vLLM, run the whole project inside WSL2 instead.
+
+Two Windows details that bite:
+
+* **Paths with spaces.** Your home folder is `C:\Users\Chandaluri Vaishnavi`,
+  so always quote paths: `--out "data/nq"` is fine, but an absolute path needs
+  `--out "C:\Users\Chandaluri Vaishnavi\data\nq"`.
+* **Long paths.** If you hit `FileNotFoundError` with a very long path, extract
+  the project somewhere short such as `C:\trace-rag`.
 
 ## Reproducibility notes
 

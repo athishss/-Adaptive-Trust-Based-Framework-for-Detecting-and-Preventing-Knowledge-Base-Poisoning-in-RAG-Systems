@@ -15,6 +15,13 @@ FAISS + Llama-3.1-8B when you run real experiments.
 
 ---
 
+## First time here?
+
+```bash
+cd trace-rag                  # the extracted folder, containing pyproject.toml
+python scripts/check_setup.py # says what is installed and what to fix
+```
+
 ## Running on real data with a GPU
 
 ```bash
