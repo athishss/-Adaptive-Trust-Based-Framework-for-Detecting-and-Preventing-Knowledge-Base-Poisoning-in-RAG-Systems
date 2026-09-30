@@ -220,3 +220,36 @@ def test_hf_local_llm_generates_from_a_locally_built_model(tmp_path):
     response = llm.generate("tok1 tok2", max_tokens=5)
     assert isinstance(response.text, str) and response.llm_calls == 1
     assert response.latency_ms >= 0.0
+
+
+def test_requesting_cuda_without_cuda_gives_an_actionable_error(tiny_encoder):
+    """The raw torch error ('Torch not compiled with CUDA enabled') helps nobody."""
+    from trace_rag.embeddings.hf_embedder import HFEmbedder, resolve_device
+
+    if torch.cuda.is_available():
+        pytest.skip("this machine has CUDA; the failure path cannot be exercised")
+    with pytest.raises(RuntimeError) as error:
+        HFEmbedder(model_name=tiny_encoder, device="cuda")
+    message = str(error.value)
+    assert "torch.cuda.is_available() is False" in message
+    assert "--set embedding.device=cpu" in message      # tells the user what to type
+    assert "download.pytorch.org" in message
+
+
+def test_device_auto_falls_back_to_cpu_when_no_gpu(tiny_encoder):
+    from trace_rag.embeddings.hf_embedder import HFEmbedder
+
+    embedder = HFEmbedder(model_name=tiny_encoder, device="auto")
+    expected = "cuda" if torch.cuda.is_available() else "cpu"
+    assert embedder.device == expected
+    assert embedder.encode_documents(["hello tok1"]).shape[0] == 1
+
+
+def test_third_party_logging_is_quiet_by_default():
+    import logging
+
+    from trace_rag.utils.logging import get_logger
+
+    get_logger("trace_rag.test")
+    assert logging.getLogger("httpx").level >= logging.WARNING
+    assert logging.getLogger("huggingface_hub").level >= logging.WARNING

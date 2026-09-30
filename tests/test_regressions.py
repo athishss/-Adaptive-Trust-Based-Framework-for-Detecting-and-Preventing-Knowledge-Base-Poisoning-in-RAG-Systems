@@ -363,7 +363,8 @@ def test_gpu_config_is_valid():
     from trace_rag.config import Config
 
     config = Config.load(Path(__file__).resolve().parent.parent / "config" / "nq_gpu.yaml")
-    assert config.embedding.backend == "huggingface" and config.embedding.device == "cuda"
+    assert config.embedding.backend == "huggingface"
+    assert config.embedding.device in {"auto", "cuda", "cpu"}
     assert config.index.backend == "faiss"
     assert config.ingestion.family_backend == "exact"     # memory-safe at corpus scale
 

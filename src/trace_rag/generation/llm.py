@@ -170,6 +170,9 @@ class HFLocalLLM:
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as exc:
             raise ImportError("HFLocalLLM needs torch + transformers: pip install 'trace-rag[models]'") from exc
+        from ..embeddings.hf_embedder import resolve_device
+
+        device = resolve_device(device, torch)
         torch.manual_seed(seed)
         self.name = model_name
         self._torch = torch

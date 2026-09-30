@@ -15,7 +15,7 @@ ingestion:
 embedding:
   backend: huggingface
   model_name: facebook/contriever
-  device: cuda               # cpu if you have no GPU
+  device: auto               # GPU when one is visible, otherwise CPU (with a warning)
   batch_size: 128            # drop to 32 if you hit CUDA out-of-memory
   normalize: true
 

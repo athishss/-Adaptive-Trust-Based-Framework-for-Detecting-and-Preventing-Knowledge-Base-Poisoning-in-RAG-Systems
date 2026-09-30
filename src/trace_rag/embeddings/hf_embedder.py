@@ -10,7 +10,42 @@ from typing import List, Literal, Sequence
 
 import numpy as np
 
+from ..utils.logging import get_logger
 from .base import BaseEmbedder
+
+logger = get_logger(__name__)
+
+
+def resolve_device(device: str, torch) -> str:  # type: ignore[no-untyped-def]
+    """Turn a requested device into a usable one, or explain why it is not.
+
+    ``auto`` picks the GPU when there is one.  Asking for ``cuda`` without a
+    CUDA-enabled PyTorch used to fail deep inside torch with
+    "Torch not compiled with CUDA enabled", which says nothing about how to fix
+    it.
+    """
+    if device == "auto":
+        if torch.cuda.is_available():
+            logger.info("device 'auto': using GPU (%s)", torch.cuda.get_device_name(0))
+            return "cuda"
+        logger.warning(
+            "device 'auto': no CUDA GPU visible, falling back to the CPU. Embedding a large "
+            "corpus this way takes hours; install the CUDA build of PyTorch, or index a smaller "
+            "subset first.")
+        return "cpu"
+    if str(device).startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            "device is 'cuda' but this PyTorch build cannot see a GPU "
+            "(torch.cuda.is_available() is False).\n"
+            "  Either install the CUDA build of PyTorch:\n"
+            "      pip uninstall -y torch\n"
+            "      pip install torch --index-url https://download.pytorch.org/whl/cu128\n"
+            "      (check https://pytorch.org/get-started/locally/ for the build matching "
+            "your driver in `nvidia-smi`)\n"
+            "  Or run on the CPU by adding to your command:\n"
+            "      --set embedding.device=cpu"
+        )
+    return device
 
 
 class HFEmbedder(BaseEmbedder):
@@ -30,7 +65,7 @@ class HFEmbedder(BaseEmbedder):
             ) from exc
 
         self.model_name = model_name
-        self.device = device
+        self.device = resolve_device(device, torch)
         self.pooling = pooling
         self.max_length = int(max_length)
         self.query_prefix = query_prefix
@@ -44,7 +79,7 @@ class HFEmbedder(BaseEmbedder):
             self.model = AutoModel.from_pretrained(model_name, dtype=resolved_dtype)
         except TypeError:  # pragma: no cover - older transformers
             self.model = AutoModel.from_pretrained(model_name, torch_dtype=resolved_dtype)
-        self.model = self.model.to(device).eval()
+        self.model = self.model.to(self.device).eval()
         self.dim = int(self.model.config.hidden_size)
 
     def _pool(self, hidden, mask):  # type: ignore[no-untyped-def]
@@ -60,7 +95,8 @@ class HFEmbedder(BaseEmbedder):
             for start in range(0, len(texts), batch_size):
                 batch = [f"{prefix}{t}" for t in texts[start:start + batch_size]]
                 encoded = self.tokenizer(batch, padding=True, truncation=True,
-                                         max_length=self.max_length, return_tensors="pt").to(self.device)
+                                         max_length=self.max_length,
+                                         return_tensors="pt").to(self.device)
                 output = self.model(**encoded)
                 pooled = self._pool(output.last_hidden_state, encoded["attention_mask"])
                 vectors.append(pooled.float().cpu().numpy())
