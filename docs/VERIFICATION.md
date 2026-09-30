@@ -15,9 +15,26 @@ now has a regression test in `tests/test_regressions.py`.
 | 8 | **Work package A7 had no runnable entry point**: latency profiling and signal ablation were possible but not scripted | A7 is a deliverable; "supported by config" is not the same as delivered | `scripts/profile_and_ablate.py` reports per-stage latency percentiles, LLM calls per query, and held-out AUC with each signal removed | `test_profile_and_ablate_script` |
 | 6 | **Empty `[]` brackets survived** citation cleanup | cosmetic, but it leaked model formatting into logged answers | cleanup strips empty brackets too | `test_empty_and_invalid_brackets_are_cleaned` |
 
+## Second pass (static analysis, fuzzing, concurrency, model backends)
+
+| # | Defect | Why it mattered | Fix | Test |
+|---|---|---|---|---|
+| 9 | **Chunk ids collided**: ids were sanitised and truncated to 48 characters with no hash, so `doc/one` and `doc one`, or two long ids sharing a prefix, produced the same chunk id | `INSERT OR REPLACE` then silently overwrote one document's passage with another's — data loss and wrong provenance, most likely with file paths and URLs as ids | ids that need sanitising or exceed 48 characters get a hash of the full original after a `~`, which the sanitiser can never produce; benchmark ids stay readable | `test_chunk_ids_do_not_collide`, `test_chunk_ids_are_unique_under_fuzzing` (5k adversarial ids), `test_colliding_document_ids_keep_separate_rows` |
+| 10 | **`torch_dtype=` is deprecated** in transformers v5 | the embedder and local-LLM paths would break on a current install | both spellings are tried | `test_hf_embedder_*` |
+| 11 | **`HFLocalLLM` required `accelerate`** because it always passed `device_map=` | a plain single-GPU or CPU run failed with a confusing dependency error | `device_map` is only used when explicitly asked for (`auto`/`balanced`/`sequential`); otherwise the model is moved with torch alone | `test_hf_local_llm_generates_from_a_locally_built_model` |
+
+Static analysis (pyflakes, ruff `F,E9,B,SIM,RUF`) found no logic defects; unused
+imports were removed and `zip()` calls whose lengths must match are now
+`strict=True`.
+
 ## Checks that passed first time
 
-Empty index and empty corpus, unicode and CJK text, a 2000-word query, very long
+Fuzzing (300 hostile documents, 120 random queries, 40 random configurations)
+with invariants checked on every answer: signals in [0,1], evidence mass in
+[0,1], no answer without a citation, no citation of a passage that was not
+retrieved or that policy excluded. Six threads answering concurrently against
+one pipeline, and both databases surviving a reopen. Empty index and empty
+corpus, unicode and CJK text, a 2000-word query, very long
 single tokens, duplicate document ids, concurrent ingestion from four threads,
 threshold constraints on hard (overlapping) data, calibration error below 0.15
 in every populated bin, rejection of wrong feature counts, the leakage guard on
@@ -38,10 +55,12 @@ on GPU and must be measured again with Contriever and Llama-3.1-8B.
 
 ## What is still unverified
 
-* `HFEmbedder` (Contriever/BGE) and the vLLM / Ollama / transformers generation
-  backends: no GPU or model weights in the build environment. The code paths are
-  import-guarded and written to the documented APIs, but run each once on your
-  own machine before trusting them.
+* **Real model weights.** The embedder is verified against a randomly
+  initialised BERT built locally (pooling, L2 normalisation, batching
+  invariance, attention-mask correctness) and the HTTP backends against a stub
+  server that mimics the vLLM and Ollama APIs, including error paths. What that
+  does not prove is behaviour with Contriever and Llama-3.1-8B specifically:
+  run one query through each on your machine.
 * Behaviour at true corpus scale (millions of passages) is extrapolated from
   20k-passage measurements, not observed.
 * The bundled mini corpus is trivially separable; no accuracy claim should come

@@ -6,7 +6,7 @@ BGE uses CLS pooling and a query prefix, so pooling is selectable.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Sequence
+from typing import List, Literal, Sequence
 
 import numpy as np
 
@@ -21,14 +21,13 @@ class HFEmbedder(BaseEmbedder):
                  query_prefix: str = "", document_prefix: str = "", normalize: bool = True,
                  dtype: str = "float32") -> None:
         try:
-            import torch                              # noqa: F401
+            import torch
             from transformers import AutoModel, AutoTokenizer
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
                 "HFEmbedder needs 'torch' and 'transformers'. Install with: "
                 "pip install 'trace-rag[models]'"
             ) from exc
-        import torch
 
         self.model_name = model_name
         self.device = device
@@ -39,8 +38,13 @@ class HFEmbedder(BaseEmbedder):
         self.normalize = bool(normalize)
         self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        torch_dtype = getattr(torch, dtype, torch.float32)
-        self.model = AutoModel.from_pretrained(model_name, torch_dtype=torch_dtype).to(device).eval()
+        resolved_dtype = getattr(torch, dtype, torch.float32)
+        # transformers renamed torch_dtype -> dtype in v5; support both.
+        try:
+            self.model = AutoModel.from_pretrained(model_name, dtype=resolved_dtype)
+        except TypeError:  # pragma: no cover - older transformers
+            self.model = AutoModel.from_pretrained(model_name, torch_dtype=resolved_dtype)
+        self.model = self.model.to(device).eval()
         self.dim = int(self.model.config.hidden_size)
 
     def _pool(self, hidden, mask):  # type: ignore[no-untyped-def]

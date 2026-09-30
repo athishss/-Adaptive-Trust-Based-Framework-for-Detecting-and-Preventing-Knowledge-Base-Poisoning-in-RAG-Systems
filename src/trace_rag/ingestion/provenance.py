@@ -13,9 +13,9 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 from ..utils.hashing import sha256_text
 
@@ -326,7 +326,25 @@ class ProvenanceStore:
         )
 
 
+_SAFE_EXTRA = "-_."
+_MAX_PLAIN = 48
+_PREFIX = 40
+
+
 def make_chunk_id(doc_id: str, ordinal: int) -> str:
-    """Stable chunk id: readable prefix + hash guard against odd doc ids."""
-    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in doc_id)[:48]
-    return f"{safe}#{ordinal:04d}"
+    """Stable, collision-free chunk id.
+
+    Benchmark ids (``nq_1``) are used as they are, so ids stay readable.  Any id
+    that needs sanitising or is longer than 48 characters gets a hash of the
+    *full* original appended after a ``~``.  ``~`` is never produced by the
+    sanitiser, so a hashed id can never equal a plain one.
+
+    Without that hash, ``doc/one`` and ``doc one`` (or two long ids sharing a
+    prefix) mapped to the same chunk id and silently overwrote each other's
+    rows in the store.
+    """
+    safe = "".join(ch if ch.isalnum() or ch in _SAFE_EXTRA else "_" for ch in doc_id)
+    if safe == doc_id and len(doc_id) <= _MAX_PLAIN:
+        return f"{safe}#{ordinal:04d}"
+    digest = sha256_text(doc_id)[:12]
+    return f"{safe[:_PREFIX]}~{digest}#{ordinal:04d}"

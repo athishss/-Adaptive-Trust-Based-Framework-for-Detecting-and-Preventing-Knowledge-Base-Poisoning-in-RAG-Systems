@@ -19,11 +19,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 
-from ..contracts import Band, FEATURE_NAMES, FeatureSnapshot, SignalVector
+from ..contracts import Band, FEATURE_NAMES, FeatureSnapshot
 
 
 @dataclass(frozen=True)
@@ -145,7 +145,7 @@ class SuspicionScorer:
         scale = self._pipeline.named_steps["scale"]
         coef = self._pipeline.named_steps["lr"].coef_[0]
         return {name: float(c / (s if s else 1.0))
-                for name, c, s in zip(self.feature_names, coef, scale.scale_)}
+                for name, c, s in zip(self.feature_names, coef, scale.scale_, strict=True)}
 
     # ------------------------------------------------------------ thresholds
     def select_thresholds(self, scores: Sequence[float], labels: Sequence[int],

@@ -7,7 +7,7 @@ remediation recall) straight out of the answer log.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence
 
 from .answer_log import AnswerLog, StoredAnswer

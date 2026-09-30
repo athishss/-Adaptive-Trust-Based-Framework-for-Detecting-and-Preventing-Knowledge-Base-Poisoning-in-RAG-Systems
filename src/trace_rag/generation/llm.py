@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from typing import List, Optional, Sequence
@@ -161,7 +160,7 @@ class OllamaLLM:
                            latency_ms=watch.elapsed_ms, model=self.name)
 
 
-class HFLocalLLM:  # pragma: no cover - requires torch + weights
+class HFLocalLLM:
     """In-process transformers generation (greedy)."""
 
     def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct", device: str = "cuda",
@@ -175,8 +174,21 @@ class HFLocalLLM:  # pragma: no cover - requires torch + weights
         self.name = model_name
         self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, torch_dtype=getattr(torch, dtype, torch.float32), device_map=device).eval()
+        resolved_dtype = getattr(torch, dtype, torch.float32)
+        # device_map= needs the `accelerate` package and is only useful for
+        # sharding across devices; a plain device string loads and moves the
+        # model with torch alone, so a normal single-GPU or CPU run needs no
+        # extra dependency.
+        kwargs = {"device_map": device} if device in {"auto", "balanced", "sequential"} else {}
+        try:                                         # transformers v5 renamed torch_dtype -> dtype
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, dtype=resolved_dtype, **kwargs)
+        except TypeError:  # pragma: no cover - older transformers
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name, torch_dtype=resolved_dtype, **kwargs)
+        if not kwargs:
+            self.model = self.model.to(device)
+        self.model = self.model.eval()
         self.device = device
 
     def generate(self, prompt: str, max_tokens: int = 256,

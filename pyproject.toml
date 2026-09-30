@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 faiss = ["faiss-cpu>=1.7"]
 models = ["torch>=2.1", "transformers>=4.40"]
+sharded = ["accelerate>=0.26"]   # only needed for device_map="auto"
 docs = ["pypdf>=3.17", "beautifulsoup4>=4.12"]
 data = ["pyarrow>=14.0"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1"]

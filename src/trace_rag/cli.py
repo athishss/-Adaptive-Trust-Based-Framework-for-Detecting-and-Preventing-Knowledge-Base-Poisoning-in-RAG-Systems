@@ -14,11 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from .config import Config
-from .detection.scorer import SuspicionScorer
 from .detection.training import LabelledRow, TrainingSet, train_scorer
 from .contracts import FeatureSnapshot, SignalVector
 from .ingestion.pipeline import FixedSourceAssigner, Ingestor, SourceAssigner

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from trace_rag.contracts import (Band, PolicyDecision, TrustSnapshot, TrustStatus,
                                  VerificationOutcome, VerificationResult)

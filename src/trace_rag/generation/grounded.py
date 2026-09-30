@@ -9,7 +9,7 @@ keeps the system from repeating a poisoned claim it cannot corroborate.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from ..config import GenerationConfig
 from ..contracts import AnswerRecord, Citation, LLMResponse, RetrievedDocument

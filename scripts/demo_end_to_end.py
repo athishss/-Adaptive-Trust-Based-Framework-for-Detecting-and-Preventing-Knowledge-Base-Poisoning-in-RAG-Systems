@@ -24,7 +24,7 @@ from typing import Dict, List
 
 from trace_rag import Config, PersonAPipeline
 from trace_rag.contracts import TrustSnapshot, TrustStatus
-from trace_rag.detection import LabelledRow, TrainingSet, build_rows, train_scorer
+from trace_rag.detection import TrainingSet, build_rows, train_scorer
 from trace_rag.ingestion import Ingestor
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"

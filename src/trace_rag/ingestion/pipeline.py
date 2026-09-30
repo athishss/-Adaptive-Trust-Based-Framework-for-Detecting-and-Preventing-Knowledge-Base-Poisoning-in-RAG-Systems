@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional
 
 from ..config import IngestionConfig
 from ..utils.hashing import build_family_assigner, sha256_text

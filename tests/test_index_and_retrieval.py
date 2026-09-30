@@ -4,8 +4,7 @@ import numpy as np
 import pytest
 
 from trace_rag.config import RetrievalConfig
-from trace_rag.contracts import TrustSnapshot, TrustStatus
-from trace_rag.embeddings import HashingEmbedder
+from trace_rag.contracts import TrustSnapshot
 from trace_rag.index import NumpyFlatIndex
 from trace_rag.retrieval import TrustWeightedRetriever
 from conftest import random_unit_vectors

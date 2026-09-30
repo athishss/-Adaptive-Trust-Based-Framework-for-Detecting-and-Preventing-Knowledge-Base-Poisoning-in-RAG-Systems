@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from trace_rag.contracts import (Action, AnswerRecord, Band, Citation, DefaultPolicy,
-                                 FeatureSnapshot, LLM, NullTrustProvider, NullVerifier,
-                                 Policy, RetrievedDocument, SecurityAssessment, SignalVector,
+                                 FeatureSnapshot, NullTrustProvider, NullVerifier,
+                                 Policy, SecurityAssessment, SignalVector,
                                  TrustProvider, TrustSnapshot, TrustStatus, Verifier,
                                  VerificationOutcome, VerificationResult, FEATURE_NAMES,
                                  SIGNAL_NAMES)

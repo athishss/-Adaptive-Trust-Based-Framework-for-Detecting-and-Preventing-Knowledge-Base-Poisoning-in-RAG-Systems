@@ -21,8 +21,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .config import Config
 from .contracts import (Action, AnswerRecord, Band, DefaultPolicy, FeatureSnapshot, LLM,
-                        NullTrustProvider, Policy, PolicyDecision, RetrievedDocument,
-                        SecurityAssessment, TrustProvider, Verifier)
+                        NullTrustProvider, Policy, PolicyDecision, SecurityAssessment, TrustProvider, Verifier)
 from .detection.scorer import HeuristicScorer, SuspicionScorer
 from .detection.signals import SignalComputer
 from .embeddings import build_embedder

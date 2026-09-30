@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 

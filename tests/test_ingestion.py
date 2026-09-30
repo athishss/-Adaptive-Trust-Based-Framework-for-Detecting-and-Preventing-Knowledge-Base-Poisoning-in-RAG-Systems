@@ -5,9 +5,9 @@ import time
 import pytest
 
 from trace_rag.config import IngestionConfig
-from trace_rag.ingestion import (Ingestor, ParseError, ProvenanceStore, SourceAssigner,
+from trace_rag.ingestion import (Ingestor, ParseError, SourceAssigner,
                                  chunk_passage, chunk_text, parse_file)
-from trace_rag.utils.hashing import FamilyAssigner, sha256_text
+from trace_rag.utils.hashing import FamilyAssigner
 
 
 def test_chunking_covers_all_words_with_overlap():

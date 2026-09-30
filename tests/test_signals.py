@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from trace_rag.detection.signals import (SignalComputer, cluster_tightness, ingestion_burst,
+from trace_rag.detection.signals import (cluster_tightness, ingestion_burst,
                                          lcs_length, neighbourhood_density, query_echo,
                                          similarity_outlier, source_immaturity)
 

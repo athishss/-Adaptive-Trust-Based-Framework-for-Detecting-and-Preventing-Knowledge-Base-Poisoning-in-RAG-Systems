@@ -10,7 +10,7 @@ import html
 import json
 import re
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterator
 
 from ..utils.textnorm import normalise
 

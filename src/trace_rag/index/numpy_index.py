@@ -28,7 +28,7 @@ class NumpyFlatIndex:
         if len(ids) != vectors.shape[0]:
             raise ValueError("ids and vectors length mismatch")
         new_ids, new_rows = [], []
-        for id_, row in zip(ids, vectors):
+        for id_, row in zip(ids, vectors, strict=True):
             if id_ in self._pos:                      # idempotent re-add: overwrite in place
                 self._vectors[self._pos[id_]] = row
                 continue

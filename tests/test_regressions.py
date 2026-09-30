@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from trace_rag.config import IngestionConfig
-from trace_rag.contracts import FEATURE_NAMES, FeatureSnapshot, SignalVector
+from trace_rag.contracts import FeatureSnapshot, SignalVector
 from trace_rag.detection import LabelledRow, TrainingSet, leave_one_attack_out
 from trace_rag.embeddings import HashingEmbedder
 from trace_rag.generation import parse_citations
@@ -257,3 +257,44 @@ def test_unsupported_corpus_suffix_rejected(tmp_path):
     (tmp_path / "corpus.csv").write_text("a,b\n1,2", encoding="utf-8")
     with pytest.raises(ParseError):
         list(iter_beir_corpus(tmp_path / "corpus.csv"))
+
+
+# --- 9. chunk ids collided for different documents --------------------------
+
+def test_chunk_ids_do_not_collide():
+    from trace_rag.ingestion import make_chunk_id
+
+    long_a, long_b = "file::" + "x" * 50 + "::AAAA", "file::" + "x" * 50 + "::BBBB"
+    assert make_chunk_id(long_a, 0) != make_chunk_id(long_b, 0)
+    assert len({make_chunk_id(x, 0) for x in ("doc/one", "doc one", "doc_one")}) == 3
+    # benchmark-style ids stay readable
+    assert make_chunk_id("nq_1", 0) == "nq_1#0000"
+    assert make_chunk_id("poison_eiffel_0", 3) == "poison_eiffel_0#0003"
+
+
+def test_chunk_ids_are_unique_under_fuzzing():
+    import random
+    import string
+
+    from trace_rag.ingestion import make_chunk_id
+
+    rng = random.Random(7)
+    alphabet = string.ascii_letters + string.digits + "/\\ .:-_#~%?&=+" + "éü漢字"
+    doc_ids = {"".join(rng.choice(alphabet) for _ in range(rng.randint(1, 80))) for _ in range(5000)}
+    doc_ids |= {"a" * 60 + "1", "a" * 60 + "2", "x/y", "x y", "x_y", "~", "a~b"}
+    doc_ids.discard("")
+    mapped = {make_chunk_id(d, 0) for d in doc_ids}
+    assert len(mapped) == len(doc_ids)
+
+
+def test_colliding_document_ids_keep_separate_rows(store):
+    """The collision used to overwrite one document's chunks with another's."""
+    ingestor = Ingestor(store, IngestionConfig())
+    ingestor.ingest_text("report/2026", "First document about alpha topics", "src",
+                         ingested_at=1.0, passage_mode=True)
+    ingestor.ingest_text("report 2026", "Second and unrelated document about beta", "src",
+                         ingested_at=2.0, passage_mode=True)
+    assert store.counts()["documents"] == 2
+    assert store.counts()["chunks"] == 2
+    texts = {c.text for c in store.iter_chunks()}
+    assert len(texts) == 2

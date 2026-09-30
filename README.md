@@ -19,7 +19,7 @@ FAISS + Llama-3.1-8B when you run real experiments.
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 134 tests
+pytest -q                            # 148 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
@@ -112,8 +112,8 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 134 tests
-pytest -q --cov=trace_rag --cov-report=term-missing   # 89% coverage
+pytest -q                                    # 148 tests
+pytest -q --cov=trace_rag --cov-report=term-missing   # 92% coverage
 ```
 
 What the suite actually checks, beyond the usual unit tests:
@@ -173,9 +173,11 @@ config/  docs/  examples/  scripts/  tests/
   them belongs in the report.
 * The bundled mini corpus is trivially separable; real evaluation is NQ +
   PoisonedRAG with leave-one-attack-family-out, run by Person C.
-* Six defects were found and fixed during a verification pass, including a
-  leakage bug in the leave-one-attack-out split and a stale-vector bug in the
-  FAISS index; `docs/VERIFICATION.md` lists them and what is still unverified.
+* Eleven defects were found and fixed across two verification passes, including
+  a leakage bug in the leave-one-attack-out split, a stale-vector bug in the
+  FAISS index and a chunk-id collision that could overwrite one document's
+  passages with another's. `docs/VERIFICATION.md` lists them all;
+  `docs/REQUIREMENTS.md` audits every requirement against its test.
 * Signals S1 and S3 come from published observations (PoisonedRAG's construction,
   TrustRAG's clustering). The contribution here is their combination with source
   history and the leakage-guarded, constraint-solving calibration — that framing
