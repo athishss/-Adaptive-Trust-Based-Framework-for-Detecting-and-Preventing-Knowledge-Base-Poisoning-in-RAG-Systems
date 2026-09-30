@@ -106,3 +106,80 @@ def test_cli_train_scorer(tmp_path, capsys):
 
 def test_cli_reports_errors_without_traceback(tmp_path, capsys):
     assert main(["--root", str(tmp_path), "ingest-beir", "--corpus", str(tmp_path / "missing.jsonl")]) == 1
+
+
+def test_set_overrides_apply(tmp_path, capsys):
+    """--set lets you change any config value without editing a file."""
+    from trace_rag.cli import apply_overrides
+    from trace_rag.config import Config
+
+    config = apply_overrides(Config(), ["generation.backend=stub", "retrieval.top_k=9",
+                                        "embedding.device=cpu", "retrieval.trust_lambda=2.5"])
+    assert config.generation.backend == "stub"
+    assert config.retrieval.top_k == 9 and isinstance(config.retrieval.top_k, int)
+    assert config.embedding.device == "cpu"
+    assert config.retrieval.trust_lambda == 2.5
+
+
+def test_set_override_rejects_unknown_keys():
+    import pytest
+
+    from trace_rag.cli import apply_overrides
+    from trace_rag.config import Config
+
+    with pytest.raises(ValueError, match="unknown config key"):
+        apply_overrides(Config(), ["retrieval.nonsense=1"])
+    with pytest.raises(ValueError, match="unknown config section"):
+        apply_overrides(Config(), ["nope.key=1"])
+    with pytest.raises(ValueError, match="section.key=value"):
+        apply_overrides(Config(), ["retrieval.top_k"])
+
+
+def test_set_override_rejects_invalid_value():
+    import pytest
+
+    from trace_rag.cli import apply_overrides
+    from trace_rag.config import Config
+
+    with pytest.raises(Exception):
+        apply_overrides(Config(), ["retrieval.top_k=0"])       # fails validation
+
+
+def test_cli_query_with_overrides(tmp_path, capsys):
+    corpus = tmp_path / "corpus.jsonl"
+    _write_corpus(corpus)
+    root = str(tmp_path / "run")
+    assert main(["--root", root, "ingest-beir", "--corpus", str(corpus), "--n-sources", "2"]) == 0
+    capsys.readouterr()
+    assert main(["--root", root, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--root", root, "--set", "generation.backend=stub", "--set", "retrieval.top_k=2",
+                 "query", "Who designed the Eiffel Tower?", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["retrieved"]) <= 2
+
+
+def test_set_works_before_and_after_the_subcommand():
+    """Both orders must work: users naturally append flags at the end."""
+    from trace_rag.cli import build_parser
+
+    parser = build_parser()
+    before = parser.parse_args(["--set", "generation.backend=stub", "query", "hi"])
+    after = parser.parse_args(["query", "hi", "--set", "generation.backend=stub"])
+    assert before.set == ["generation.backend=stub"]
+    assert after.set == ["generation.backend=stub"]
+    mixed = parser.parse_args(["--root", "r", "query", "hi", "--set", "retrieval.top_k=3"])
+    assert mixed.root == "r" and mixed.set == ["retrieval.top_k=3"]
+
+
+def test_cli_query_with_trailing_overrides(tmp_path, capsys):
+    corpus = tmp_path / "corpus.jsonl"
+    _write_corpus(corpus)
+    root = str(tmp_path / "run")
+    assert main(["--root", root, "ingest-beir", "--corpus", str(corpus), "--n-sources", "2"]) == 0
+    capsys.readouterr()
+    assert main(["--root", root, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--root", root, "query", "Who designed the Eiffel Tower?", "--json",
+                 "--set", "generation.backend=stub"]) == 0
+    assert json.loads(capsys.readouterr().out)["answer"]["query"]

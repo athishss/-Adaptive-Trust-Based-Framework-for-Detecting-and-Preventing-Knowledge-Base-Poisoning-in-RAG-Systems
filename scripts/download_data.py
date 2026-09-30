@@ -238,9 +238,17 @@ def main() -> int:
         if i >= 2:
             break
     print(f"\nreadable by the ingestor: {len(sample)} sample rows, first id = {sample[0]['doc_id']!r}")
-    print(f"\nnext:\n  trace-rag --config config/full_nq.yaml ingest-beir --corpus {corpus_for_run}"
-          f"\n  trace-rag --config config/full_nq.yaml index"
-          f"\n  trace-rag --config config/full_nq.yaml query \"who designed the eiffel tower?\"")
+    print(f"""
+next (config/nq_gpu.yaml uses Contriever on the GPU and an exact FAISS index):
+
+  trace-rag --config config/nq_gpu.yaml ingest-beir --corpus {corpus_for_run}
+  trace-rag --config config/nq_gpu.yaml index
+  trace-rag --config config/nq_gpu.yaml query "who designed the eiffel tower?" --set generation.backend=stub
+
+no GPU?   add            --set embedding.device=cpu      (slower; try a smaller --subset first)
+no LLM?   keep           --set generation.backend=stub   until vLLM or Ollama is running
+full corpus (2.68M)?     use config/full_nq.yaml, which switches the index to IVF-PQ
+""")
     return 0
 
 

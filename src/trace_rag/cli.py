@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence
 
 from .config import Config
 from .detection.training import LabelledRow, TrainingSet, train_scorer
@@ -26,10 +26,40 @@ from .utils.logging import get_logger
 logger = get_logger("trace_rag.cli")
 
 
+def apply_overrides(config: Config, overrides: Optional[List[str]]) -> Config:
+    """Apply ``--set section.key=value`` overrides onto a loaded config.
+
+    Values are parsed as YAML scalars, so ``--set retrieval.top_k=10`` gives an
+    int and ``--set generation.backend=stub`` gives a string.  Useful for trying
+    a change without editing a file, for example running retrieval before an
+    LLM server exists.
+    """
+    if not overrides:
+        return config
+    import yaml
+
+    data = config.model_dump()
+    for item in overrides:
+        if "=" not in item:
+            raise ValueError(f"--set expects section.key=value, got {item!r}")
+        path, raw = item.split("=", 1)
+        keys = path.strip().split(".")
+        target = data
+        for key in keys[:-1]:
+            if key not in target or not isinstance(target[key], dict):
+                raise ValueError(f"unknown config section: {'.'.join(keys[:-1])}")
+            target = target[key]
+        if keys[-1] not in target:
+            raise ValueError(f"unknown config key: {path}")
+        target[keys[-1]] = yaml.safe_load(raw)
+    return Config.model_validate(data)
+
+
 def _pipeline(args: argparse.Namespace, load_index: bool = True) -> PersonAPipeline:
     config = Config.load(args.config) if args.config else Config()
     if args.root:
         config.storage.root = args.root
+    config = apply_overrides(config, getattr(args, "set", None))
     return PersonAPipeline.from_config(config, load_existing_index=load_index)
 
 
@@ -85,7 +115,8 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 def cmd_train_scorer(args: argparse.Namespace) -> int:
     """Train from a JSONL of labelled rows produced by Person C's harness."""
-    config = Config.load(args.config) if args.config else Config()
+    config = apply_overrides(Config.load(args.config) if args.config else Config(),
+                             getattr(args, "set", None))
     dataset = TrainingSet()
     with open(args.rows, "r", encoding="utf-8") as handle:
         for line in handle:
@@ -127,18 +158,33 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _common_options(parser: argparse.ArgumentParser, suppress: bool = False) -> None:
+    """--config/--root/--set, accepted both before and after the subcommand.
+
+    On the subparsers the defaults are SUPPRESS, so an option that is not given
+    there does not overwrite one given before the subcommand.
+    """
+    default = argparse.SUPPRESS if suppress else None
+    parser.add_argument("--config", default=default, help="path to a YAML config file")
+    parser.add_argument("--root", default=default, help="override storage.root")
+    parser.add_argument("--set", action="append", metavar="KEY=VALUE", default=default,
+                        help="override any config value, e.g. --set generation.backend=stub "
+                             "--set embedding.device=cpu (repeatable)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="trace-rag", description="TRACE-RAG Person A pipeline")
-    parser.add_argument("--config", help="path to a YAML config file")
-    parser.add_argument("--root", help="override storage.root")
+    _common_options(parser)
+    common = argparse.ArgumentParser(add_help=False)
+    _common_options(common, suppress=True)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_ingest = sub.add_parser("ingest", help="ingest PDF/TXT/MD/HTML files from a folder")
+    p_ingest = sub.add_parser("ingest", help="ingest PDF/TXT/MD/HTML files from a folder", parents=[common])
     p_ingest.add_argument("--path", required=True)
     p_ingest.add_argument("--no-recursive", action="store_true")
     p_ingest.set_defaults(func=cmd_ingest)
 
-    p_beir = sub.add_parser("ingest-beir", help="ingest a BEIR corpus.jsonl")
+    p_beir = sub.add_parser("ingest-beir", help="ingest a BEIR corpus (Parquet or JSONL)", parents=[common])
     p_beir.add_argument("--corpus", required=True)
     p_beir.add_argument("--limit", type=int, default=None)
     p_beir.add_argument("--n-sources", type=int, default=2000)
@@ -146,33 +192,36 @@ def build_parser() -> argparse.ArgumentParser:
     p_beir.add_argument("--seconds-per-doc", type=float, default=60.0)
     p_beir.set_defaults(func=cmd_ingest_beir)
 
-    p_index = sub.add_parser("index", help="embed and index everything in the store")
+    p_index = sub.add_parser("index", help="embed and index everything in the store", parents=[common])
     p_index.add_argument("--rebuild", action="store_true")
     p_index.set_defaults(func=cmd_index)
 
-    p_query = sub.add_parser("query", help="answer one question")
+    p_query = sub.add_parser("query", help="answer one question", parents=[common])
     p_query.add_argument("question")
     p_query.add_argument("--query-id", default="cli")
     p_query.add_argument("--json", action="store_true")
     p_query.set_defaults(func=cmd_query)
 
-    p_train = sub.add_parser("train-scorer", help="train the suspicion scorer from labelled rows")
+    p_train = sub.add_parser("train-scorer", help="train the suspicion scorer from labelled rows", parents=[common])
     p_train.add_argument("--rows", required=True)
     p_train.add_argument("--out", default=None)
     p_train.set_defaults(func=cmd_train_scorer)
 
-    p_rem = sub.add_parser("remediate", help="flag past answers that used quarantined passages")
+    p_rem = sub.add_parser("remediate", help="flag past answers that used quarantined passages", parents=[common])
     p_rem.add_argument("--doc-ids", nargs="+", required=True)
     p_rem.add_argument("--reason", default="quarantined by trust ledger")
     p_rem.set_defaults(func=cmd_remediate)
 
-    p_stats = sub.add_parser("stats", help="show pipeline statistics")
+    p_stats = sub.add_parser("stats", help="show pipeline statistics", parents=[common])
     p_stats.set_defaults(func=cmd_stats)
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    for attribute in ("config", "root", "set"):
+        if not hasattr(args, attribute):
+            setattr(args, attribute, None)
     try:
         return int(args.func(args))
     except KeyboardInterrupt:                                 # pragma: no cover
