@@ -199,7 +199,7 @@ class PersonAPipeline:
 
     # ------------------------------------------------------------ maintenance
     def index_chunks(self, chunk_ids: Optional[Sequence[str]] = None, batch_size: int = 256,
-                     train_sample: int = 100_000, progress_every: int = 50_000) -> int:
+                     train_sample: int = 100_000, progress_every: int = 5_000) -> int:
         """Embed and index chunks from the provenance store.
 
         Streams from SQLite in batches: a 2.68M-passage corpus never sits in
@@ -214,6 +214,11 @@ class PersonAPipeline:
             self._train_index_if_needed(iter(records), train_sample)
             return self._add_records(iter(records), batch_size, progress_every)
 
+        pending = self.store.counts().get("chunks", 0)
+        logger.info("indexing %s passages with %s on %s (this is the slow step)",
+                    f"{pending:,}", getattr(self.embedder, "model_name",
+                                            getattr(self.embedder, "name", "embedder")),
+                    getattr(self.embedder, "device", "cpu"))
         needs_training = hasattr(self.index, "is_trained") and not self.index.is_trained
         if needs_training:
             self._train_index_if_needed(self.store.iter_chunks(batch_size=1000), train_sample)
@@ -235,11 +240,13 @@ class PersonAPipeline:
 
     def _add_records(self, records, batch_size: int, progress_every: int) -> int:  # type: ignore[no-untyped-def]
         total = 0
+        milestone = 0
+        started = time.perf_counter()
         buffer_ids: List[str] = []
         buffer_texts: List[str] = []
 
         def flush() -> None:
-            nonlocal total
+            nonlocal total, milestone
             if not buffer_ids:
                 return
             vectors = self.embedder.encode_documents(
@@ -248,8 +255,13 @@ class PersonAPipeline:
             total += len(buffer_ids)
             buffer_ids.clear()
             buffer_texts.clear()
-            if progress_every and total % progress_every < batch_size:
-                logger.info("indexed %d passages so far", total)
+            # Report on every completed block, so a long run never looks stuck.
+            if progress_every and total // progress_every > milestone:
+                milestone = total // progress_every
+                elapsed = time.perf_counter() - started
+                rate = total / elapsed if elapsed > 0 else 0.0
+                logger.info("indexed %s passages (%.0f/s, %.1f min elapsed)",
+                            f"{total:,}", rate, elapsed / 60.0)
 
         for record in records:
             buffer_ids.append(record.chunk_id)

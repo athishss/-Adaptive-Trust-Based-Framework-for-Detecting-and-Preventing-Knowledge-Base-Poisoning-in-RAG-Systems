@@ -393,3 +393,25 @@ def test_indexing_streams_instead_of_loading_everything(config, monkeypatch):
     assert calls["iter"] >= 1
     assert len(pipeline.index) == 500
     pipeline.close()
+
+
+def test_indexing_reports_progress_regularly(config, caplog):
+    """A long index run must not look frozen; progress is logged per block."""
+    import logging
+
+    from trace_rag.ingestion import Ingestor
+    from trace_rag.pipeline import PersonAPipeline
+
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    ingestor = Ingestor(pipeline.store, config.ingestion)
+    with pipeline.store.batch():
+        for i in range(600):
+            ingestor.ingest_text(f"d{i}", f"passage {i} about subject {i % 9}", f"s{i % 4}",
+                                 ingested_at=1_600_000_000.0 + i, passage_mode=True)
+    with caplog.at_level(logging.INFO, logger="trace_rag.pipeline"):
+        pipeline.index_chunks(batch_size=50, progress_every=100)
+    messages = [record.message for record in caplog.records]
+    assert any("indexing" in m and "passages with" in m for m in messages)   # start banner
+    progress = [m for m in messages if m.startswith("indexed ") and "/s," in m]
+    assert len(progress) >= 5, f"expected regular progress lines, got {progress}"
+    pipeline.close()
