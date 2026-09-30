@@ -15,6 +15,7 @@ from typing import Dict, Iterator, List, Optional
 from ..utils.textnorm import normalise
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".markdown", ".html", ".htm", ".pdf", ".jsonl"}
+BEIR_SUFFIXES = {".jsonl", ".json", ".parquet"}
 
 _TAG = re.compile(r"<[^>]+>")
 _SCRIPT_STYLE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
@@ -86,29 +87,71 @@ def parse_file(path: str | Path) -> str:
     raise ParseError(f"unsupported file type: {suffix}")
 
 
-def iter_beir_corpus(path: str | Path) -> Iterator[Dict[str, str]]:
-    """Stream a BEIR ``corpus.jsonl`` ({_id, title, text} per line).
+def _beir_row(raw: Dict[str, object], where: str) -> Dict[str, str]:
+    doc_id = str(raw.get("_id") or raw.get("id") or "").strip()
+    if not doc_id:
+        raise ParseError(f"{where}: row without _id")
+    return {
+        "doc_id": doc_id,
+        "title": normalise(str(raw.get("title") or "")),
+        "text": normalise(str(raw.get("text") or "")),
+    }
 
-    Tolerates blank lines; raises ParseError on malformed JSON so a broken
-    download fails loudly instead of silently shrinking the corpus.
+
+def iter_beir_parquet(path: str | Path, batch_size: int = 10_000) -> Iterator[Dict[str, str]]:
+    """Stream a BEIR corpus/queries Parquet file (what Hugging Face serves).
+
+    Read in row-group batches so a 764 MB corpus file does not have to be
+    materialised in memory.
     """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise ParseError(
+            "reading Parquet needs pyarrow: pip install 'trace-rag[data]' "
+            "(or download the JSONL version of the corpus)"
+        ) from exc
+    parquet_file = pq.ParquetFile(str(path))
+    available = set(parquet_file.schema_arrow.names)
+    id_column = "_id" if "_id" in available else ("id" if "id" in available else None)
+    if id_column is None:
+        raise ParseError(f"{path}: Parquet file has no _id column (found {sorted(available)})")
+    columns = [c for c in (id_column, "title", "text") if c in available]
+    for batch in parquet_file.iter_batches(batch_size=batch_size, columns=columns):
+        rows = batch.to_pylist()
+        for i, raw in enumerate(rows):
+            if id_column != "_id":
+                raw["_id"] = raw.get(id_column)
+            yield _beir_row(raw, f"{path}:row{i}")
+
+
+def iter_beir_jsonl(path: str | Path) -> Iterator[Dict[str, str]]:
+    """Stream a BEIR ``corpus.jsonl`` ({_id, title, text} per line)."""
     with open(path, "r", encoding="utf-8") as handle:
         for lineno, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
             try:
-                row = json.loads(line)
+                raw = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ParseError(f"{path}:{lineno}: invalid JSON") from exc
-            doc_id = str(row.get("_id") or row.get("id") or "").strip()
-            if not doc_id:
-                raise ParseError(f"{path}:{lineno}: row without _id")
-            yield {
-                "doc_id": doc_id,
-                "title": normalise(str(row.get("title", ""))),
-                "text": normalise(str(row.get("text", ""))),
-            }
+            yield _beir_row(raw, f"{path}:{lineno}")
+
+
+def iter_beir_corpus(path: str | Path) -> Iterator[Dict[str, str]]:
+    """Stream a BEIR corpus from JSONL or Parquet.
+
+    Hugging Face serves ``corpus-00000-of-00001.parquet``; the zip mirror ships
+    ``corpus.jsonl``.  Both are accepted so either download works.
+    """
+    suffix = Path(path).suffix.lower()
+    if suffix == ".parquet":
+        yield from iter_beir_parquet(path)
+        return
+    if suffix not in BEIR_SUFFIXES:
+        raise ParseError(f"unsupported BEIR corpus format: {suffix} (expected .jsonl or .parquet)")
+    yield from iter_beir_jsonl(path)
 
 
 def iter_files(root: str | Path, recursive: bool = True) -> Iterator[Path]:

@@ -197,3 +197,63 @@ def test_minhash_candidate_cap_keeps_assignment_deterministic():
 def test_unknown_family_backend_rejected():
     with pytest.raises(ValueError):
         build_family_assigner("magic")
+
+
+# --- 7. work package A7: profiling and ablation must run end to end ----------
+
+def test_profile_and_ablate_script(tmp_path, monkeypatch):
+    import json
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import profile_and_ablate as a7
+
+    out = tmp_path / "a7.json"
+    monkeypatch.setattr(sys, "argv", ["a7", "--root", str(tmp_path / "run"),
+                                      "--repeats", "1", "--out", str(out)])
+    assert a7.main() == 0
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert "total" in report["latency"] and report["latency"]["total"]["mean_ms"] > 0
+    assert report["latency"]["llm_calls_per_query"]["mean"] >= 1
+    assert "all_signals" in report["ablation"]
+    assert all(f"without_{s}" in report["ablation"] for s in
+               ("s1_query_echo", "s6_neighbourhood_density"))
+
+
+# --- 8. Hugging Face serves Parquet, not JSONL ------------------------------
+
+def test_beir_parquet_is_readable(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+    import pyarrow as pa
+
+    from trace_rag.ingestion import iter_beir_corpus
+
+    table = pa.table({"_id": pa.array([f"doc{i}" for i in range(50)]),
+                      "title": pa.array([f"Title {i}" for i in range(50)]),
+                      "text": pa.array([f"Passage {i} of encyclopaedic prose." for i in range(50)])})
+    path = tmp_path / "corpus-00000-of-00001.parquet"
+    pq.write_table(table, path)
+    rows = list(iter_beir_corpus(path))
+    assert len(rows) == 50
+    assert rows[0] == {"doc_id": "doc0", "title": "Title 0",
+                       "text": "Passage 0 of encyclopaedic prose."}
+
+
+def test_beir_parquet_without_id_column_fails_loudly(tmp_path):
+    pq = pytest.importorskip("pyarrow.parquet")
+    import pyarrow as pa
+
+    from trace_rag.ingestion import ParseError, iter_beir_corpus
+
+    pq.write_table(pa.table({"text": pa.array(["a", "b"])}), tmp_path / "bad.parquet")
+    with pytest.raises(ParseError, match="_id"):
+        list(iter_beir_corpus(tmp_path / "bad.parquet"))
+
+
+def test_unsupported_corpus_suffix_rejected(tmp_path):
+    from trace_rag.ingestion import ParseError, iter_beir_corpus
+
+    (tmp_path / "corpus.csv").write_text("a,b\n1,2", encoding="utf-8")
+    with pytest.raises(ParseError):
+        list(iter_beir_corpus(tmp_path / "corpus.csv"))

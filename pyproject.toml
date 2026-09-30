@@ -22,9 +22,10 @@ dependencies = [
 faiss = ["faiss-cpu>=1.7"]
 models = ["torch>=2.1", "transformers>=4.40"]
 docs = ["pypdf>=3.17", "beautifulsoup4>=4.12"]
+data = ["pyarrow>=14.0"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1"]
 all = ["faiss-cpu>=1.7", "torch>=2.1", "transformers>=4.40", "pypdf>=3.17",
-       "beautifulsoup4>=4.12", "pytest>=7.4", "pytest-cov>=4.1"]
+       "beautifulsoup4>=4.12", "pyarrow>=14.0", "pytest>=7.4", "pytest-cov>=4.1"]
 
 [project.scripts]
 trace-rag = "trace_rag.cli:main"

@@ -19,8 +19,9 @@ FAISS + Llama-3.1-8B when you run real experiments.
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 130 tests
+pytest -q                            # 134 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
+python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
 
 The demo ingests a clean corpus, injects PoisonedRAG-style passages from a new
@@ -32,7 +33,7 @@ remediation of the answers already served.
 
 ```bash
 trace-rag ingest       --path data/docs              # PDF / TXT / MD / HTML
-trace-rag ingest-beir  --corpus data/nq/corpus.jsonl --limit 50000
+trace-rag ingest-beir  --corpus data/nq/corpus-00000-of-00001.parquet --limit 50000
 trace-rag index
 trace-rag query        "who designed the eiffel tower?"
 trace-rag train-scorer --rows runs/nq/labelled_rows.jsonl
@@ -61,6 +62,7 @@ print(result.answer, result.record.abstained, result.llm_calls)
 | L2 Cheap signals | `detection/signals.py` | Six signals, no LLM calls: query echo, similarity outlier, cluster tightness, ingestion burst, source immaturity, neighbourhood density. |
 | L3 Suspicion scorer | `detection/scorer.py` | Logistic regression + isotonic calibration, with band thresholds chosen under **two** constraints at once: HIGH-band false-positive rate ≤ target and mean escalations per query ≤ budget. |
 | L5 Answer provenance | `provenance/` | Every answer records the passages it used and the trust values at the time; quarantining a passage flags every past answer that relied on it. |
+| A7 Profiling & ablation | `scripts/profile_and_ablate.py` | Per-stage latency percentiles, LLM calls per query, and held-out AUC with each signal switched off. |
 | L7 Grounded generation | `generation/` | Mandatory `[passage-id]` citations, hallucinated citations rejected, abstention when the trust-weighted evidence mass is too low. |
 
 Layers L4 (verifier) and L6 (policy/quarantine) belong to Person B; this repo
@@ -97,7 +99,7 @@ generation:{ backend: openai, model_name: meta-llama/Llama-3.1-8B-Instruct,
 ```bash
 pip install -e ".[all]"
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000     # or: ollama run llama3.1:8b
-trace-rag --config config/full_nq.yaml ingest-beir --corpus data/nq/corpus.jsonl
+trace-rag --config config/full_nq.yaml ingest-beir --corpus data/nq/corpus-00000-of-00001.parquet
 trace-rag --config config/full_nq.yaml index
 ```
 
@@ -110,7 +112,7 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 130 tests
+pytest -q                                    # 134 tests
 pytest -q --cov=trace_rag --cov-report=term-missing   # 89% coverage
 ```
 
@@ -163,6 +165,10 @@ config/  docs/  examples/  scripts/  tests/
 
 ## Honest limits
 
+* **No real dataset has run through this code yet.** Everything here has been
+  exercised on the bundled 65-passage toy corpus and on synthetic files written
+  to the BEIR schema; downloading NQ and running it is the next step, and it is
+  where the first real numbers come from.
 * The hashing embedder and stub LLM exist for tests and the demo. No number from
   them belongs in the report.
 * The bundled mini corpus is trivially separable; real evaluation is NQ +
