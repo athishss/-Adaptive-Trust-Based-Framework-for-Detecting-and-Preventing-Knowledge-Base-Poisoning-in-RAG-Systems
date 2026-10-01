@@ -112,7 +112,13 @@ class ProvenanceStore:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._deferred = 0                      # >0 while inside batch(): commits are deferred
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        try:
+            self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        except sqlite3.OperationalError as exc:
+            raise sqlite3.OperationalError(
+                f"cannot open the provenance store at {self.path}: {exc}. Check that the folder exists "
+                f"and is writable (storage.root in your config)."
+            ) from exc
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)

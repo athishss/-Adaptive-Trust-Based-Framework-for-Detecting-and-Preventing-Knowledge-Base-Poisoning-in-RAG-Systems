@@ -154,11 +154,28 @@ class FaissIndex:
     def load(cls, path: str | Path) -> "FaissIndex":
         import faiss  # type: ignore
 
+        from .numpy_index import IndexLoadError
+
         path = Path(path)
-        meta = json.loads(path.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        meta_path = path.with_suffix(".meta.json")
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            raise IndexLoadError(
+                f"cannot read the index metadata at {meta_path}: {type(exc).__name__}: {exc}. "
+                f"Rebuild the index with: trace-rag index --rebuild"
+            ) from exc
         index = cls(dim=meta["dim"], kind=meta["kind"], nlist=meta["nlist"], pq_m=meta["pq_m"],
                     nbits=meta["nbits"], hnsw_m=meta["hnsw_m"], nprobe=meta["nprobe"])
-        index._index = faiss.read_index(str(path.with_suffix(".faiss")))
+        try:
+            index._index = faiss.read_index(str(path.with_suffix(".faiss")))
+        except Exception as exc:
+            raise IndexLoadError(
+                f"cannot read the FAISS index at {path.with_suffix('.faiss')}: "
+                f"{type(exc).__name__}: {exc}. Rebuild it with: trace-rag index --rebuild"
+            ) from exc
         if meta["kind"] == "ivfpq":
             index._index.nprobe = meta["nprobe"]
         index._ids = list(meta["ids"])

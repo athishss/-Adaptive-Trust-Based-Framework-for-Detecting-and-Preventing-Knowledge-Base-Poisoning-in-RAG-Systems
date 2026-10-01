@@ -497,3 +497,41 @@ def test_index_limit_lets_you_work_in_sittings(config):
     assert pipeline.index_chunks(batch_size=25, limit=100) == 100
     assert len(pipeline.index) == 200
     pipeline.close()
+
+
+# --- 13. unreadable files produced cryptic errors ---------------------------
+
+def test_corrupt_numpy_index_explains_itself(tmp_path):
+    from trace_rag.index import IndexLoadError, NumpyFlatIndex
+
+    (tmp_path / "idx.npz").write_bytes(b"this is not an index")
+    with pytest.raises(IndexLoadError, match="--rebuild"):
+        NumpyFlatIndex.load(tmp_path / "idx")
+
+
+def test_corrupt_faiss_index_explains_itself(tmp_path):
+    from trace_rag.index import IndexLoadError
+    from trace_rag.index.faiss_index import FaissIndex
+
+    (tmp_path / "idx.meta.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "idx.faiss").write_bytes(b"junk")
+    with pytest.raises(IndexLoadError, match="--rebuild"):
+        FaissIndex.load(tmp_path / "idx")
+
+
+def test_missing_index_still_raises_filenotfound(tmp_path):
+    from trace_rag.index import NumpyFlatIndex
+
+    with pytest.raises(FileNotFoundError):
+        NumpyFlatIndex.load(tmp_path / "absent")
+
+
+def test_unopenable_store_names_the_path(tmp_path):
+    import sqlite3
+
+    from trace_rag.ingestion import ProvenanceStore
+
+    # a directory where the database file should be
+    (tmp_path / "blocked.sqlite3").mkdir()
+    with pytest.raises(sqlite3.OperationalError, match="cannot open the provenance store"):
+        ProvenanceStore(tmp_path / "blocked.sqlite3")

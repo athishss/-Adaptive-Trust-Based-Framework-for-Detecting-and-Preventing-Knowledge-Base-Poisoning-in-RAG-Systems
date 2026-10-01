@@ -8,6 +8,10 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 
+class IndexLoadError(RuntimeError):
+    """A saved index exists but cannot be read."""
+
+
 class NumpyFlatIndex:
     """Exact inner-product search over L2-normalised rows.
 
@@ -81,7 +85,17 @@ class NumpyFlatIndex:
 
     @classmethod
     def load(cls, path: str | Path) -> "NumpyFlatIndex":
-        data = np.load(Path(path).with_suffix(".npz"), allow_pickle=True)
+        target = Path(path).with_suffix(".npz")
+        try:
+            data = np.load(target, allow_pickle=True)
+        except FileNotFoundError:
+            raise
+        except Exception as exc:                 # truncated or corrupted file
+            raise IndexLoadError(
+                f"cannot read the index at {target}: {type(exc).__name__}: {exc}. "
+                f"The file is probably truncated (an interrupted save). Rebuild it with: "
+                f"trace-rag index --rebuild"
+            ) from exc
         index = cls(int(data["dim"]))
         ids = [str(i) for i in data["ids"].tolist()]
         index.add(ids, data["vectors"])

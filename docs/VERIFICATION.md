@@ -52,6 +52,26 @@ embedding and FAISS indexing of 6,128 passages in about 66 seconds including
 model load, and retrieval in 316 ms. Every passage returned for "who designed
 the eiffel tower?" was about the Eiffel Tower.
 
+## Fifth pass (edge cases and failure modes)
+
+A sweep of the failure modes a real deployment hits. Eleven of thirteen passed
+unchanged; two produced unhelpful errors and were fixed.
+
+| # | Defect | Fix | Test |
+|---|---|---|---|
+| 15 | A truncated or corrupted index file failed with `UnpicklingError`, which does not say what to do | `IndexLoadError` naming the file and the command that rebuilds it; a genuinely missing file still raises `FileNotFoundError` | `test_corrupt_numpy_index_explains_itself`, `test_corrupt_faiss_index_explains_itself` |
+| 16 | A database that could not be opened reported SQLite's bare message with no path | the error names the store and the path, and points at `storage.root` | `test_unopenable_store_names_the_path` |
+
+Passed unchanged: a corpus smaller than `top_k`; every document quarantined
+(abstains cleanly); index/store drift after rows vanish; an invalid config; an
+empty corpus file; re-ingesting the same corpus twice (idempotent); querying
+while another thread indexes; a corrupt scorer file; a 50,000-word document and
+a passage of pure punctuation; a trust provider that raises (the error surfaces
+rather than being swallowed); two pipelines sharing one database.
+
+Not testable in this container: file-permission failures, because it runs as
+root and root bypasses permission checks.
+
 ## Checks that passed first time
 
 Fuzzing (300 hostile documents, 120 random queries, 40 random configurations)

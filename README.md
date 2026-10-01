@@ -41,7 +41,7 @@ Full walkthrough, including serving Llama-3.1-8B and the troubleshooting table:
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 171 tests
+pytest -q                            # 175 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
@@ -134,7 +134,7 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 171 tests
+pytest -q                                    # 175 tests
 pytest -q --cov=trace_rag --cov-report=term-missing   # 92% coverage
 ```
 
@@ -209,7 +209,7 @@ config/  docs/  examples/  scripts/  tests/
 ## Status
 
 Person A is complete and integration-ready: all seven work packages delivered,
-171 tests, 92% coverage, and the pipeline verified end to end on real BEIR
+175 tests, 92% coverage, and the pipeline verified end to end on real BEIR
 Natural Questions data (Contriever embeddings on GPU, FAISS retrieval).
 
 Person B plugs in through `trace_rag.contracts` (see [`docs/INTERFACES.md`](docs/INTERFACES.md)).

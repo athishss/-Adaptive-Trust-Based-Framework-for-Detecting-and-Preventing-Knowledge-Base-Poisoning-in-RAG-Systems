@@ -1,5 +1,5 @@
 from ..config import IndexConfig
-from .numpy_index import NumpyFlatIndex
+from .numpy_index import IndexLoadError, NumpyFlatIndex
 
 
 def build_index(config: IndexConfig, dim: int):  # type: ignore[no-untyped-def]
@@ -21,4 +21,4 @@ def load_index(config: IndexConfig, path: str):  # type: ignore[no-untyped-def]
     return FaissIndex.load(path)
 
 
-__all__ = ["NumpyFlatIndex", "build_index", "load_index"]
+__all__ = ["NumpyFlatIndex", "IndexLoadError", "build_index", "load_index"]
