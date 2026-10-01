@@ -212,7 +212,8 @@ Person A is complete and integration-ready: all seven work packages delivered,
 175 tests, 92% coverage, and the pipeline verified end to end on real BEIR
 Natural Questions data (Contriever embeddings on GPU, FAISS retrieval).
 
-Person B plugs in through `trace_rag.contracts` (see [`docs/INTERFACES.md`](docs/INTERFACES.md)).
+Person B: start with [`docs/HANDOVER.md`](docs/HANDOVER.md), then
+[`docs/INTERFACES.md`](docs/INTERFACES.md).
 Person C drives experiments through `PersonAPipeline.answer()`.
 
 Measured research results - attack success rates, detection rates, the
