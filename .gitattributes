@@ -1,0 +1,8 @@
+# Normalise line endings: the repo stores LF, Windows checkouts get CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.parquet binary
+*.faiss binary
+*.npz binary
+*.joblib binary
+*.sqlite3 binary

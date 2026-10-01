@@ -205,3 +205,16 @@ config/  docs/  examples/  scripts/  tests/
   TrustRAG's clustering). The contribution here is their combination with source
   history and the leakage-guarded, constraint-solving calibration — that framing
   is what goes in the paper.
+
+## Status
+
+Person A is complete and integration-ready: all seven work packages delivered,
+171 tests, 92% coverage, and the pipeline verified end to end on real BEIR
+Natural Questions data (Contriever embeddings on GPU, FAISS retrieval).
+
+Person B plugs in through `trace_rag.contracts` (see [`docs/INTERFACES.md`](docs/INTERFACES.md)).
+Person C drives experiments through `PersonAPipeline.answer()`.
+
+Measured research results - attack success rates, detection rates, the
+security/cost trade-off - need Person B's trust ledger and Person C's attack
+harness, and are not claimed here.
