@@ -451,3 +451,49 @@ def test_iter_chunks_does_not_slow_down_with_depth(store):
     assert last_quarter < first_quarter * 3 + 0.05, (
         f"streaming degrades with depth: first 10k {first_quarter:.2f}s, "
         f"last 10k {last_quarter:.2f}s")
+
+
+# --- 12. indexing lost everything if the machine died mid-run ---------------
+
+def test_indexing_resumes_and_skips_what_is_done(config):
+    """A crash, a power cut or Ctrl+C must not cost the whole run."""
+    from trace_rag.ingestion import Ingestor
+    from trace_rag.pipeline import PersonAPipeline
+
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    ingestor = Ingestor(pipeline.store, config.ingestion)
+    with pipeline.store.batch():
+        for i in range(1000):
+            ingestor.ingest_text(f"d{i:04d}", f"passage {i} about subject {i % 9}", f"s{i % 4}",
+                                 ingested_at=1_600_000_000.0 + i, passage_mode=True)
+
+    first = pipeline.index_chunks(batch_size=50, limit=300, save_every=100)
+    assert 300 <= first <= 350            # stops at the first batch boundary past the limit
+    indexed_after_first = len(pipeline.index)
+    pipeline.save_index()
+    pipeline.close()
+
+    resumed = PersonAPipeline.from_config(config, load_existing_index=True)
+    assert len(resumed.index) == indexed_after_first      # checkpoint survived the restart
+    second = resumed.index_chunks(batch_size=50)
+    assert second == 1000 - indexed_after_first           # only the remainder was embedded
+    assert len(resumed.index) == 1000
+    third = resumed.index_chunks(batch_size=50)
+    assert third == 0                                     # nothing left to do
+    resumed.close()
+
+
+def test_index_limit_lets_you_work_in_sittings(config):
+    from trace_rag.ingestion import Ingestor
+    from trace_rag.pipeline import PersonAPipeline
+
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    ingestor = Ingestor(pipeline.store, config.ingestion)
+    with pipeline.store.batch():
+        for i in range(400):
+            ingestor.ingest_text(f"d{i:04d}", f"passage {i}", "s", ingested_at=1_600_000_000.0 + i,
+                                 passage_mode=True)
+    assert pipeline.index_chunks(batch_size=25, limit=100) == 100
+    assert pipeline.index_chunks(batch_size=25, limit=100) == 100
+    assert len(pipeline.index) == 200
+    pipeline.close()

@@ -105,7 +105,8 @@ def cmd_ingest_beir(args: argparse.Namespace) -> int:
 
 def cmd_index(args: argparse.Namespace) -> int:
     pipeline = _pipeline(args, load_index=not args.rebuild)
-    count = pipeline.index_chunks()
+    count = pipeline.index_chunks(limit=args.limit, save_every=args.save_every,
+                                  batch_size=args.batch_size)
     path = pipeline.save_index()
     print(json.dumps({"indexed": count, "index_size": len(pipeline.index), "path": path}, indent=2))
     pipeline.close()
@@ -218,7 +219,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_beir.set_defaults(func=cmd_ingest_beir)
 
     p_index = sub.add_parser("index", help="embed and index everything in the store", parents=[common])
-    p_index.add_argument("--rebuild", action="store_true")
+    p_index.add_argument("--rebuild", action="store_true",
+                         help="start a fresh index instead of resuming the saved one")
+    p_index.add_argument("--limit", type=int, default=None,
+                         help="stop after this many newly indexed passages (index in sittings)")
+    p_index.add_argument("--save-every", type=int, default=20000,
+                         help="checkpoint the index to disk every N passages (0 disables)")
+    p_index.add_argument("--batch-size", type=int, default=256)
     p_index.set_defaults(func=cmd_index)
 
     p_query = sub.add_parser("query", help="answer one question", parents=[common])

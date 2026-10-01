@@ -199,30 +199,37 @@ class PersonAPipeline:
 
     # ------------------------------------------------------------ maintenance
     def index_chunks(self, chunk_ids: Optional[Sequence[str]] = None, batch_size: int = 256,
-                     train_sample: int = 100_000, progress_every: int = 5_000) -> int:
+                     train_sample: int = 100_000, progress_every: int = 5_000,
+                     limit: Optional[int] = None, save_every: int = 0) -> int:
         """Embed and index chunks from the provenance store.
 
-        Streams from SQLite in batches: a 2.68M-passage corpus never sits in
-        memory as Python objects, only one ``batch_size`` window at a time.
-        Passing ``chunk_ids`` indexes just those (used when Person C injects a
-        new batch mid-stream); otherwise the whole store is indexed.
+        Streams from SQLite in batches, so a 2.68M-passage corpus never sits in
+        memory.  **Resumable**: passages already in the index are skipped, and
+        ``save_every`` checkpoints the index to disk, so a crash, a power cut or
+        a Ctrl+C costs at most that many passages instead of the whole run.
+        ``limit`` stops after that many newly indexed passages, which is how you
+        index a corpus in sittings.
         """
         if chunk_ids is not None:
             records = sorted(self.store.get_chunks(chunk_ids).values(), key=lambda r: r.chunk_id)
             if not records:
                 return 0
             self._train_index_if_needed(iter(records), train_sample)
-            return self._add_records(iter(records), batch_size, progress_every)
+            return self._add_records(iter(records), batch_size, progress_every, limit, save_every)
 
         pending = self.store.counts().get("chunks", 0)
         logger.info("indexing %s passages with %s on %s (this is the slow step)",
                     f"{pending:,}", getattr(self.embedder, "model_name",
                                             getattr(self.embedder, "name", "embedder")),
                     getattr(self.embedder, "device", "cpu"))
+        already = len(self.index)
+        if already:
+            logger.info("%s passages are already indexed; they will be skipped", f"{already:,}")
         needs_training = hasattr(self.index, "is_trained") and not self.index.is_trained
         if needs_training:
             self._train_index_if_needed(self.store.iter_chunks(batch_size=1000), train_sample)
-        return self._add_records(self.store.iter_chunks(batch_size=1000), batch_size, progress_every)
+        return self._add_records(self.store.iter_chunks(batch_size=1000), batch_size,
+                                 progress_every, limit, save_every)
 
     def _train_index_if_needed(self, records, train_sample: int) -> None:  # type: ignore[no-untyped-def]
         if not hasattr(self.index, "is_trained") or self.index.is_trained:
@@ -238,15 +245,17 @@ class PersonAPipeline:
         vectors = self.embedder.encode_documents(texts, batch_size=self.config.embedding.batch_size)
         self.index.train(vectors)
 
-    def _add_records(self, records, batch_size: int, progress_every: int) -> int:  # type: ignore[no-untyped-def]
+    def _add_records(self, records, batch_size: int, progress_every: int,  # type: ignore[no-untyped-def]
+                     limit: Optional[int] = None, save_every: int = 0) -> int:
         total = 0
         milestone = 0
+        checkpoint = 0
         started = time.perf_counter()
         buffer_ids: List[str] = []
         buffer_texts: List[str] = []
 
         def flush() -> None:
-            nonlocal total, milestone
+            nonlocal total, milestone, checkpoint
             if not buffer_ids:
                 return
             vectors = self.embedder.encode_documents(
@@ -262,12 +271,21 @@ class PersonAPipeline:
                 rate = total / elapsed if elapsed > 0 else 0.0
                 logger.info("indexed %s passages (%.0f/s, %.1f min elapsed)",
                             f"{total:,}", rate, elapsed / 60.0)
+            if save_every and total // save_every > checkpoint:
+                checkpoint = total // save_every
+                path = self.save_index()
+                logger.info("checkpoint saved to %s (%s passages)", path, f"{total:,}")
 
         for record in records:
+            if record.chunk_id in self.index:          # resume: already embedded
+                continue
             buffer_ids.append(record.chunk_id)
             buffer_texts.append(record.text)
             if len(buffer_ids) >= batch_size:
                 flush()
+                if limit is not None and total >= limit:
+                    logger.info("stopping at the requested limit of %s passages", f"{limit:,}")
+                    break
         flush()
         logger.info("indexed %d chunks (index size %d)", total, len(self.index))
         return total
