@@ -29,22 +29,40 @@ def test_lcs_length():
     assert lcs_length([], ["a"]) == 0
 
 
-def test_similarity_outlier_fires_only_above_the_pool():
-    pool = [0.40, 0.42, 0.45, 0.41, 0.39, 0.43]
-    assert similarity_outlier(0.95, pool + [0.95]) > 0.8
-    assert similarity_outlier(0.42, pool) < 0.3
-    assert similarity_outlier(0.30, pool) == 0.0        # below median is never suspicious
+def test_similarity_outlier_flags_passages_detached_from_the_curve():
+    pool = [0.95, 0.45, 0.43, 0.42, 0.41, 0.40, 0.39]
+    assert similarity_outlier(0.95, pool) > 0.8          # sits above a large gap
+    assert similarity_outlier(0.43, pool) == 0.0         # on the natural curve
+    assert similarity_outlier(0.30, pool) == 0.0         # below everything
+
+
+def test_similarity_outlier_is_near_zero_on_a_smooth_decay():
+    """Real retrieval decays smoothly; clean top results must not look suspicious.
+
+    Measured on real Natural Questions retrieval, the earlier whole-pool
+    comparison gave ordinary clean passages 0.8-0.98 here.
+    """
+    pool = [0.80, 0.78, 0.77, 0.76, 0.75] + [0.74 - 0.005 * i for i in range(45)]
+    scores = [similarity_outlier(s, pool) for s in pool[:5]]
+    assert max(scores) < 0.2, scores
 
 
 def test_similarity_outlier_is_robust_to_several_injections():
-    """Six injected passages should not hide themselves by dragging the mean up."""
-    clean = [0.30, 0.31, 0.32, 0.33, 0.30, 0.31, 0.29, 0.32]
-    injected = [0.90] * 6
-    assert similarity_outlier(0.90, clean + injected) > 0.5
+    """Six injected passages must not hide by setting the baseline themselves."""
+    clean = [0.33, 0.32, 0.32, 0.31, 0.31, 0.30, 0.30, 0.29]
+    pool = [0.90] * 6 + clean
+    assert similarity_outlier(0.90, pool) > 0.8
+    assert similarity_outlier(0.31, pool) == 0.0
 
 
 def test_similarity_outlier_needs_enough_pool():
     assert similarity_outlier(0.9, [0.1, 0.2]) == 0.0
+
+
+def test_similarity_outlier_ignores_pool_order():
+    ordered = [0.95, 0.45, 0.43, 0.42, 0.41, 0.40, 0.39]
+    shuffled = [0.41, 0.95, 0.39, 0.45, 0.42, 0.40, 0.43]
+    assert similarity_outlier(0.95, ordered) == similarity_outlier(0.95, shuffled)
 
 
 def test_cluster_tightness_requires_new_sources():

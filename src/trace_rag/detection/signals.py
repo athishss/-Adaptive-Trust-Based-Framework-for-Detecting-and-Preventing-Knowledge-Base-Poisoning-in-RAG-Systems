@@ -84,26 +84,47 @@ def query_echo(query: str, text: str, prefix_tokens: int = 128) -> float:
     return _clip01(max(bigram, lcs_recall, 0.5 * unigram))
 
 
-def similarity_outlier(similarity: float, pool_similarities: Sequence[float]) -> float:
-    """S2: how far above the candidate pool this passage's similarity sits.
+def similarity_outlier(similarity: float, pool_similarities: Sequence[float],
+                       local_window: int = 20, min_gap_ratio: float = 3.0,
+                       saturation_ratio: float = 18.0) -> float:
+    """S2: is this passage part of a cluster detached from the similarity curve?
 
-    Retriever-optimised passages sit unusually close to the query.  A robust
-    z-score (median/MAD) is used so a handful of injected passages cannot drag
-    the mean up and hide themselves.
+    Retrieval similarities decay smoothly: each rank sits slightly below the one
+    above it.  Passages optimised for the query do not join that curve, they sit
+    above it with a visible gap underneath - and because an attacker injects
+    several, the gap appears below the whole injected group.
+
+    So the score is driven by the largest gap in the top of the pool, measured
+    against the typical gap there.  Everything above an unusually large gap is
+    flagged; everything below it scores zero.
+
+    Comparing a passage to the pool as a whole (the obvious approach) does not
+    work: signals are only computed for the top-k, which are the highest
+    similarities in the pool by construction.  Measured on real Natural
+    Questions retrieval that gave ordinary clean passages 0.8-0.98.
     """
-    values = np.asarray([s for s in pool_similarities if math.isfinite(s)], dtype=np.float64)
-    if values.size < 4:
+    values = sorted((float(s) for s in pool_similarities if math.isfinite(s)),
+                    reverse=True)[:max(6, local_window)]
+    if len(values) < 6:
         return 0.0
-    median = float(np.median(values))
-    mad = float(np.median(np.abs(values - median)))
-    scale = 1.4826 * mad
-    if scale <= 1e-9:
-        spread = float(values.std())
-        if spread <= 1e-9:
-            return 0.0
-        scale = spread
-    z = (float(similarity) - median) / scale
-    return _clip01(2.0 * (_logistic(z, scale=1.5) - 0.5))       # z<=0 -> 0, z>>0 -> 1
+    gaps = [values[i] - values[i + 1] for i in range(len(values) - 1)]
+    if not gaps or max(gaps) <= 0:
+        return 0.0
+    typical = float(np.median([g for g in gaps if g >= 0])) if gaps else 0.0
+    largest = max(gaps)
+    boundary = gaps.index(largest)                 # passages at ranks <= boundary sit above it
+    if typical <= 1e-9:
+        typical = 1e-9
+    ratio = largest / typical
+    if ratio <= min_gap_ratio:
+        return 0.0
+
+    position = next((i for i, v in enumerate(values)
+                     if abs(v - float(similarity)) < 1e-12), len(values))
+    if position > boundary:
+        return 0.0
+    span = max(1e-9, saturation_ratio - min_gap_ratio)
+    return _clip01((ratio - min_gap_ratio) / span)
 
 
 def cluster_tightness(target_vector: np.ndarray, pool_vectors: np.ndarray,

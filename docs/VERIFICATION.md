@@ -37,6 +37,21 @@ Added in the same pass: `scripts/download_data.py` (resumable Hugging Face
 download plus a subset builder that never drops a gold passage), `environment.yml`,
 `config/nq_gpu.yaml` and `docs/RUNNING_ON_GPU.md`.
 
+## Fourth pass (first real-data run)
+
+Running the pipeline over real Natural Questions passages on a Windows laptop
+with an RTX 3050 Ti exposed two defects that toy data could not.
+
+| # | Defect | Why it mattered | Fix | Test |
+|---|---|---|---|---|
+| 13 | **Signal S2 fired on everything.** It compared a passage's similarity against the whole candidate pool, but signals are only computed for the top-k, which are the highest similarities in that pool by construction. On real retrieval, ordinary clean passages scored 0.81-0.98. | the signal carried no information and inflated suspicion for every passage, pushing clean content into the MEDIUM band and wasting the verification budget | S2 now measures detachment from the similarity curve: the largest gap in the top of the pool against the typical gap there, flagging only what sits above an unusually large gap. Clean smooth decay scores 0.07, a cluster of injected passages scores 1.0 | `test_similarity_outlier_is_near_zero_on_a_smooth_decay`, `test_similarity_outlier_is_robust_to_several_injections` |
+| 14 | **Indexing had no checkpoints.** A power cut twelve hours into a 200k run lost everything. | unusable on a laptop, and painful on any machine | `index_chunks` skips passages already in the index, checkpoints every `--save-every` passages and honours `--limit`, so a corpus can be indexed in sittings | `test_indexing_resumes_and_skips_what_is_done`, `test_index_limit_lets_you_work_in_sittings` |
+
+Measured on that laptop: ingestion of 5,000 BEIR passages in seconds, Contriever
+embedding and FAISS indexing of 6,128 passages in about 66 seconds including
+model load, and retrieval in 316 ms. Every passage returned for "who designed
+the eiffel tower?" was about the Eiffel Tower.
+
 ## Checks that passed first time
 
 Fuzzing (300 hostile documents, 120 random queries, 40 random configurations)

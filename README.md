@@ -41,7 +41,7 @@ Full walkthrough, including serving Llama-3.1-8B and the troubleshooting table:
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 153 tests
+pytest -q                            # 171 tests
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
@@ -134,7 +134,7 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 153 tests
+pytest -q                                    # 171 tests
 pytest -q --cov=trace_rag --cov-report=term-missing   # 92% coverage
 ```
 
@@ -187,10 +187,11 @@ config/  docs/  examples/  scripts/  tests/
 
 ## Honest limits
 
-* **No real dataset has run through this code yet.** Everything here has been
-  exercised on the bundled 65-passage toy corpus and on synthetic files written
-  to the BEIR schema; downloading NQ and running it is the next step, and it is
-  where the first real numbers come from.
+* Real Natural Questions data has been through this pipeline end to end
+  (ingest, Contriever embeddings, FAISS, retrieval) on a laptop GPU. That run
+  is what exposed defects 13 and 14 in `docs/VERIFICATION.md`. What has **not**
+  happened yet is a measured experiment: attack success rates and detection
+  numbers need Person C's harness and Person B's ledger.
 * The hashing embedder and stub LLM exist for tests and the demo. No number from
   them belongs in the report.
 * The bundled mini corpus is trivially separable; real evaluation is NQ +
