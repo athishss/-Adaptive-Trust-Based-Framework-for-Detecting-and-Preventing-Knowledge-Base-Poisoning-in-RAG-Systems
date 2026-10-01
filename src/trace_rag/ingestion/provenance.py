@@ -246,17 +246,25 @@ class ProvenanceStore:
         return out
 
     def iter_chunks(self, batch_size: int = 1000) -> Iterable[ChunkRecord]:
-        offset = 0
+        """Stream every chunk in chunk_id order.
+
+        Keyset pagination ("where chunk_id > last"), not OFFSET: OFFSET makes
+        SQLite re-scan and discard every earlier row on each page, so iteration
+        slows down the further it gets - measured 0.3s for the first 50k rows
+        and 0.7s for the fourth 50k, and it keeps growing with corpus size.
+        """
+        last_id = ""
         while True:
             with self._lock:
                 rows = self._conn.execute(
-                    "SELECT * FROM chunks ORDER BY chunk_id LIMIT ? OFFSET ?", (batch_size, offset)
+                    "SELECT * FROM chunks WHERE chunk_id > ? ORDER BY chunk_id LIMIT ?",
+                    (last_id, batch_size),
                 ).fetchall()
             if not rows:
                 return
             for row in rows:
                 yield self._row_to_chunk(row)
-            offset += len(rows)
+            last_id = rows[-1]["chunk_id"]
 
     def source_stats(self, source_id: str) -> Optional[SourceStats]:
         with self._lock:

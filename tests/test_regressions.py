@@ -415,3 +415,39 @@ def test_indexing_reports_progress_regularly(config, caplog):
     progress = [m for m in messages if m.startswith("indexed ") and "/s," in m]
     assert len(progress) >= 5, f"expected regular progress lines, got {progress}"
     pipeline.close()
+
+
+# --- 11. OFFSET pagination made streaming slower the further it went --------
+
+def test_iter_chunks_returns_every_row_once_in_order(store):
+    ingestor = Ingestor(store, IngestionConfig(family_backend="exact"))
+    with store.batch():
+        for i in range(2500):
+            ingestor.ingest_text(f"doc{i:05d}", f"passage number {i}", f"s{i % 7}",
+                                 ingested_at=1_600_000_000.0 + i, passage_mode=True)
+    seen = [record.chunk_id for record in store.iter_chunks(batch_size=97)]
+    assert len(seen) == 2500
+    assert len(set(seen)) == 2500                 # no duplicates from paging
+    assert seen == sorted(seen)                   # stable order
+    assert set(seen) == {f"doc{i:05d}#0000" for i in range(2500)}
+
+
+def test_iter_chunks_does_not_slow_down_with_depth(store):
+    """Keyset paging: the last slice must not cost much more than the first."""
+    import time
+
+    ingestor = Ingestor(store, IngestionConfig(family_backend="exact"))
+    with store.batch():
+        for i in range(40000):
+            ingestor.ingest_text(f"doc{i:06d}", f"passage {i}", f"s{i % 50}",
+                                 ingested_at=1_600_000_000.0 + i, passage_mode=True)
+    marks = {}
+    start = time.perf_counter()
+    for n, _ in enumerate(store.iter_chunks(batch_size=1000), start=1):
+        if n in (10000, 40000):
+            marks[n] = time.perf_counter() - start
+    first_quarter = marks[10000]
+    last_quarter = marks[40000] - marks[10000] * 3
+    assert last_quarter < first_quarter * 3 + 0.05, (
+        f"streaming degrades with depth: first 10k {first_quarter:.2f}s, "
+        f"last 10k {last_quarter:.2f}s")
