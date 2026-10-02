@@ -445,11 +445,12 @@ class DefaultPolicy:
     refuted, HIGH -> exclude from this answer.  Mirrors plan Section 4.4.
     """
 
-    def decide(self, query, query_id, documents, assessments, verifier=None):  # type: ignore[no-untyped-def]
+    def decide(self, query, query_id, documents, assessments, verifier=None, **kwargs):  # type: ignore[no-untyped-def]
         by_id = {a.doc_id: a for a in assessments}
         context: List[str] = []
         excluded: List[str] = []
         verified: List[VerificationResult] = []
+        pool = kwargs.get("pool", documents)  # use full pool if provided
         for doc in documents:
             assessment = by_id.get(doc.doc_id)
             band = assessment.band if assessment else Band.LOW
@@ -457,7 +458,7 @@ class DefaultPolicy:
                 excluded.append(doc.doc_id)
                 continue
             if band is Band.MEDIUM and verifier is not None:
-                result = verifier.verify(query, query_id, doc, documents)
+                result = verifier.verify(query, query_id, doc, pool)
                 verified.append(result)
                 if result.outcome is VerificationOutcome.REFUTE:
                     excluded.append(doc.doc_id)

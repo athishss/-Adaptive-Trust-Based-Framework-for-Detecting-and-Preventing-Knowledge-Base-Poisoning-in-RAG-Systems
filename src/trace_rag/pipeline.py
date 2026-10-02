@@ -167,7 +167,7 @@ class PersonAPipeline:
 
         with Stopwatch() as watch:
             decision = self.policy.decide(query, query_id, retrieval.documents, assessments,
-                                          self.verifier)
+                                          self.verifier, pool=retrieval.pool)
         timings["policy"] = watch.elapsed_ms
 
         by_id = {d.doc_id: d for d in retrieval.documents}

@@ -6,6 +6,18 @@ Quick start::
     pipeline = PersonAPipeline.from_config(Config())
     result = pipeline.answer("Who designed the Eiffel Tower?")
     print(result.answer, result.record.abstained)
+
+With Person B (trust framework)::
+
+    from trace_rag import Config, PersonAPipeline
+    from trace_rag.trust import TrustLedger, CorroborationVerifier, TrustPolicy
+
+    pipeline = PersonAPipeline.from_config(Config.load("config/default.yaml"))
+    ledger = TrustLedger("runs/default/trust.sqlite3", store=pipeline.store)
+    pipeline.trust_provider = ledger
+    pipeline.retriever.trust = ledger
+    pipeline.verifier = CorroborationVerifier(llm=pipeline.generator.llm)
+    pipeline.policy = TrustPolicy(ledger=ledger, on_quarantine=pipeline.on_quarantine)
 """
 
 from .config import Config
@@ -21,3 +33,4 @@ __all__ = ["Config", "PersonAPipeline", "QueryResult", "CONTRACT_VERSION", "__ve
            "TrustStatus", "Band", "Action", "SignalVector", "FeatureSnapshot", "Citation",
            "PolicyDecision", "VerificationResult", "VerificationOutcome",
            "NullTrustProvider", "NullVerifier", "DefaultPolicy"]
+

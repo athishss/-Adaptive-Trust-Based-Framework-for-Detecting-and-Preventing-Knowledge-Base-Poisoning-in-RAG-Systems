@@ -113,7 +113,7 @@ def test_refuted_passages_are_excluded_from_context(populated_pipeline):
 
 def test_custom_policy_overrides_default(populated_pipeline):
     class ExcludeEverything:
-        def decide(self, query, query_id, documents, assessments, verifier=None):
+        def decide(self, query, query_id, documents, assessments, verifier=None, **kwargs):
             return PolicyDecision(context_doc_ids=(),
                                   excluded_doc_ids=tuple(d.doc_id for d in documents))
 
