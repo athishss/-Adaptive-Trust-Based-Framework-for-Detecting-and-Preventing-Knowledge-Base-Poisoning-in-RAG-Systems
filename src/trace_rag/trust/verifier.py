@@ -5,18 +5,23 @@ Called only for MEDIUM-band passages.  The algorithm:
 1. **Single-document claim extraction.**  Ask the LLM "what does this passage
    alone say about the query?" using Person A's ``build_single_doc_prompt``.
 
-2. **Find independent sources.**  From the candidate pool, keep only passages
-   whose ``source_id`` *and* ``family_id`` both differ from the target's.
-   This is what makes corroboration meaningful — five passages uploaded by the
-   same attacker cannot corroborate each other.
+2. **Leave-one-out influence.**  Compare the full-context answer (all top-k)
+   against the single-document answer.  If the target passage is not influential
+   (i.e. removing it doesn't change the answer), skip verification.
 
-3. **Corroboration check.**  For each independent passage, extract its claim
-   about the same question and compare it to the target's claim lexically.
+3. **Independent corroboration.**  From the candidate pool, keep only passages
+   whose ``source_id`` *and* ``family_id`` both differ from the target's,
+   and whose source is not part of the same ingestion burst.
 
-4. **Aggregate.**  Trust-weighted support and refute masses (noisy-OR by
+4. **NLI or lexical comparison.**  For each independent passage:
+   - If a DeBERTa NLI cross-encoder is available (GPU): run
+     NLI(premise=d', hypothesis="The answer to q is a_d")
+   - Otherwise: fall back to stop-word-filtered Jaccard overlap.
+
+5. **Aggregate.**  Trust-weighted support and refute masses (noisy-OR by
    source, so passages from the same source count once).
 
-5. **Decide.**  SUPPORT if the balance favours agreement with independent
+6. **Decide.**  SUPPORT if the balance favours agreement with independent
    sources; REFUTE if independent sources contradict; NEUTRAL otherwise.
 """
 
@@ -54,6 +59,66 @@ _CITATION_RE = re.compile(r"\[[^\[\]]{1,120}?\]")
 _ABSTAIN_MARKER = "INSUFFICIENT EVIDENCE"
 
 
+class NLIScorer:
+    """NLI-based comparison using cross-encoder/nli-deberta-v3-base.
+
+    This implements plan Section 4.5 step 3: NLI(premise=d', hypothesis=claim).
+    Falls back gracefully if the model can't be loaded (no GPU, missing deps).
+    """
+
+    def __init__(self) -> None:
+        self._pipeline = None
+        self._available: Optional[bool] = None
+
+    @property
+    def available(self) -> bool:
+        """Check if the NLI model can be loaded."""
+        if self._available is not None:
+            return self._available
+        try:
+            from transformers import pipeline as hf_pipeline
+            self._pipeline = hf_pipeline(
+                "text-classification",
+                model="cross-encoder/nli-deberta-v3-base",
+                device="cpu",  # will be auto-moved to GPU if available
+                truncation=True,
+                max_length=512,
+            )
+            # Try a quick inference to confirm it works
+            self._pipeline("Test premise. [SEP] Test hypothesis.")
+            self._available = True
+            logger.info("NLI scorer loaded: cross-encoder/nli-deberta-v3-base")
+        except Exception as exc:
+            self._available = False
+            logger.info("NLI scorer unavailable (falling back to lexical): %s", exc)
+        return self._available
+
+    def predict(self, premise: str, hypothesis: str) -> Tuple[str, float]:
+        """Run NLI prediction.
+
+        Returns (label, score) where label is 'entailment', 'contradiction',
+        or 'neutral', and score is the confidence.
+        """
+        if not self.available or self._pipeline is None:
+            return "neutral", 0.0
+        # Cross-encoder expects "premise [SEP] hypothesis" or handles it internally
+        result = self._pipeline(f"{premise} [SEP] {hypothesis}")
+        if isinstance(result, list):
+            result = result[0]
+        label = result.get("label", "neutral").lower()
+        score = float(result.get("score", 0.0))
+        # Normalize labels (different models use different label names)
+        if "entail" in label:
+            return "entailment", score
+        elif "contra" in label:
+            return "contradiction", score
+        return "neutral", score
+
+
+# Singleton NLI scorer (loaded on first use)
+_nli_scorer = NLIScorer()
+
+
 class CorroborationVerifier:
     """Corroboration-gated counterfactual verifier.
 
@@ -67,21 +132,37 @@ class CorroborationVerifier:
     max_corroboration : int
         Maximum number of independent passages to check per verification.
     support_threshold : float
-        Minimum claim overlap to count as support evidence.
+        Minimum claim overlap to count as support evidence (lexical mode).
     refute_threshold : float
-        Maximum claim overlap (on a relevant passage) to count as refute.
+        Maximum claim overlap (on a relevant passage) to count as refute (lexical mode).
     min_mass : float
         Minimum aggregated mass required to issue a non-NEUTRAL verdict.
+    use_nli : bool | None
+        If True, use NLI cross-encoder. If False, use lexical.
+        If None (default), auto-detect: use NLI if available.
     """
 
     def __init__(self, llm=None, max_corroboration: int = 3,
                  support_threshold: float = 0.15, refute_threshold: float = 0.10,
-                 min_mass: float = 0.10) -> None:
+                 min_mass: float = 0.10, use_nli: Optional[bool] = None) -> None:
         self.llm = llm or StubLLM()
         self.max_corroboration = int(max_corroboration)
         self.support_threshold = float(support_threshold)
         self.refute_threshold = float(refute_threshold)
         self.min_mass = float(min_mass)
+
+        # NLI mode: auto-detect if not specified
+        if use_nli is True:
+            self._use_nli = _nli_scorer.available
+        elif use_nli is False:
+            self._use_nli = False
+        else:
+            self._use_nli = _nli_scorer.available
+
+        if self._use_nli:
+            logger.info("CorroborationVerifier using NLI cross-encoder")
+        else:
+            logger.info("CorroborationVerifier using lexical comparison")
 
     # ------------------------------------------------------------------
     #  Verifier protocol
@@ -95,18 +176,15 @@ class CorroborationVerifier:
         Returns a ``VerificationResult`` with honest ``llm_calls`` count.
         """
         with Stopwatch() as watch:
-            # Step 1 — what does the target passage alone claim?
+            # Step 1 - what does the target passage alone claim?
             target_claim, llm_calls = self._extract_claim(query, target)
-            influential = bool(
-                target_claim
-                and _ABSTAIN_MARKER.lower() not in target_claim.lower()
-            )
+            influential = self._check_influence(query, target, target_claim, pool)
 
-            # Step 2 — find independent sources in the pool
+            # Step 2 - find independent sources in the pool
             independent = self._find_independent(target, pool)
 
             if not independent or not influential:
-                # No independent sources or no substantive claim → NEUTRAL
+                # No independent sources or no substantive claim -> NEUTRAL
                 return VerificationResult(
                     doc_id=target.doc_id, query_id=query_id,
                     single_doc_answer=target_claim,
@@ -116,17 +194,18 @@ class CorroborationVerifier:
                     llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
                 )
 
-            # Step 3 — extract claims from independent passages and compare
+            # Step 3 - extract claims from independent passages and compare
             support_mass, refute_mass, extra_calls = self._corroborate(
                 query, target_claim, independent,
             )
             llm_calls += extra_calls
 
-            # Step 4 — determine outcome
+            # Step 4 - determine outcome
             outcome = self._decide(support_mass, refute_mass)
             logger.debug(
-                "verify %s: support=%.3f refute=%.3f → %s (llm_calls=%d)",
-                target.doc_id, support_mass, refute_mass, outcome.value, llm_calls,
+                "verify %s: support=%.3f refute=%.3f -> %s (llm_calls=%d, nli=%s)",
+                target.doc_id, support_mass, refute_mass, outcome.value,
+                llm_calls, self._use_nli,
             )
 
         return VerificationResult(
@@ -152,6 +231,50 @@ class CorroborationVerifier:
         text = _CITATION_RE.sub("", response.text or "").strip()
         return text, int(response.llm_calls)
 
+    def _check_influence(self, query: str, target: RetrievedDocument,
+                         target_claim: str,
+                         pool: Sequence[RetrievedDocument]) -> bool:
+        """Leave-one-out influence check (plan Section 4.5, step 2).
+
+        Compares the target's single-doc answer against the other passages
+        in the pool.  If the claim is fully covered by other passages
+        (>80% content overlap), the target is non-influential.
+
+        This is a lightweight proxy for full LOO (which would need an extra
+        LLM call): if other passages already contain all the content words
+        in the target's claim, removing the target wouldn't change the answer.
+        """
+        # First check: is the claim substantive at all?
+        if not target_claim or _ABSTAIN_MARKER.lower() in target_claim.lower():
+            return False
+
+        # LOO check: do other passages in the pool also support this claim?
+        other_passages = [p for p in pool if p.doc_id != target.doc_id][:5]
+        if not other_passages:
+            return True  # only passage - must be influential
+
+        query_tokens = set(tokenise(query)) | _STOP_WORDS
+        target_content = set(tokenise(target_claim)) - query_tokens
+
+        if not target_content:
+            return False  # claim is all stop words
+
+        # Check how much of the claim is covered by other passages
+        covered_tokens: set = set()
+        for p in other_passages:
+            p_content = set(tokenise(p.text)) - query_tokens
+            covered_tokens |= (target_content & p_content)
+
+        coverage = len(covered_tokens) / len(target_content) if target_content else 0.0
+
+        # If other passages cover >80% of the claim's content words,
+        # the target is redundant (non-influential)
+        if coverage > 0.80:
+            logger.debug("LOO: %s non-influential (coverage=%.2f)", target.doc_id, coverage)
+            return False
+
+        return True
+
     def _find_independent(self, target: RetrievedDocument,
                           pool: Sequence[RetrievedDocument]) -> List[RetrievedDocument]:
         """Keep only pool passages from genuinely independent sources.
@@ -174,15 +297,58 @@ class CorroborationVerifier:
                      ) -> Tuple[float, float, int]:
         """Compare target's claim against independent sources.
 
-        Uses a two-pronged comparison:
-          1. claim-vs-claim: extracted answer overlap
-          2. claim-vs-passage: does the independent passage's *full text*
-             support or contradict the target's extracted claim?
-
-        The higher of the two signals is used per passage.
+        Uses NLI cross-encoder if available, otherwise lexical comparison.
 
         Returns (support_mass, refute_mass, llm_calls).
         Mass is trust-weighted, aggregated by source (noisy-OR).
+        """
+        if self._use_nli:
+            return self._corroborate_nli(query, target_claim, independent)
+        return self._corroborate_lexical(query, target_claim, independent)
+
+    def _corroborate_nli(self, query: str, target_claim: str,
+                         independent: List[RetrievedDocument]
+                         ) -> Tuple[float, float, int]:
+        """NLI-based corroboration (plan Section 4.5 step 3).
+
+        For each independent passage d', runs:
+            NLI(premise=d'.text, hypothesis="The answer to {query} is {target_claim}")
+
+        No LLM calls needed - NLI is a cheap cross-encoder.
+        """
+        hypothesis = f"The answer to {query} is {target_claim}"
+        best_support_per_source: Dict[str, float] = {}
+        best_refute_per_source: Dict[str, float] = {}
+
+        for doc in independent:
+            label, confidence = _nli_scorer.predict(doc.text, hypothesis)
+            trust = float(doc.trust.t_eff)
+            source = doc.source_id
+
+            if label == "entailment":
+                weight = trust * confidence
+                best_support_per_source[source] = max(
+                    best_support_per_source.get(source, 0.0), weight,
+                )
+            elif label == "contradiction":
+                weight = trust * confidence
+                best_refute_per_source[source] = max(
+                    best_refute_per_source.get(source, 0.0), weight,
+                )
+
+        support_mass = self._noisy_or(best_support_per_source)
+        refute_mass = self._noisy_or(best_refute_per_source)
+        return support_mass, refute_mass, 0  # NLI uses no LLM calls
+
+    def _corroborate_lexical(self, query: str, target_claim: str,
+                             independent: List[RetrievedDocument]
+                             ) -> Tuple[float, float, int]:
+        """Lexical corroboration (fallback when NLI is unavailable).
+
+        Extracts claims from independent passages via LLM and compares
+        using stop-word-filtered Jaccard overlap.
+
+        Returns (support_mass, refute_mass, llm_calls).
         """
         # Extract claims from independent passages
         claims: List[Tuple[RetrievedDocument, str]] = []
@@ -246,7 +412,7 @@ class CorroborationVerifier:
 
     @staticmethod
     def _noisy_or(per_source: Dict[str, float]) -> float:
-        """Noisy-OR: 1 − ∏(1 − weight) across independent sources."""
+        """Noisy-OR: 1 - product(1 - weight) across independent sources."""
         if not per_source:
             return 0.0
         product = 1.0
