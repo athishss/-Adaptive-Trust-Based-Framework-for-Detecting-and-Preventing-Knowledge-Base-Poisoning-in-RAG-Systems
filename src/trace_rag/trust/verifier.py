@@ -77,10 +77,18 @@ class NLIScorer:
             return self._available
         try:
             from transformers import pipeline as hf_pipeline
+            # -1 is CPU, 0 is the first CUDA device.  Passing the string
+            # "cpu" pinned the model to CPU even on a GPU box, which made the
+            # 500-query sweeps in HANDOVER_B_TO_C.md hours long.
+            try:
+                import torch
+                device = 0 if torch.cuda.is_available() else -1
+            except Exception:  # pragma: no cover - torch missing or broken
+                device = -1
             self._pipeline = hf_pipeline(
                 "text-classification",
                 model="cross-encoder/nli-deberta-v3-base",
-                device="cpu",  # will be auto-moved to GPU if available
+                device=device,
                 truncation=True,
                 max_length=512,
             )
@@ -137,6 +145,10 @@ class CorroborationVerifier:
         Maximum claim overlap (on a relevant passage) to count as refute (lexical mode).
     min_mass : float
         Minimum aggregated mass required to issue a non-NEUTRAL verdict.
+    min_refute_topical_overlap : int
+        Minimum number of content words a passage must share with the claim
+        before it is allowed to contribute *refuting* evidence.  Passages
+        below this floor are irrelevant, not contradictory, and are ignored.
     use_nli : bool | None
         If True, use NLI cross-encoder. If False, use lexical.
         If None (default), auto-detect: use NLI if available.
@@ -144,12 +156,14 @@ class CorroborationVerifier:
 
     def __init__(self, llm=None, max_corroboration: int = 3,
                  support_threshold: float = 0.15, refute_threshold: float = 0.10,
-                 min_mass: float = 0.10, use_nli: Optional[bool] = None) -> None:
+                 min_mass: float = 0.10, use_nli: Optional[bool] = None,
+                 min_refute_topical_overlap: int = 1) -> None:
         self.llm = llm or StubLLM()
         self.max_corroboration = int(max_corroboration)
         self.support_threshold = float(support_threshold)
         self.refute_threshold = float(refute_threshold)
         self.min_mass = float(min_mass)
+        self.min_refute_topical_overlap = int(min_refute_topical_overlap)
 
         # NLI mode: auto-detect if not specified
         if use_nli is True:
@@ -162,7 +176,25 @@ class CorroborationVerifier:
         if self._use_nli:
             logger.info("CorroborationVerifier using NLI cross-encoder")
         else:
-            logger.info("CorroborationVerifier using lexical comparison")
+            # A warning, not info: falling back to lexical comparison silently
+            # changes the method behind every number an experiment reports.
+            logger.warning(
+                "CorroborationVerifier using lexical comparison "
+                "(NLI cross-encoder unavailable); not comparable with NLI runs"
+            )
+
+    # ------------------------------------------------------------------
+    #  Mode
+    # ------------------------------------------------------------------
+
+    @property
+    def mode(self) -> str:
+        """Which comparison actually runs: ``"nli"`` or ``"lexical"``.
+
+        Exposed so Person C can record it per case instead of assuming the
+        configured method is the one that produced the numbers.
+        """
+        return "nli" if self._use_nli else "lexical"
 
     # ------------------------------------------------------------------
     #  Verifier protocol
@@ -316,6 +348,19 @@ class CorroborationVerifier:
 
         No LLM calls needed - NLI is a cheap cross-encoder.
         """
+        # Hypothesis framing is deliberately left as the interrogative form.
+        # Measured against the real cross-encoder, *neither* framing dominates,
+        # so changing this is not the fix it looks like:
+        #
+        #   near-verbatim premise ("Stephen Sauvestre designed the Eiffel
+        #   Tower, completed in 1889."): bare claim -> entailment 0.997,
+        #   this framing -> entailment 0.010.
+        #   paraphrased premise ("Maria Chen discovered the artefact in
+        #   1998."): bare claim -> neutral 1.000, this framing -> entailment
+        #   0.996.
+        #
+        # Refutation is therefore gated on topical overlap (see _may_refute)
+        # instead, which is where the real defect was.
         hypothesis = f"The answer to {query} is {target_claim}"
         best_support_per_source: Dict[str, float] = {}
         best_refute_per_source: Dict[str, float] = {}
@@ -330,7 +375,7 @@ class CorroborationVerifier:
                 best_support_per_source[source] = max(
                     best_support_per_source.get(source, 0.0), weight,
                 )
-            elif label == "contradiction":
+            elif label == "contradiction" and self._may_refute(target_claim, doc.text):
                 weight = trust * confidence
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
@@ -383,7 +428,8 @@ class CorroborationVerifier:
                 best_support_per_source[source] = max(
                     best_support_per_source.get(source, 0.0), weight,
                 )
-            elif agreement <= self.refute_threshold:
+            elif (agreement <= self.refute_threshold
+                    and self._may_refute(target_claim, doc.text)):
                 weight = trust * (1.0 - agreement)
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
@@ -393,6 +439,34 @@ class CorroborationVerifier:
         support_mass = self._noisy_or(best_support_per_source)
         refute_mass = self._noisy_or(best_refute_per_source)
         return support_mass, refute_mass, total_llm
+
+    def _may_refute(self, claim: str, text: str) -> bool:
+        """Whether a passage is allowed to contribute *refuting* evidence.
+
+        Refutation requires the passage to be topically related to the claim.
+        A passage that shares no content words with it is irrelevant, not
+        contradictory - and both the NLI model and the lexical comparison
+        reward irrelevance with a full-confidence refutation, which was
+        measured to REFUTE an honest claim from a single off-topic passage.
+        """
+        return self._topical_overlap(claim, text) >= self.min_refute_topical_overlap
+
+    @staticmethod
+    def _topical_overlap(claim: str, text: str) -> int:
+        """Count the content words a passage shares with a claim.
+
+        Unlike :meth:`_content_overlap`, query words are **kept**.  In question
+        answering the query normally names the entity the claim is about
+        ("who discovered the Zog artefact?"), so stripping query words erases
+        exactly the terms that make a passage topical: on the fixtures in
+        ``tests/test_verifier_nli.py`` it reduced the claim to
+        ``['chen', 'maria']`` and every passage to zero overlap.
+        """
+        claim_content = set(tokenise(claim)) - _STOP_WORDS
+        if not claim_content:
+            return 0
+        other_content = set(tokenise(text)) - _STOP_WORDS
+        return len(claim_content & other_content)
 
     @staticmethod
     def _content_overlap(target_content: set, text: str,
