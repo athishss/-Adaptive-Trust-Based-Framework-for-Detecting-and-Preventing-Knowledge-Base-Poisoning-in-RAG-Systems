@@ -342,6 +342,11 @@ class TrustLedger:
                     "updated_at = ? WHERE entity_id = ? AND entity_type = 'doc'",
                     (ts, doc_id),
                 )
+                # NEUTRAL changes no alpha/beta, but it is still a point in the
+                # trust history: the B6 plots must show evidence accumulating on
+                # documents the verifier never reached a verdict for.
+                if self.config.record_history:
+                    self._record_history(doc_id, "doc", ts)
 
             # State machine transitions (doc-level only)
             if outcome == "REFUTE":

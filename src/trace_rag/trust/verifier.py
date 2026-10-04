@@ -262,8 +262,12 @@ class CorroborationVerifier:
                     llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
                 )
 
-            # Step 2 - influence.  The coverage proxy is free; the LLM
-            # counterfactual is only paid for when independent sources exist.
+            # Step 2 - influence.  The coverage proxy is free and is used when
+            # the counterfactual is switched off; otherwise the LLM decides,
+            # because the proxy cannot tell a passage that is genuinely
+            # redundant from a *negation* of the same passage (both share the
+            # claim's words).  That distinction is the whole point of gating
+            # refutation on influence, so the LLM gets the call.
             influential = self._check_influence(query, target, target_claim, pool)
 
             # Step 3 - find independent sources in the pool
@@ -280,7 +284,7 @@ class CorroborationVerifier:
                     llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
                 )
 
-            if influential and self.counterfactual_influence:
+            if self.counterfactual_influence:
                 influential, extra_calls = self._counterfactual_influence(
                     query, target, target_claim, pool)
                 llm_calls += extra_calls
@@ -335,8 +339,8 @@ class CorroborationVerifier:
         (>80% content overlap), the target is non-influential.
 
         This is a lightweight proxy for full LOO (which would need an extra
-        LLM call): if other passages already contain all the content words
-        in the target's claim, removing the target wouldn't change the answer.
+        LLM call): if another passage already contains the target's claim, the
+        target is redundant.
 
         Coverage is measured over the claim's content words with *stop words
         only* removed.  Stripping the query words as well - as this method
@@ -366,19 +370,26 @@ class CorroborationVerifier:
         if not target_content:
             return False  # claim is all stop words
 
-        # Check how much of the claim is covered by other passages
-        covered_tokens: set = set()
+        # Redundancy means *one* other passage already states the claim, so the
+        # coverage is the best single passage, not the union across passages.
+        # Unioning made any long claim look redundant as soon as its words were
+        # scattered over the pool - measured on real NQ passages that turned
+        # every verification into a non-influential NEUTRAL, because a passage's
+        # own topic is exactly what the rest of the pool also talks about.
+        coverage = 0.0
         for p in other_passages:
             p_content = set(tokenise(p.text)) - _STOP_WORDS
-            covered_tokens |= (target_content & p_content)
+            if not p_content:
+                continue
+            coverage = max(coverage,
+                           len(target_content & p_content) / len(target_content))
 
-        coverage = len(covered_tokens) / len(target_content) if target_content else 0.0
-
-        # If other passages cover >80% of the claim's content words,
+        # If a single other passage covers >80% of the claim's content words,
         # the target is redundant (non-influential).  Strict >, so a claim
         # repeated verbatim elsewhere still counts as redundant.
         if coverage > self.max_redundant_coverage:
-            logger.debug("LOO: %s non-influential (coverage=%.2f)", target.doc_id, coverage)
+            logger.debug("LOO: %s non-influential (best coverage=%.2f)",
+                         target.doc_id, coverage)
             return False
 
         return True
