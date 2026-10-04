@@ -19,14 +19,24 @@ the family and source levels dominate (cold-start fallback).
 Key features from plan Section 4.6:
     - **Source-inherited prior**: new docs inherit alpha_0 = kappa * T_source + 1
     - **T_cap**: inherited trust capped (default 0.6) to stop slow-burn exploits
-    - **Trust decay**: gamma-based forgetting per N queries
-    - **Burst-aware prior**: new sources in burst windows start with lower trust
+    - **Trust decay**: gamma-based forgetting per N *queries* (``begin_query``)
+    - **Burst-aware prior**: sources that register several documents inside a
+      short window are detected from the ledger's own registration history and
+      every document of that burst starts from a discounted prior
+    - **Cold-start influence**: new sources start neutral but their evidence
+      counts for less until they age or accumulate verified observations
     - **Structured audit log**: every state transition is recorded with evidence
+    - **Trust history**: every update is appended for the B6 dynamics plots
 
 State machine (per document):
-    TRUSTED -(refute)-> MONITORED -(2nd refute)-> QUARANTINED -(3rd)-> REJECTED
+    TRUSTED -(refute)-> MONITORED -(2nd refute)-> QUARANTINED -(admin)-> REJECTED
        ^                     ^
        +-(support, t>0.5)----+
+
+REJECTED is an administrator decision (plan Section 4.7).  A document that
+collects ``reject_refutations`` refutations while QUARANTINED raises a review
+request instead of rejecting itself; ``admin_approve_rejection`` confirms it and
+``admin_approve_recovery`` is the only way back out of QUARANTINED.
 """
 
 from __future__ import annotations
@@ -59,8 +69,31 @@ CREATE TABLE IF NOT EXISTS trust_entities (
     updated_at      REAL NOT NULL,
     quarantined_at  REAL,
     is_burst_source INTEGER NOT NULL DEFAULT 0,
+    burst_group     INTEGER,
     PRIMARY KEY (entity_id, entity_type)
 );
+
+CREATE TABLE IF NOT EXISTS admin_review (
+    entity_id   TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL DEFAULT 'doc',
+    reason      TEXT,
+    raised_at   REAL NOT NULL,
+    state       TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS trust_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id       TEXT NOT NULL,
+    entity_type     TEXT NOT NULL,
+    trust           REAL NOT NULL,
+    alpha           REAL NOT NULL,
+    beta            REAL NOT NULL,
+    status          TEXT NOT NULL,
+    n_observations  INTEGER NOT NULL,
+    timestamp       REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_entity ON trust_history(entity_id, timestamp);
 
 CREATE TABLE IF NOT EXISTS doc_registry (
     doc_id      TEXT PRIMARY KEY,
@@ -112,11 +145,16 @@ class TrustConfig:
 
     # ---- Trust decay / forgetting (Section 4.6) ----
     decay_gamma: float = 0.95          # shrinkage per decay cycle: alpha <- 1 + gamma*(alpha-1)
-    decay_interval: int = 100          # apply decay every N observations system-wide
+    decay_interval: int = 100          # apply decay every N queries (begin_query)
 
     # ---- State machine thresholds ----
     quarantine_refutations: int = 2    # refutations for MONITORED -> QUARANTINED
-    reject_refutations: int = 3        # refutations for QUARANTINED -> REJECTED
+    reject_refutations: int = 3        # refutations for raising an admin review
+
+    # ---- Hierarchical trust switch (V2 vs V3/V4 ablation, B6) ----
+    # False = document-level trust only: no family/source updates, no
+    # source-inherited prior and no source clamp on t_eff.
+    hierarchical: bool = True
     recovery_threshold: float = 0.5    # t above this: MONITORED -> TRUSTED
     quarantine_t_eff: float = 0.20     # T_eff below this -> QUARANTINED (Section 4.7)
     monitored_t_eff: float = 0.60      # T_eff below this -> MONITORED (Section 4.7)
@@ -124,8 +162,20 @@ class TrustConfig:
     # ---- HIGH-band passive penalty ----
     high_band_beta_penalty: float = 0.3
 
-    # ---- Burst-aware Sybil defence (Section 4.6 / B2) ----
-    burst_trust_discount: float = 0.3  # new sources in burst: prior reduced by this factor
+    # ---- Burst-aware Sybil defence (Section 4.5 / 4.6 / B2) ----
+    burst_trust_discount: float = 0.3  # burst sources: prior reduced by this factor
+    burst_window_seconds: float = 60.0  # documents from one source inside this window...
+    burst_min_docs: int = 4             # ...this many of them are one ingestion burst
+
+    # ---- Cold-start influence (Section 4.6 / B2) ----
+    # New sources start neutral; what is capped is how much their evidence can
+    # move corroboration mass, until they age or build verified history.
+    cold_start_influence: float = 0.25      # influence multiplier for a brand-new source
+    source_age_ramp_hours: float = 24.0     # age at which a source reaches full influence
+    cold_start_min_observations: int = 5    # verified observations that also mature a source
+
+    # ---- Trust history for the B6 dynamics plots ----
+    record_history: bool = True
 
 
 class TrustLedger:
@@ -143,7 +193,7 @@ class TrustLedger:
         self.config = config or TrustConfig()
         self._lock = threading.RLock()
         self._blocked_cache: Optional[Set[str]] = None
-        self._global_obs_count: int = 0   # for decay scheduling
+        self._query_count: int = 0        # for decay scheduling (per query, plan 4.6)
 
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -157,7 +207,8 @@ class TrustLedger:
         with self._lock:
             self._conn.executescript(_SCHEMA)
             # Migrate: add columns that may not exist in older databases
-            for col, defn in [("is_burst_source", "INTEGER NOT NULL DEFAULT 0")]:
+            for col, defn in [("is_burst_source", "INTEGER NOT NULL DEFAULT 0"),
+                              ("burst_group", "INTEGER")]:
                 try:
                     self._conn.execute(
                         f"ALTER TABLE trust_entities ADD COLUMN {col} {defn}")
@@ -196,9 +247,18 @@ class TrustLedger:
 
             # Empirical-Bayes blend: weight doc level by observation confidence
             w_doc = min(1.0, n_obs / max(1.0, self.config.prior_weight))
-            t_eff = w_doc * t_doc + (1.0 - w_doc) * (0.5 * t_family + 0.5 * t_source)
-            # Conservative clamp: a bad source cannot have trusted docs
-            t_eff = min(t_eff, t_source)
+            if self.config.hierarchical:
+                # Plan Section 4.6: T_eff = w * T_doc + (1 - w) * min(T_source, T_family).
+                # The min matters: averaging the two let a poisoned family hide
+                # behind a clean source, and a poisoned source behind a clean
+                # family, which is exactly the inheritance this is defending.
+                t_parents = min(t_family, t_source)
+            else:
+                t_parents = 0.5  # ablation: document-level trust only
+            t_eff = w_doc * t_doc + (1.0 - w_doc) * t_parents
+            if self.config.hierarchical:
+                # Conservative clamp: a bad source cannot have trusted docs
+                t_eff = min(t_eff, t_source)
             # T_cap: new docs from reputable sources cannot exceed t_cap
             # until they have enough observations to earn higher trust
             if n_obs < self.config.prior_weight:
@@ -247,27 +307,32 @@ class TrustLedger:
 
         with self._lock:
             self._register_doc(doc_id, source_id, family_id)
-            is_burst = self._is_burst_source(source_id)
+            # Burst detection runs before this document's entity is created, so
+            # its prior already carries the discount, and it back-applies the
+            # discount to the documents that opened the burst (plan B2/S4).
+            is_burst = self._detect_burst(source_id, ts)
 
             if outcome == "SUPPORT":
                 self._update_entity("doc", doc_id,
                                     alpha_delta=self.config.support_doc_alpha, ts=ts,
                                     source_id=source_id, is_burst=is_burst)
-                self._update_entity("family", family_id,
-                                    alpha_delta=self.config.support_family_alpha, ts=ts)
-                self._update_entity("source", source_id,
-                                    alpha_delta=self.config.support_source_alpha, ts=ts)
+                if self.config.hierarchical:
+                    self._update_entity("family", family_id,
+                                        alpha_delta=self.config.support_family_alpha, ts=ts)
+                    self._update_entity("source", source_id,
+                                        alpha_delta=self.config.support_source_alpha, ts=ts)
             elif outcome == "REFUTE":
                 self._update_entity("doc", doc_id,
                                     beta_delta=self.config.refute_doc_beta, ts=ts,
                                     is_refutation=True,
                                     source_id=source_id, is_burst=is_burst)
-                self._update_entity("family", family_id,
-                                    beta_delta=self.config.refute_family_beta, ts=ts,
-                                    is_refutation=True)
-                self._update_entity("source", source_id,
-                                    beta_delta=self.config.refute_source_beta, ts=ts,
-                                    is_refutation=True)
+                if self.config.hierarchical:
+                    self._update_entity("family", family_id,
+                                        beta_delta=self.config.refute_family_beta, ts=ts,
+                                        is_refutation=True)
+                    self._update_entity("source", source_id,
+                                        beta_delta=self.config.refute_source_beta, ts=ts,
+                                        is_refutation=True)
             else:
                 # NEUTRAL: ensure the entity exists so n_observations is tracked
                 self._ensure_entity("doc", doc_id, ts,
@@ -298,12 +363,13 @@ class TrustLedger:
         ts = timestamp if timestamp is not None else time.time()
         with self._lock:
             self._register_doc(doc_id, source_id, family_id)
-            is_burst = self._is_burst_source(source_id)
+            is_burst = self._detect_burst(source_id, ts)
             self._update_entity("doc", doc_id,
                                 beta_delta=self.config.high_band_beta_penalty, ts=ts,
                                 source_id=source_id, is_burst=is_burst)
-            self._update_entity("source", source_id,
-                                beta_delta=self.config.high_band_beta_penalty * 0.3, ts=ts)
+            if self.config.hierarchical:
+                self._update_entity("source", source_id,
+                                    beta_delta=self.config.high_band_beta_penalty * 0.3, ts=ts)
             # Check if trust dropped below thresholds
             self._check_demotion(doc_id, ts, trigger="HIGH_BAND")
             self._conn.commit()
@@ -420,7 +486,7 @@ class TrustLedger:
         alpha_0 = 1.0
         beta_0 = 1.0
 
-        if entity_type == "doc" and source_id is not None:
+        if entity_type == "doc" and source_id is not None and self.config.hierarchical:
             # Inherit prior from source trust
             src_row = self._conn.execute(
                 "SELECT alpha, beta FROM trust_entities "
@@ -472,11 +538,25 @@ class TrustLedger:
             "WHERE entity_id = ? AND entity_type = ?",
             (alpha_delta, beta_delta, refute_inc, ts, entity_id, entity_type),
         )
-        # Track global observations for decay scheduling
-        self._global_obs_count += 1
-        if (self.config.decay_gamma < 1.0
-                and self._global_obs_count % self.config.decay_interval == 0):
-            self._apply_decay(ts)
+        if self.config.record_history:
+            self._record_history(entity_id, entity_type, ts)
+
+    def _record_history(self, entity_id: str, entity_type: str, ts: float) -> None:
+        """Append one point to the trust history (plan B6 trust-dynamics plots)."""
+        row = self._conn.execute(
+            "SELECT alpha, beta, status, n_observations FROM trust_entities "
+            "WHERE entity_id = ? AND entity_type = ?",
+            (entity_id, entity_type),
+        ).fetchone()
+        if row is None:
+            return
+        a, b = float(row["alpha"]), float(row["beta"])
+        self._conn.execute(
+            "INSERT INTO trust_history(entity_id, entity_type, trust, alpha, beta, "
+            "status, n_observations, timestamp) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (entity_id, entity_type, a / (a + b) if (a + b) > 0 else 0.5,
+             a, b, row["status"], int(row["n_observations"]), ts),
+        )
 
     def _check_demotion(self, doc_id: str, ts: float,
                         trigger: str = "REFUTE") -> None:
@@ -511,7 +591,11 @@ class TrustLedger:
             elif status == "MONITORED" and n_ref >= self.config.quarantine_refutations:
                 new_status = "QUARANTINED"
             elif status == "QUARANTINED" and n_ref >= self.config.reject_refutations:
-                new_status = "REJECTED"
+                # Plan Section 4.7: REJECTED is an administrator decision.
+                # Raise a review request and keep the document QUARANTINED
+                # (and blocked) until a human approves the rejection.
+                self._raise_review(doc_id, f"n_ref={n_ref} t_doc={t_doc:.4f}", ts)
+                return
 
             # Also check T_eff-based thresholds (plan Section 4.7)
             if new_status is None:
@@ -543,6 +627,21 @@ class TrustLedger:
             logger.info("trust: %s %s -> %s (refutations=%d, t_doc=%.3f)",
                         doc_id, status, new_status, n_ref, t_doc)
 
+    def begin_query(self, timestamp: Optional[float] = None) -> None:
+        """Mark the start of one query.
+
+        Trust decay is scheduled on queries, not on individual observations
+        (plan Section 4.6, "forgetting per N queries"), so the caller -- the
+        policy in the pipeline -- calls this once per query.
+        """
+        ts = timestamp if timestamp is not None else time.time()
+        with self._lock:
+            self._query_count += 1
+            if (self.config.decay_gamma < 1.0 and self.config.decay_interval > 0
+                    and self._query_count % self.config.decay_interval == 0):
+                self._apply_decay(ts)
+                self._conn.commit()
+
     def _check_recovery(self, doc_id: str, ts: float) -> None:
         """After a SUPPORT, check whether the doc can be promoted back."""
         row = self._conn.execute(
@@ -565,6 +664,128 @@ class TrustLedger:
                 (ts, doc_id),
             )
             logger.info("trust: %s MONITORED -> TRUSTED (trust=%.3f)", doc_id, trust)
+
+    # ------------------------------------------------------------------
+    #  Administrator review (plan Section 4.7)
+    # ------------------------------------------------------------------
+
+    def _raise_review(self, doc_id: str, reason: str, ts: float) -> None:
+        """Queue a document for an administrator decision (idempotent)."""
+        cursor = self._conn.execute(
+            "INSERT OR IGNORE INTO admin_review(entity_id, entity_type, reason, "
+            "raised_at, state) VALUES(?, 'doc', ?, ?, 'pending')",
+            (doc_id, reason, ts),
+        )
+        if cursor.rowcount:
+            logger.info("trust: raised admin review for %s (%s)", doc_id, reason)
+
+    def pending_reviews(self) -> List[Dict[str, Any]]:
+        """Documents waiting for an administrator decision."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM admin_review WHERE state = 'pending' ORDER BY raised_at"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def admin_approve_rejection(self, doc_id: str, approved_by: str,
+                                note: str = "",
+                                timestamp: Optional[float] = None) -> bool:
+        """Administrator confirms REJECTED for a QUARANTINED document.
+
+        Plan Section 4.7: REJECTED means permanently removed from the index and
+        the source flagged.  Returns True when the transition happened.
+        """
+        ts = timestamp if timestamp is not None else time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM trust_entities "
+                "WHERE entity_id = ? AND entity_type = 'doc'",
+                (doc_id,),
+            ).fetchone()
+            if row is None or row["status"] != "QUARANTINED":
+                logger.warning("trust: cannot reject %s (status=%s)",
+                               doc_id, row["status"] if row else "unknown")
+                return False
+            self._conn.execute(
+                "UPDATE trust_entities SET status = 'REJECTED', updated_at = ? "
+                "WHERE entity_id = ? AND entity_type = 'doc'",
+                (ts, doc_id),
+            )
+            self._log_transition(doc_id, "doc", "QUARANTINED", "REJECTED",
+                                 "ADMIN_APPROVAL",
+                                 f"approved_by={approved_by}"
+                                 + (f"; {note}" if note else ""), ts)
+            # Flag the source: one extra refutation-weight penalty, so every new
+            # document from a source that produced a rejected passage starts lower.
+            if self.config.hierarchical:
+                mapping = self._conn.execute(
+                    "SELECT source_id FROM doc_registry WHERE doc_id = ?", (doc_id,)
+                ).fetchone()
+                if mapping is not None:
+                    self._update_entity("source", mapping["source_id"],
+                                        beta_delta=self.config.refute_source_beta, ts=ts,
+                                        is_refutation=True)
+            self._conn.execute(
+                "UPDATE admin_review SET state = 'approved' WHERE entity_id = ?",
+                (doc_id,),
+            )
+            self._conn.commit()
+            self._blocked_cache = None
+        logger.info("trust: %s QUARANTINED -> REJECTED (approved_by=%s)", doc_id, approved_by)
+        return True
+
+    def admin_decline_rejection(self, doc_id: str, reviewed_by: str,
+                               note: str = "",
+                               timestamp: Optional[float] = None) -> bool:
+        """Administrator declines the rejection; the document stays QUARANTINED."""
+        ts = timestamp if timestamp is not None else time.time()
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE admin_review SET state = 'declined' "
+                "WHERE entity_id = ? AND state = 'pending'",
+                (doc_id,),
+            )
+            if not cursor.rowcount:
+                return False
+            logger.info("trust: admin declined rejection of %s (by %s%s)",
+                        doc_id, reviewed_by, f": {note}" if note else "")
+        return True
+
+    def admin_approve_recovery(self, doc_id: str, approved_by: str,
+                               note: str = "",
+                               timestamp: Optional[float] = None) -> bool:
+        """Administrator moves a QUARANTINED document back to MONITORED.
+
+        Plan Section 4.7: recovery needs administrator approval so an attacker
+        cannot talk a document back into use.  Returns True if it transitioned.
+        """
+        ts = timestamp if timestamp is not None else time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM trust_entities "
+                "WHERE entity_id = ? AND entity_type = 'doc'",
+                (doc_id,),
+            ).fetchone()
+            if row is None or row["status"] != "QUARANTINED":
+                return False
+            self._conn.execute(
+                "UPDATE trust_entities SET status = 'MONITORED', "
+                "quarantined_at = NULL, updated_at = ? "
+                "WHERE entity_id = ? AND entity_type = 'doc'",
+                (ts, doc_id),
+            )
+            self._log_transition(doc_id, "doc", "QUARANTINED", "MONITORED",
+                                 "ADMIN_RECOVERY",
+                                 f"approved_by={approved_by}"
+                                 + (f"; {note}" if note else ""), ts)
+            self._conn.execute(
+                "UPDATE admin_review SET state = 'recovered' WHERE entity_id = ?",
+                (doc_id,),
+            )
+            self._conn.commit()
+            self._blocked_cache = None
+        logger.info("trust: %s QUARANTINED -> MONITORED (approved_by=%s)", doc_id, approved_by)
+        return True
 
     # ------------------------------------------------------------------
     #  Trust decay (plan Section 4.6)
@@ -620,6 +841,29 @@ class TrustLedger:
                 ).fetchall()
         return [dict(row) for row in rows]
 
+    def export_history(self, entity_id: Optional[str] = None,
+                       entity_type: Optional[str] = None,
+                       limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Export the trust history for the B6 trust-dynamics plots."""
+        sql = "SELECT * FROM trust_history"
+        clauses: List[str] = []
+        params: List[Any] = []
+        if entity_id:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+        if entity_type:
+            clauses.append("entity_type = ?")
+            params.append(entity_type)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY timestamp, id"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     #  Burst-aware source registration (plan B2)
     # ------------------------------------------------------------------
@@ -628,19 +872,149 @@ class TrustLedger:
                           timestamp: Optional[float] = None) -> None:
         """Mark a source as arriving in an ingestion burst.
 
-        Future documents from this source will get a discounted prior,
-        reducing their influence on corroboration (Sybil defence).
+        Documents from this source get a discounted prior, reducing their
+        influence on corroboration (Sybil defence).  Bursts are normally
+        detected automatically from the registration history (``_detect_burst``);
+        this is the explicit override for a signal computed outside the ledger.
         """
         ts = timestamp if timestamp is not None else time.time()
         with self._lock:
             self._ensure_entity("source", source_id, ts)
+            group = (int(ts // self.config.burst_window_seconds)
+                     if self.config.burst_window_seconds > 0 else None)
             self._conn.execute(
-                "UPDATE trust_entities SET is_burst_source = 1, updated_at = ? "
+                "UPDATE trust_entities SET is_burst_source = 1, "
+                "burst_group = COALESCE(burst_group, ?), updated_at = ? "
                 "WHERE entity_id = ? AND entity_type = 'source'",
-                (ts, source_id),
+                (group, ts, source_id),
             )
             self._conn.commit()
         logger.info("trust: marked source %s as burst (discounted prior)", source_id)
+
+    def _detect_burst(self, source_id: str, ts: float) -> bool:
+        """Detect an ingestion burst from *source_id* and flag the source.
+
+        Plan signal S4 / Section 4.6: a source that registers
+        ``burst_min_docs`` documents inside ``burst_window_seconds`` is an
+        ingestion burst (normal contributors do not post in tight batches).
+        Detection uses the ledger's own registration history, so the defence
+        fires in a real run without waiting for the ingestion layer to call
+        ``mark_burst_source``.
+
+        The flag is set when the burst becomes visible and is applied
+        retroactively to the documents already registered in the window,
+        because the first documents of a burst arrive before it is detectable.
+
+        Returns True when the source is (now) flagged as a burst.
+        """
+        if self.config.burst_window_seconds <= 0 or self.config.burst_min_docs <= 1:
+            return self._is_burst_source(source_id)
+        if self._is_burst_source(source_id):
+            return True
+
+        since = ts - self.config.burst_window_seconds
+        recent = int(self._conn.execute(
+            "SELECT COUNT(*) AS n FROM doc_registry r "
+            "JOIN trust_entities e ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
+            "WHERE r.source_id = ? AND e.created_at >= ?",
+            (source_id, since),
+        ).fetchone()["n"])
+        if recent + 1 < self.config.burst_min_docs:
+            return False
+
+        self._ensure_entity("source", source_id, ts)
+        self._conn.execute(
+            "UPDATE trust_entities SET is_burst_source = 1, "
+            "burst_group = COALESCE(burst_group, ?), updated_at = ? "
+            "WHERE entity_id = ? AND entity_type = 'source'",
+            (int(ts // self.config.burst_window_seconds), ts, source_id),
+        )
+        discount = float(self.config.burst_trust_discount)
+        if discount > 0.0:
+            docs = self._conn.execute(
+                "SELECT r.doc_id FROM doc_registry r "
+                "JOIN trust_entities e ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
+                "WHERE r.source_id = ? AND e.created_at >= ?",
+                (source_id, since),
+            ).fetchall()
+            for doc_row in docs:
+                self._conn.execute(
+                    "UPDATE trust_entities SET "
+                    "alpha = 1.0 + (alpha - 1.0) * ?, beta = beta + ? "
+                    "WHERE entity_id = ? AND entity_type = 'doc'",
+                    (1.0 - discount, discount * self.config.kappa * 0.5,
+                     doc_row["doc_id"]),
+                )
+        logger.info("trust: detected ingestion burst from %s (%d docs in %.0fs)",
+                    source_id, recent + 1, self.config.burst_window_seconds)
+        return True
+
+    def influence_factor(self, source_id: str,
+                         now: Optional[float] = None) -> float:
+        """How much weight this source's evidence may carry right now.
+
+        Plan Section 4.6, B2: new sources start neutral, but their *influence*
+        on corroboration mass is capped - that is the Sybil defence.  The
+        factor ramps from ``cold_start_influence`` to 1.0 as the source either
+        ages past ``source_age_ramp_hours`` or accumulates
+        ``cold_start_min_observations`` verified observations.  A source the
+        ledger has never seen has no history at all and gets the floor.
+        """
+        if not self.config.hierarchical:
+            return 1.0
+        ts = now if now is not None else time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT created_at, n_observations FROM trust_entities "
+                "WHERE entity_id = ? AND entity_type = 'source'",
+                (source_id,),
+            ).fetchone()
+            if row is None:
+                # The source may be known only through its documents (NEUTRAL
+                # observations never create the source entity), so age it from
+                # its first registered document instead of calling it unknown.
+                row = self._conn.execute(
+                    "SELECT MIN(e.created_at) AS created_at, 0 AS n_observations "
+                    "FROM doc_registry r JOIN trust_entities e "
+                    "ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
+                    "WHERE r.source_id = ?",
+                    (source_id,),
+                ).fetchone()
+        if row is None or row["created_at"] is None:
+            return max(0.0, min(1.0, float(self.config.cold_start_influence)))
+        if int(row["n_observations"]) >= self.config.cold_start_min_observations:
+            return 1.0
+        ramp = float(self.config.source_age_ramp_hours)
+        if ramp <= 0.0:
+            return 1.0
+        age_hours = max(0.0, (ts - float(row["created_at"])) / 3600.0)
+        maturity = min(1.0, age_hours / ramp)
+        floor = float(self.config.cold_start_influence)
+        return max(0.0, min(1.0, floor + (1.0 - floor) * maturity))
+
+    def same_burst(self, source_a: str, source_b: str) -> bool:
+        """Whether two sources arrived in the same detected ingestion burst.
+
+        Passed to the verifier so that passages from one burst cannot
+        corroborate each other (plan Section 4.5, step 3).  Two sources share a
+        burst only when both are flagged and their burst groups are equal, so
+        bulk-ingested *clean* sources are not excluded from each other merely
+        for arriving in batches.
+        """
+        if source_a == source_b:
+            return True
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT entity_id, burst_group, is_burst_source FROM trust_entities "
+                "WHERE entity_type = 'source' AND entity_id IN (?, ?)",
+                (source_a, source_b),
+            ).fetchall()
+        groups = {row["entity_id"]: row["burst_group"]
+                  for row in rows if row["is_burst_source"]}
+        if len(groups) < 2:
+            return False
+        group_a, group_b = groups.get(source_a), groups.get(source_b)
+        return group_a is not None and group_a == group_b
 
     def _is_burst_source(self, source_id: str) -> bool:
         """Check if a source is marked as a burst source."""

@@ -5,13 +5,19 @@ Called only for MEDIUM-band passages.  The algorithm:
 1. **Single-document claim extraction.**  Ask the LLM "what does this passage
    alone say about the query?" using Person A's ``build_single_doc_prompt``.
 
-2. **Leave-one-out influence.**  Compare the full-context answer (all top-k)
-   against the single-document answer.  If the target passage is not influential
-   (i.e. removing it doesn't change the answer), skip verification.
+2. **Leave-one-out influence.**  A cheap content-word coverage proxy runs
+   first (free); when it cannot rule the passage out, the LLM answers the query
+   over the pool *without* the target and that answer is compared with the
+   single-document answer (one extra call, so the plan's two-call budget still
+   holds).  A passage whose removal changes nothing is non-influential and gets
+   no trust update - and, per plan Section 4.5, it can never be REFUTEd, because
+   it cannot be poisoning an answer it does not change.
 
 3. **Independent corroboration.**  From the candidate pool, keep only passages
-   whose ``source_id`` *and* ``family_id`` both differ from the target's,
-   and whose source is not part of the same ingestion burst.
+   whose ``source_id`` *and* ``family_id`` both differ from the target's, and
+   whose source did not arrive in the same ingestion burst.  The burst rule
+   needs the ledger's registration history, so the owner of the ledger passes
+   the ``same_burst`` predicate into ``verify`` (``TrustPolicy`` does).
 
 4. **NLI or lexical comparison.**  For each independent passage:
    - If a DeBERTa NLI cross-encoder is available (GPU): run
@@ -28,11 +34,11 @@ Called only for MEDIUM-band passages.  The algorithm:
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..contracts import RetrievedDocument, VerificationOutcome, VerificationResult
 from ..generation.llm import StubLLM
-from ..generation.prompts import build_single_doc_prompt
+from ..generation.prompts import build_answer_prompt, build_single_doc_prompt
 from ..utils.textnorm import tokenise
 from ..utils.timing import Stopwatch
 from ..utils.logging import get_logger
@@ -154,6 +160,17 @@ class CorroborationVerifier:
         cover before the target is treated as redundant (non-influential) and
         verification returns NEUTRAL without spending an LLM call.  Strictly
         greater-than, so a claim repeated verbatim elsewhere is still skipped.
+    max_source_mass : float
+        Cap on any single source's contribution to support/refute mass.  Plan
+        Section 4.5 weights mass by source trust; without a cap one very
+        trusted source could decide the outcome alone.
+    counterfactual_influence : bool
+        Also run the plan's without-the-passage answer comparison (one extra
+        LLM call) after the free coverage proxy.  Set False to fall back to the
+        proxy alone.
+    influence_agreement_threshold : float
+        Content-word Jaccard between the two answers at or above which the
+        answers are considered unchanged, i.e. the passage non-influential.
     use_nli : bool | None
         If True, use NLI cross-encoder. If False, use lexical.
         If None (default), auto-detect: use NLI if available.
@@ -163,7 +180,10 @@ class CorroborationVerifier:
                  support_threshold: float = 0.15, refute_threshold: float = 0.10,
                  min_mass: float = 0.10, use_nli: Optional[bool] = None,
                  min_refute_topical_overlap: int = 1,
-                 max_redundant_coverage: float = 0.80) -> None:
+                 max_redundant_coverage: float = 0.80,
+                 max_source_mass: float = 0.6,
+                 counterfactual_influence: bool = True,
+                 influence_agreement_threshold: float = 0.6) -> None:
         self.llm = llm or StubLLM()
         self.max_corroboration = int(max_corroboration)
         self.support_threshold = float(support_threshold)
@@ -171,6 +191,9 @@ class CorroborationVerifier:
         self.min_mass = float(min_mass)
         self.min_refute_topical_overlap = int(min_refute_topical_overlap)
         self.max_redundant_coverage = float(max_redundant_coverage)
+        self.max_source_mass = float(max_source_mass)
+        self.counterfactual_influence = bool(counterfactual_influence)
+        self.influence_agreement_threshold = float(influence_agreement_threshold)
 
         # NLI mode: auto-detect if not specified
         if use_nli is True:
@@ -209,21 +232,45 @@ class CorroborationVerifier:
 
     def verify(self, query: str, query_id: str,
                target: RetrievedDocument,
-               pool: Sequence[RetrievedDocument]) -> VerificationResult:
+               pool: Sequence[RetrievedDocument],
+               *,
+               same_burst: Optional[Callable[[str, str], bool]] = None,
+               source_influence: Optional[Callable[[str], float]] = None,
+               ) -> VerificationResult:
         """Verify a MEDIUM-band passage by checking corroboration.
+
+        ``same_burst`` and ``source_influence`` are optional context supplied by
+        whoever owns the trust ledger (``TrustPolicy`` passes both): the first
+        drops corroborators that arrived in the target's own ingestion burst,
+        the second caps the influence of sources without history.  They are
+        keyword-only with ``None`` defaults, so callers that verify against a
+        bare pool are unaffected.
 
         Returns a ``VerificationResult`` with honest ``llm_calls`` count.
         """
         with Stopwatch() as watch:
             # Step 1 - what does the target passage alone claim?
             target_claim, llm_calls = self._extract_claim(query, target)
+            if not target_claim or _ABSTAIN_MARKER.lower() in target_claim.lower():
+                # The passage does not answer the query: nothing to verify.
+                return VerificationResult(
+                    doc_id=target.doc_id, query_id=query_id,
+                    single_doc_answer=target_claim,
+                    influential=False,
+                    support_mass=0.0, refute_mass=0.0,
+                    outcome=VerificationOutcome.NEUTRAL,
+                    llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
+                )
+
+            # Step 2 - influence.  The coverage proxy is free; the LLM
+            # counterfactual is only paid for when independent sources exist.
             influential = self._check_influence(query, target, target_claim, pool)
 
-            # Step 2 - find independent sources in the pool
-            independent = self._find_independent(target, pool)
-
-            if not independent or not influential:
-                # No independent sources or no substantive claim -> NEUTRAL
+            # Step 3 - find independent sources in the pool
+            independent = self._find_independent(target, pool, same_burst)
+            if not independent:
+                # Plan Section 4.5 limitation: without independent passages the
+                # verifier cannot refute, so the passage stays MONITORED.
                 return VerificationResult(
                     doc_id=target.doc_id, query_id=query_id,
                     single_doc_answer=target_claim,
@@ -233,18 +280,26 @@ class CorroborationVerifier:
                     llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
                 )
 
-            # Step 3 - extract claims from independent passages and compare
+            if influential and self.counterfactual_influence:
+                influential, extra_calls = self._counterfactual_influence(
+                    query, target, target_claim, pool)
+                llm_calls += extra_calls
+
+            # Step 4 - trust-weighted corroboration mass
             support_mass, refute_mass, extra_calls = self._corroborate(
-                query, target_claim, independent,
+                query, target_claim, independent, source_influence,
             )
             llm_calls += extra_calls
 
-            # Step 4 - determine outcome
-            outcome = self._decide(support_mass, refute_mass)
+            # Step 5 - determine outcome.  Influence gates *refutation* only
+            # (plan Section 4.5): a passage that changes nothing cannot be
+            # poisoning the answer, but it can still be corroborated.
+            outcome = self._decide(support_mass, refute_mass, influential)
             logger.debug(
-                "verify %s: support=%.3f refute=%.3f -> %s (llm_calls=%d, nli=%s)",
+                "verify %s: support=%.3f refute=%.3f -> %s (influential=%s, "
+                "llm_calls=%d, nli=%s)",
                 target.doc_id, support_mass, refute_mass, outcome.value,
-                llm_calls, self._use_nli,
+                influential, llm_calls, self._use_nli,
             )
 
         return VerificationResult(
@@ -328,39 +383,120 @@ class CorroborationVerifier:
 
         return True
 
+    def _counterfactual_influence(self, query: str, target: RetrievedDocument,
+                                  target_claim: str,
+                                  pool: Sequence[RetrievedDocument]
+                                  ) -> Tuple[bool, int]:
+        """Plan Section 4.5 step 2: the answer with and without the passage.
+
+        The single-document answer (``target_claim``, already paid for) is the
+        "with" answer.  This asks the LLM the same question over the pool minus
+        the target, which costs one call and keeps verification inside the
+        plan's two-call budget.  If the answer does not change, removing the
+        passage changes nothing: it is non-influential and gets no trust update.
+
+        Returns (influential, llm_calls).
+        """
+        remaining = [p for p in pool if p.doc_id != target.doc_id]
+        if not remaining:
+            return True, 0
+
+        prompt = build_answer_prompt(query, remaining)
+        response = self.llm.generate(prompt, max_tokens=256)
+        calls = int(getattr(response, "llm_calls", 1) or 1)
+        without = _CITATION_RE.sub("", response.text or "").strip()
+
+        if not without or _ABSTAIN_MARKER.lower() in without.lower():
+            # Removing the passage removed the answer: it was doing the work.
+            return True, calls
+
+        agreement = self._answer_agreement(target_claim, without)
+        return agreement < self.influence_agreement_threshold, calls
+
+    @staticmethod
+    def _answer_agreement(answer_a: str, answer_b: str) -> float:
+        """Content-word Jaccard between two answers (1.0 = the same answer).
+
+        Jaccard rather than containment, so a longer generation that merely
+        quotes the same fact is not automatically scored as "unchanged".
+        """
+        a = set(tokenise(answer_a)) - _STOP_WORDS
+        b = set(tokenise(answer_b)) - _STOP_WORDS
+        if not a or not b:
+            return 0.0
+        return len(a & b) / len(a | b)
+
     def _find_independent(self, target: RetrievedDocument,
-                          pool: Sequence[RetrievedDocument]) -> List[RetrievedDocument]:
+                          pool: Sequence[RetrievedDocument],
+                          same_burst: Optional[Callable[[str, str], bool]] = None,
+                          ) -> List[RetrievedDocument]:
         """Keep only pool passages from genuinely independent sources.
 
         Independent means different ``source_id`` *and* different ``family_id``
-        from the target (plan Section 4.5, rule 2 in HANDOVER.md).
+        from the target (plan Section 4.5, rule 2 in HANDOVER.md), and a source
+        that is not part of the same ingestion burst as the target's.
+
+        The burst rule only fires when a ledger supplies ``same_burst``; without
+        one (a bare pool) the two structural rules still apply.
         """
         candidates = [
             p for p in pool
             if p.doc_id != target.doc_id
             and p.source_id != target.source_id
             and p.family_id != target.family_id
+            and not (same_burst is not None
+                     and same_burst(p.source_id, target.source_id))
         ]
         # Prioritise the most trusted independent passages
         candidates.sort(key=lambda p: -p.trust.t_eff)
         return candidates[: self.max_corroboration]
 
     def _corroborate(self, query: str, target_claim: str,
-                     independent: List[RetrievedDocument]
+                     independent: List[RetrievedDocument],
+                     source_influence: Optional[Callable[[str], float]] = None,
                      ) -> Tuple[float, float, int]:
         """Compare target's claim against independent sources.
 
         Uses NLI cross-encoder if available, otherwise lexical comparison.
 
         Returns (support_mass, refute_mass, llm_calls).
-        Mass is trust-weighted, aggregated by source (noisy-OR).
+        Mass is source-trust weighted (capped per source) and aggregated by
+        source with a noisy-OR, so one source counts once.
         """
         if self._use_nli:
-            return self._corroborate_nli(query, target_claim, independent)
-        return self._corroborate_lexical(query, target_claim, independent)
+            return self._corroborate_nli(query, target_claim, independent,
+                                         source_influence)
+        return self._corroborate_lexical(query, target_claim, independent,
+                                         source_influence)
+
+    def _source_weight(self, doc: RetrievedDocument,
+                       source_influence: Optional[Callable[[str], float]] = None,
+                       ) -> float:
+        """Evidence weight of one independent passage (plan Section 4.5).
+
+        Mass is ``Sum T_source(d')``, not the passage's blended ``t_eff``: a
+        document cannot launder a low-trust source by its own few observations.
+        The weight is capped by ``max_source_mass`` so no single source can
+        decide an outcome alone, and scaled by the ledger's cold-start
+        influence factor (B2 Sybil defence) when one is supplied.
+        """
+        weight = min(float(doc.trust.t_source), self.max_source_mass)
+        if source_influence is not None:
+            try:
+                factor = float(source_influence(doc.source_id))
+            except Exception:
+                # Loud, not silent: losing the Sybil cap changes what the
+                # numbers mean, so it must be visible in the logs.
+                logger.warning("source influence lookup failed for %s; "
+                               "counting this source at full weight",
+                               doc.source_id, exc_info=True)
+                factor = 1.0
+            weight *= max(0.0, min(1.0, factor))
+        return max(0.0, min(1.0, weight))
 
     def _corroborate_nli(self, query: str, target_claim: str,
-                         independent: List[RetrievedDocument]
+                         independent: List[RetrievedDocument],
+                         source_influence: Optional[Callable[[str], float]] = None,
                          ) -> Tuple[float, float, int]:
         """NLI-based corroboration (plan Section 4.5 step 3).
 
@@ -388,7 +524,7 @@ class CorroborationVerifier:
 
         for doc in independent:
             label, confidence = _nli_scorer.predict(doc.text, hypothesis)
-            trust = float(doc.trust.t_eff)
+            trust = self._source_weight(doc, source_influence)
             source = doc.source_id
 
             if label == "entailment":
@@ -407,41 +543,40 @@ class CorroborationVerifier:
         return support_mass, refute_mass, 0  # NLI uses no LLM calls
 
     def _corroborate_lexical(self, query: str, target_claim: str,
-                             independent: List[RetrievedDocument]
+                             independent: List[RetrievedDocument],
+                             source_influence: Optional[Callable[[str], float]] = None,
                              ) -> Tuple[float, float, int]:
         """Lexical corroboration (fallback when NLI is unavailable).
 
-        Extracts claims from independent passages via LLM and compares
-        using stop-word-filtered Jaccard overlap.
+        The passage itself is the evidence, so each independent passage is
+        compared directly against the target's claim with stop-word-filtered
+        Jaccard overlap - no per-passage LLM call.  The old implementation
+        summarised every independent passage with its own LLM call, which blew
+        the plan's two-call verification budget (one call per passage on top of
+        claim extraction and the influence check) and replaced real evidence
+        with a second-hand summary.
+
+        Agreement deliberately measures the terms that *answer* the question:
+        the query words are the common frame shared by every passage on the
+        topic, so a passage asserting a rival answer ("... discovered by Alan
+        Wu" against "... discovered by Maria Chen") must not look like partial
+        agreement merely because both contain "discovered" and the subject.  The
+        influence proxy and the refutation gate are different metrics and keep
+        the query words - see ``_topical_overlap``.
 
         Returns (support_mass, refute_mass, llm_calls).
         """
-        # Extract claims from independent passages
-        claims: List[Tuple[RetrievedDocument, str]] = []
-        total_llm = 0
-        for doc in independent:
-            claim, calls = self._extract_claim(query, doc)
-            total_llm += calls
-            if claim and _ABSTAIN_MARKER.lower() not in claim.lower():
-                claims.append((doc, claim))
-
-        if not claims:
-            return 0.0, 0.0, total_llm
-
-        # Build content-word sets for the target's claim
         query_tokens = set(tokenise(query)) | _STOP_WORDS
         target_content = set(tokenise(target_claim)) - query_tokens
+        if not target_content:
+            return 0.0, 0.0, 0
 
         best_support_per_source: Dict[str, float] = {}
         best_refute_per_source: Dict[str, float] = {}
 
-        for doc, ind_claim in claims:
-            # Compare on two axes and take the stronger signal
-            claim_agree = self._content_overlap(target_content, ind_claim, query_tokens)
-            passage_agree = self._content_overlap(target_content, doc.text, query_tokens)
-            agreement = max(claim_agree, passage_agree)
-
-            trust = float(doc.trust.t_eff)
+        for doc in independent:
+            agreement = self._content_overlap(target_content, doc.text, query_tokens)
+            trust = self._source_weight(doc, source_influence)
             source = doc.source_id
 
             if agreement >= self.support_threshold:
@@ -459,7 +594,7 @@ class CorroborationVerifier:
         # Noisy-OR aggregation (same rule as evidence_mass in citations.py)
         support_mass = self._noisy_or(best_support_per_source)
         refute_mass = self._noisy_or(best_refute_per_source)
-        return support_mass, refute_mass, total_llm
+        return support_mass, refute_mass, 0  # no LLM calls: the text is the evidence
 
     def _may_refute(self, claim: str, text: str) -> bool:
         """Whether a passage is allowed to contribute *refuting* evidence.
@@ -515,10 +650,19 @@ class CorroborationVerifier:
             product *= (1.0 - min(max(w, 0.0), 1.0))
         return float(1.0 - product)
 
-    def _decide(self, support_mass: float, refute_mass: float) -> VerificationOutcome:
-        """Determine the verification outcome from aggregated masses."""
+    def _decide(self, support_mass: float, refute_mass: float,
+                influential: bool = True) -> VerificationOutcome:
+        """Determine the verification outcome from aggregated masses.
+
+        Plan Section 4.5, verbatim: "REFUTE if influential and Refute >= tau_r
+        and Refute > Support; SUPPORT if Support >= tau_c; otherwise NEUTRAL".
+        Influence therefore gates refutation only - a passage whose removal does
+        not change the answer cannot be poisoning it, but it can still be
+        corroborated and earn trust.
+        """
         if support_mass >= self.min_mass and support_mass > refute_mass:
             return VerificationOutcome.SUPPORT
-        if refute_mass >= self.min_mass and refute_mass > support_mass:
+        if (influential and refute_mass >= self.min_mass
+                and refute_mass > support_mass):
             return VerificationOutcome.REFUTE
         return VerificationOutcome.NEUTRAL

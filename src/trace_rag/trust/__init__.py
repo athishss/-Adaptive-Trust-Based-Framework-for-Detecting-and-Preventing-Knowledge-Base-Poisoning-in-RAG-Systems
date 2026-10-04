@@ -10,8 +10,11 @@ from ``contracts.py``:
 All three work offline (hashing embedder + stub LLM) and require no GPU.
 """
 
+from . import plots
 from .ledger import TrustLedger, TrustConfig
 from .verifier import CorroborationVerifier
 from .policy import TrustPolicy
+from .queue import VerificationQueue, PendingVerification
 
-__all__ = ["TrustLedger", "TrustConfig", "CorroborationVerifier", "TrustPolicy"]
+__all__ = ["TrustLedger", "TrustConfig", "CorroborationVerifier", "TrustPolicy",
+           "VerificationQueue", "PendingVerification", "plots"]

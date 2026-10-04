@@ -31,12 +31,19 @@ near-verbatim premises entail the bare claim (0.997 vs 0.010), paraphrased
 premises entail the interrogative form (0.996 vs 1.000 neutral).  Changing it
 silently trades one support case for another, so the fix for the real defect
 is the topical gate, not the framing.
+
+These tests drive the LLM with ``StubLLM``, which actually reads the passages it
+is given, because verification now also runs the plan's leave-one-out influence
+step: the query is answered again over the pool *without* the target and the two
+answers are compared.  A stub that ignores its prompt would make every passage
+look non-influential (the same answer either way), which would then - correctly -
+suppress refutation and hide the topical gate these tests exist to pin down.
 """
 
 from __future__ import annotations
 
 from trace_rag.contracts import RetrievedDocument, TrustSnapshot, VerificationOutcome
-from trace_rag.generation.llm import LLMResponse
+from trace_rag.generation.llm import LLMResponse, StubLLM
 from trace_rag.trust import verifier as verifier_module
 from trace_rag.trust.verifier import CorroborationVerifier
 
@@ -50,15 +57,6 @@ TARGET_TEXT = (
 TOPICAL_CONTRADICTION = "The Zog artefact was discovered by Alan Wu."
 SUPPORTING = "Maria Chen worked at the institute."
 OFF_TOPIC = "The Great Wall of China is over twenty thousand kilometres long."
-
-
-class FixedLLM:
-    """Always returns the target claim; never abstains."""
-
-    name = "fixed"
-
-    def generate(self, prompt, max_tokens=256, stop=None):  # noqa: ARG002
-        return LLMResponse(text=CLAIM, llm_calls=1)
 
 
 class PassageAwareLLM:
@@ -119,7 +117,7 @@ def _doc(index: int, text: str, source: str, family: str, t_eff: float = 0.5):
 def _verify(monkeypatch, scorer, other_text, llm=None):
     """Run one verification with the NLI scorer patched in."""
     monkeypatch.setattr(verifier_module, "_nli_scorer", scorer)
-    verifier = CorroborationVerifier(llm=llm or FixedLLM(), use_nli=True)
+    verifier = CorroborationVerifier(llm=llm or StubLLM(), use_nli=True)
     target = _doc(0, TARGET_TEXT, "attacker", "fam_attacker")
     other = _doc(1, other_text, "clean_1", "fam_1")
     return verifier.verify(QUERY, "q1", target, [target, other])

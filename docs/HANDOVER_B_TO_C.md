@@ -106,6 +106,60 @@ config = TrustConfig(kappa=3.0, t_cap=0.6)
 ledger = TrustLedger("runs/sweep/trust.sqlite3", config=config)
 ```
 
+### What changed in Person B's components (latest revision)
+
+Person B's trust layer now implements the plan clauses that were missing.  Nothing
+Person C already calls changed signature, but three behaviours are different and
+matter for the harness:
+
+1. **`verify()` accepts two optional keyword arguments** - `same_burst=` and
+   `source_influence=`. `TrustPolicy` passes them from the ledger automatically;
+   a bare `verifier.verify(q, qid, doc, pool)` call (the `always_on_loo`
+   baseline) behaves exactly as before.  When they are supplied: passages whose
+   source arrived in the target's ingestion burst stop corroborating, and
+   sources without history contribute less mass.
+2. **Verification now costs at most two LLM calls** in both modes: one for the
+   single-document claim and at most one for the influence comparison.  The
+   lexical fallback no longer summarises every independent passage.
+3. **REJECTED is an administrator decision.**  A third refutation on a
+   QUARANTINED document now raises a review request instead of rejecting it.
+   `ledger.pending_reviews()`, `ledger.admin_approve_rejection(doc_id,
+   approved_by=...)`, `ledger.admin_decline_rejection(...)` and
+   `ledger.admin_approve_recovery(...)` drive it.  The document stays blocked
+   (QUARANTINED) throughout, so security behaviour is unchanged; only the final
+   state needs a human.
+
+New knobs on `TrustConfig`: `burst_window_seconds` / `burst_min_docs` (ingestion
+bursts are now detected from the ledger's own registration history -
+`mark_burst_source` is only an override), `cold_start_influence` /
+`source_age_ramp_hours` / `cold_start_min_observations` (Sybil influence cap),
+`hierarchical` (False = document-only trust, the V2 ablation) and
+`record_history`.  **Trust decay is scheduled per query** (`begin_query`, which
+`TrustPolicy.decide` calls once per query), not per observation - a sweep that
+bypasses the policy must call `ledger.begin_query()` itself.
+
+High-band passages can be verified off the latency path:
+
+```python
+from trace_rag.trust.queue import VerificationQueue
+
+queue = VerificationQueue()
+policy = TrustPolicy(ledger=ledger, queue=queue)   # HIGH band is queued, not verified inline
+...
+policy.drain_verification_queue(verifier)          # between queries, or:
+queue.start_background(verifier, ledger, interval=0.5)  # daemon worker
+```
+
+Trust dynamics for the B6 figures come straight from the ledger:
+
+```python
+from trace_rag.trust.plots import plot_trust_dynamics, plot_quarantine_timeline
+
+history = ledger.export_history()                  # every alpha/beta update
+plot_trust_dynamics(history, "runs/figs")          # one PNG per doc/source
+plot_quarantine_timeline(ledger.get_audit_log(), "runs/figs/blocked.png")
+```
+
 ---
 
 ## 5. Rules that keep the experiments honest

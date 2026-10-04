@@ -113,9 +113,17 @@ class TestTrustLedger:
         assert ledger.get_status("d1") is TrustStatus.QUARANTINED
         assert "d1" in ledger.blocked_doc_ids()
 
-    def test_state_machine_quarantined_to_rejected(self, ledger):
+    def test_quarantined_to_rejected_requires_administrator(self, ledger):
+        """Plan Section 4.7: REJECTED is an admin decision, not automatic."""
         for _ in range(3):
             ledger.record_observation("d1", "src", "fam", "REFUTE")
+        # The third refutation raises a review request.  The document is
+        # already blocked as QUARANTINED, but stays there until a human
+        # confirms the rejection.
+        assert ledger.get_status("d1") is TrustStatus.QUARANTINED
+        assert "d1" in ledger.blocked_doc_ids()
+        assert any(r["entity_id"] == "d1" for r in ledger.pending_reviews())
+        assert ledger.admin_approve_rejection("d1", approved_by="admin") is True
         assert ledger.get_status("d1") is TrustStatus.REJECTED
         assert "d1" in ledger.blocked_doc_ids()
 
@@ -575,20 +583,21 @@ class TestTrustDecay:
     """P4: Trust decay via gamma-based forgetting."""
 
     def test_decay_pulls_towards_neutral(self):
-        """After decay, alpha/beta move towards 1.0 (neutral)."""
-        config = TrustConfig(decay_gamma=0.5, decay_interval=1)
+        """After a decay cycle, alpha/beta move towards 1.0 (neutral)."""
+        config = TrustConfig(decay_gamma=0.5, decay_interval=2)
         ledger = TrustLedger(":memory:", config=config)
         # Build up high trust
         ledger.record_observation("doc1", "s1", "f1", "SUPPORT")
-        snap_before = ledger.get_trust(["doc1"])["doc1"]
-        t_before = snap_before.t_doc
-        # Trigger another observation (which triggers decay since interval=1)
-        ledger.record_observation("doc2", "s2", "f2", "REFUTE")
-        # Re-read doc1's trust after decay was applied
-        snap_after = ledger.get_trust(["doc1"])["doc1"]
-        # Trust should have moved towards 0.5 (neutral)
-        assert abs(snap_after.t_doc - 0.5) < abs(t_before - 0.5), \
-            f"Decay should pull trust towards 0.5: before={t_before}, after={snap_after.t_doc}"
+        t_before = ledger.get_trust(["doc1"])["doc1"].t_doc
+        # Decay is scheduled per *query* (plan Section 4.6), so it is driven by
+        # begin_query() - the policy calls it once per query - not by
+        # observations of unrelated documents.
+        ledger.begin_query()
+        assert ledger.get_trust(["doc1"])["doc1"].t_doc == pytest.approx(t_before)
+        ledger.begin_query()
+        t_after = ledger.get_trust(["doc1"])["doc1"].t_doc
+        assert abs(t_after - 0.5) < abs(t_before - 0.5), \
+            f"Decay should pull trust towards 0.5: before={t_before}, after={t_after}"
 
     def test_no_decay_when_gamma_is_one(self):
         """With gamma=1.0, no decay should occur."""
@@ -596,7 +605,7 @@ class TestTrustDecay:
         ledger = TrustLedger(":memory:", config=config)
         ledger.record_observation("doc1", "s1", "f1", "SUPPORT")
         snap1 = ledger.get_trust(["doc1"])["doc1"]
-        ledger.record_observation("doc2", "s2", "f2", "NEUTRAL")
+        ledger.begin_query()
         snap2 = ledger.get_trust(["doc1"])["doc1"]
         assert abs(snap1.t_doc - snap2.t_doc) < 0.01, \
             f"gamma=1.0 should not decay: before={snap1.t_doc}, after={snap2.t_doc}"
