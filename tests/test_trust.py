@@ -676,24 +676,70 @@ class TestLOOInfluence:
     """P5: Leave-one-out influence detection in verifier."""
 
     def test_redundant_passage_is_non_influential(self):
-        """If other passages cover the target's claim, it's non-influential."""
+        """A claim repeated verbatim in the pool is non-influential."""
         verifier = CorroborationVerifier(use_nli=False)
-        # Target says "Gustave Eiffel designed the tower"
-        target = _doc("d1", text="Gustave Eiffel designed the Eiffel Tower in Paris")
-        # Other passages also mention Eiffel and tower
+        claim = "The Zog artefact was discovered by Maria Chen."
+        target = _doc("d1", text=claim)
+        # d2 repeats the claim word for word, so dropping the target changes nothing
         pool = [
             target,
-            _doc("d2", text="Gustave Eiffel was the engineer behind the Eiffel Tower",
-                 source_id="s2", family_id="f2"),
-            _doc("d3", text="The Eiffel Tower was designed by Gustave Eiffel in 1889",
-                 source_id="s3", family_id="f3"),
+            _doc("d2", text=claim, source_id="s2", family_id="f2"),
         ]
-        # The claim "Gustave Eiffel designed the Eiffel Tower" is covered by d2 and d3
-        claim = "Gustave Eiffel designed the Eiffel Tower"
-        influential = verifier._check_influence("who designed the eiffel tower?",
+        influential = verifier._check_influence("who discovered the Zog artefact?",
                                                  target, claim, pool)
-        # With high coverage from other passages, should be non-influential
-        # (depends on exact token overlap — may or may not trigger the >80% threshold)
+        assert not influential, \
+            "A claim repeated verbatim elsewhere should be non-influential"
+
+    def test_supporting_passage_does_not_make_target_redundant(self):
+        """Regression: coverage must not strip the claim's own subject.
+
+        The claim's subject is named by the query, so the old implementation
+        removed the query words from the claim before measuring coverage,
+        leaving only the answer words.  A passage sharing the answer then
+        scored 100% and the target was declared redundant: it could never be
+        corroborated, because the evidence that would have supported it was
+        exactly what made it look redundant.  Here d2 shares 4 of the claim's
+        5 content words (0.80) and the target must survive the strict
+        ``> max_redundant_coverage`` boundary.
+        """
+        verifier = CorroborationVerifier(use_nli=False)
+        claim = "The Zog artefact was discovered by Maria Chen."
+        target = _doc("d1", text=claim)
+        pool = [
+            target,
+            _doc("d2", text="Maria Chen wrote about the Zog artefact in her memoirs.",
+                 source_id="s2", family_id="f2"),
+        ]
+        influential = verifier._check_influence("who discovered the Zog artefact?",
+                                                 target, claim, pool)
+        assert influential, \
+            "A passage that only partly covers the claim must not make it redundant"
+
+    def test_off_topic_pool_leaves_target_influential(self):
+        """Passages sharing no content words cannot make a claim redundant."""
+        verifier = CorroborationVerifier(use_nli=False)
+        claim = "The Zog artefact was discovered by Maria Chen."
+        target = _doc("d1", text=claim)
+        pool = [
+            target,
+            _doc("d2", text="The weather in Paris is pleasant in spring.",
+                 source_id="s2", family_id="f2"),
+        ]
+        influential = verifier._check_influence("who discovered the Zog artefact?",
+                                                 target, claim, pool)
+        assert influential, "Off-topic passages must not make a claim redundant"
+
+    def test_max_redundant_coverage_is_configurable(self):
+        """Raising the threshold lets even a verbatim repeat stay influential."""
+        claim = "The Zog artefact was discovered by Maria Chen."
+        target = _doc("d1", text=claim)
+        pool = [
+            target,
+            _doc("d2", text=claim, source_id="s2", family_id="f2"),
+        ]
+        verifier = CorroborationVerifier(use_nli=False, max_redundant_coverage=1.0)
+        assert verifier._check_influence("who discovered the Zog artefact?",
+                                          target, claim, pool)
 
     def test_unique_claim_is_influential(self):
         """If no other passage covers the target's claim, it's influential."""

@@ -149,6 +149,11 @@ class CorroborationVerifier:
         Minimum number of content words a passage must share with the claim
         before it is allowed to contribute *refuting* evidence.  Passages
         below this floor are irrelevant, not contradictory, and are ignored.
+    max_redundant_coverage : float
+        Share of a claim's content words that other pool passages may already
+        cover before the target is treated as redundant (non-influential) and
+        verification returns NEUTRAL without spending an LLM call.  Strictly
+        greater-than, so a claim repeated verbatim elsewhere is still skipped.
     use_nli : bool | None
         If True, use NLI cross-encoder. If False, use lexical.
         If None (default), auto-detect: use NLI if available.
@@ -157,13 +162,15 @@ class CorroborationVerifier:
     def __init__(self, llm=None, max_corroboration: int = 3,
                  support_threshold: float = 0.15, refute_threshold: float = 0.10,
                  min_mass: float = 0.10, use_nli: Optional[bool] = None,
-                 min_refute_topical_overlap: int = 1) -> None:
+                 min_refute_topical_overlap: int = 1,
+                 max_redundant_coverage: float = 0.80) -> None:
         self.llm = llm or StubLLM()
         self.max_corroboration = int(max_corroboration)
         self.support_threshold = float(support_threshold)
         self.refute_threshold = float(refute_threshold)
         self.min_mass = float(min_mass)
         self.min_refute_topical_overlap = int(min_refute_topical_overlap)
+        self.max_redundant_coverage = float(max_redundant_coverage)
 
         # NLI mode: auto-detect if not specified
         if use_nli is True:
@@ -275,7 +282,21 @@ class CorroborationVerifier:
         This is a lightweight proxy for full LOO (which would need an extra
         LLM call): if other passages already contain all the content words
         in the target's claim, removing the target wouldn't change the answer.
+
+        Coverage is measured over the claim's content words with *stop words
+        only* removed.  Stripping the query words as well - as this method
+        used to - deleted the claim's own subject, because in question
+        answering the query names the entity the claim is about.  Measured on
+        "The Zog artefact was discovered by Maria Chen." against "who
+        discovered the Zog artefact?", that left only ['chen', 'maria'], so a
+        passage repeating the answer covered 100% and the target was called
+        redundant before corroboration could ever support it.
+
+        ``query`` is retained in the signature for callers and tests but is
+        deliberately no longer used in the comparison.
         """
+        del query  # kept for signature stability; see the docstring above
+
         # First check: is the claim substantive at all?
         if not target_claim or _ABSTAIN_MARKER.lower() in target_claim.lower():
             return False
@@ -285,8 +306,7 @@ class CorroborationVerifier:
         if not other_passages:
             return True  # only passage - must be influential
 
-        query_tokens = set(tokenise(query)) | _STOP_WORDS
-        target_content = set(tokenise(target_claim)) - query_tokens
+        target_content = set(tokenise(target_claim)) - _STOP_WORDS
 
         if not target_content:
             return False  # claim is all stop words
@@ -294,14 +314,15 @@ class CorroborationVerifier:
         # Check how much of the claim is covered by other passages
         covered_tokens: set = set()
         for p in other_passages:
-            p_content = set(tokenise(p.text)) - query_tokens
+            p_content = set(tokenise(p.text)) - _STOP_WORDS
             covered_tokens |= (target_content & p_content)
 
         coverage = len(covered_tokens) / len(target_content) if target_content else 0.0
 
         # If other passages cover >80% of the claim's content words,
-        # the target is redundant (non-influential)
-        if coverage > 0.80:
+        # the target is redundant (non-influential).  Strict >, so a claim
+        # repeated verbatim elsewhere still counts as redundant.
+        if coverage > self.max_redundant_coverage:
             logger.debug("LOO: %s non-influential (coverage=%.2f)", target.doc_id, coverage)
             return False
 
