@@ -238,6 +238,7 @@ class VerificationResult:
     outcome: VerificationOutcome
     llm_calls: int = 0
     latency_ms: float = 0.0
+    mode: str = "lexical"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -250,6 +251,7 @@ class VerificationResult:
             "outcome": self.outcome.value,
             "llm_calls": int(self.llm_calls),
             "latency_ms": _round(self.latency_ms, 3),
+            "mode": self.mode,
         }
 
 

@@ -5,6 +5,8 @@ from .policies import (
     perplexity_filter,
     trust_threshold_filter,
     always_on_loo,
+    TrustRAGPolicy,
+    RobustRAGPolicy,
     BASELINE_NAMES,
 )
 
@@ -15,5 +17,7 @@ __all__ = [
     "perplexity_filter",
     "trust_threshold_filter",
     "always_on_loo",
+    "TrustRAGPolicy",
+    "RobustRAGPolicy",
     "BASELINE_NAMES",
 ]

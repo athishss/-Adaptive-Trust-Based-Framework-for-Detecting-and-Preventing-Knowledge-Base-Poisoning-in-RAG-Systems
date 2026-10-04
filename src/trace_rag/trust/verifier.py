@@ -281,6 +281,7 @@ class CorroborationVerifier:
                     influential=influential,
                     support_mass=0.0, refute_mass=0.0,
                     outcome=VerificationOutcome.NEUTRAL,
+                    mode="nli" if self._use_nli else "lexical",
                     llm_calls=llm_calls, latency_ms=watch.elapsed_ms,
                 )
 
@@ -313,6 +314,7 @@ class CorroborationVerifier:
             support_mass=float(support_mass),
             refute_mass=float(refute_mass),
             outcome=outcome,
+            mode="nli" if self._use_nli else "lexical",
             llm_calls=int(llm_calls),
             latency_ms=float(watch.elapsed_ms),
         )

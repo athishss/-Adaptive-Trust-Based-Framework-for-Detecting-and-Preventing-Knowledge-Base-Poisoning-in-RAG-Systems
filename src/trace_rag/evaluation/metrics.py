@@ -12,6 +12,13 @@ class RetrievalMetrics:
     recall: float
     f1: float
 
+    def to_dict(self):
+        return {
+            "precision": float(self.precision),
+            "recall": float(self.recall),
+            "f1": float(self.f1),
+        }
+
 
 def retrieval_metrics(
     retrieved: Iterable[str],
@@ -35,10 +42,11 @@ def retrieval_metrics(
     precision = true_positive / len(retrieved_set)
     recall = true_positive / len(relevant_set)
 
-    if precision + recall == 0:
-        f1 = 0.0
-    else:
-        f1 = 2 * precision * recall / (precision + recall)
+    f1 = (
+        0.0
+        if precision + recall == 0
+        else 2 * precision * recall / (precision + recall)
+    )
 
     return RetrievalMetrics(
         precision=precision,
@@ -46,21 +54,34 @@ def retrieval_metrics(
         f1=f1,
     )
 
-def attack_success_rate(successes: int, attacks: int) -> float:
-    """Fraction of attack attempts that succeed."""
+
+def attack_success_rate(successes: int, attacks: int) -> float | None:
+    """Fraction of attack attempts that succeed.
+
+    Returns None when there are no attack cases.
+    """
     if attacks <= 0:
-        return 0.0
+        return None
     return successes / attacks
 
 
-def false_positive_rate(false_positives: int, benign_cases: int) -> float:
-    """Fraction of benign cases incorrectly flagged."""
+def false_positive_rate(
+    false_positives: int,
+    benign_cases: int,
+) -> float | None:
+    """Fraction of benign cases incorrectly flagged.
+
+    Returns None when there are no benign cases.
+    """
     if benign_cases <= 0:
-        return 0.0
+        return None
     return false_positives / benign_cases
 
 
-def detection_delay(attack_step: int, detection_step: int | None) -> int | None:
+def detection_delay(
+    attack_step: int,
+    detection_step: int | None,
+) -> int | None:
     """Number of stream steps between attack and first detection."""
     if detection_step is None:
         return None
@@ -77,10 +98,16 @@ def exposure_window(
     return max(0, end - attack_step)
 
 
-def remediation_recall(remediated: int, detected: int) -> float:
-    """Fraction of detected attacks that were successfully remediated."""
+def remediation_recall(
+    remediated: int,
+    detected: int,
+) -> float | None:
+    """Fraction of detected attacks that were successfully remediated.
+
+    Returns None when nothing was detected.
+    """
     if detected <= 0:
-        return 0.0
+        return None
     return remediated / detected
 
 
