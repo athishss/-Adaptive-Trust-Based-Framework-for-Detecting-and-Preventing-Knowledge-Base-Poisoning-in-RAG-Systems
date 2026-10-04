@@ -39,13 +39,16 @@ python scripts/download_data.py --dataset nq --out data/nq --queries 500
 ## 3. Answer model (Ollama)
 
 ```bash
+apt-get -qq install -y zstd   # the installer unpacks a zstd archive; Colab does not ship zstd
 curl -fsSL https://ollama.com/install.sh | sh
 nohup ollama serve >/tmp/ollama.log 2>&1 &
 ollama pull qwen2.5:7b        # ~4.7 GB; llama3.1:8b also works
 ```
 
-Colab has no systemd, so the daemon is started by hand; a runtime restart kills
-it and it has to be started (not re-downloaded) again.
+Skipping `zstd` is the first thing that goes wrong on Colab: the installer stops
+with `This version requires zstd for extraction`.  Colab has no systemd either,
+so the daemon is started by hand; a runtime restart kills it and it has to be
+started (not re-downloaded) again.
 
 Check the model answers, then check it through the project's own backend:
 
@@ -139,6 +142,7 @@ Flag reference (the details matter for reading the numbers):
 |---|---|
 | `cuda available: False` | runtime is not GPU — change it and re-run from cell 0 |
 | `cannot reach http://localhost:11434` | daemon died with the runtime: re-run the Ollama cell |
+| `This version requires zstd for extraction` | `apt-get -qq install -y zstd`, then re-run the Ollama cell (already handled in the notebook) |
 | `ollama pull` slow / disk | ~5 GB; `qwen2.5:3b` is the lighter fallback |
 | `CUDA out of memory` while indexing | `--set embedding.batch_size=32` |
 | `CUDA out of memory` from the model | smaller model (the embedder, NLI and LLM share the GPU) |
