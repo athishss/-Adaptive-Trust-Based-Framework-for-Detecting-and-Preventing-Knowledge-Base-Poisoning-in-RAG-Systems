@@ -55,6 +55,27 @@ python scripts/demo_person_b.py
 
 The output will clearly show the pipeline successfully quarantining "Zog the Alien" passages and returning the correct answer.
 
+### Run it on real data (GPU / Colab)
+
+`docs/COLAB_RUNBOOK.md` (notebook: `notebooks/trace_rag_colab.ipynb`) runs the
+same stack on a 200k-passage Natural Questions subset with a real LLM:
+
+```bash
+python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
+    --corpus data/nq/corpus_subset.parquet --queries data/nq/queries_subset.jsonl \
+    --qrels data/nq/qrels.tsv --steps 40 --targets 5 --out runs/nq/trust_stream \
+    --set generation.backend=ollama --set generation.model_name=qwen2.5:7b
+```
+
+It ingests and indexes the corpus, poisons the passage that carries each target
+question's gold answer (with Person C's attack helpers), ingests the poison as a
+burst from one fresh source, replays a Zipf query stream through
+`PersonAPipeline` with the trust layer wired in, and writes `metrics.json`,
+`stream.jsonl`, `trust_history.csv` and the B6 figures.  Read it as the reference
+wiring for `TrustLedger` / `CorroborationVerifier` / `TrustPolicy` /
+`VerificationQueue` around the pipeline - your experiment runner (C6) needs the
+same wiring, over the full matrix instead of one stream.
+
 ---
 
 ## 3. Map of the Code

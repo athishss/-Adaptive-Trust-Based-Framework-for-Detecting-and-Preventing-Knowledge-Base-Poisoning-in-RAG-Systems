@@ -40,6 +40,14 @@ Offline sanity check on the bundled mini corpus:
     python scripts/run_trust_stream.py --config config/default.yaml \
         --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json \
         --steps 12 --targets 2 --out runs/trust_stream_mini
+
+On Colab with a real model, switch the generation backend without editing the
+shared config:
+
+    python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
+        --corpus data/nq/corpus_subset.parquet --queries data/nq/queries_subset.jsonl \
+        --qrels data/nq/qrels.tsv --out runs/nq/trust_stream \
+        --set generation.backend=ollama --set generation.model_name=qwen2.5:7b
 """
 
 from __future__ import annotations
@@ -53,6 +61,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from trace_rag.attacks.poisoned_rag import entity_swap, make_poisoned_document, negation
 from trace_rag.attacks.stream import zipf_queries
+from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
 from trace_rag.pipeline import PersonAPipeline
@@ -181,6 +190,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="BEIR qrels.tsv giving each query's gold passages "
                              "(default: qrels.tsv sitting next to --queries)")
     parser.add_argument("--out", default="runs/trust_stream")
+    parser.add_argument("--set", action="append", metavar="KEY=VALUE", default=None,
+                        help="override any config value, e.g. "
+                             "--set generation.backend=ollama --set retrieval.top_k=5 "
+                             "(repeatable; same syntax as the trace-rag CLI)")
     parser.add_argument("--limit", type=int, default=None, help="ingest only N clean passages")
     parser.add_argument("--steps", type=int, default=40, help="queries in the stream")
     parser.add_argument("--targets", type=int, default=3, help="target questions to poison")
@@ -191,12 +204,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--force-medium", action="store_true",
                         help="demo mode: escalate every passage so the verifier path "
                              "always runs (the calibrated bands are the real setting)")
+    parser.add_argument("--quarantine-refutations", type=int, default=2,
+                        help="refutations before a document is quarantined (plan default 2)")
+    parser.add_argument("--no-hierarchical", action="store_true",
+                        help="V2 ablation: document-only trust, no family/source prior "
+                             "and no inheritance")
+    parser.add_argument("--max-corroboration", type=int, default=3,
+                        help="independent passages the verifier will consult")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    config = Config.load(args.config, storage={"root": str(out_dir)})
+    config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
     pipeline = PersonAPipeline.from_config(config, load_existing_index=args.skip_index)
     questions = load_questions(Path(args.queries))
     if not questions:
@@ -270,9 +290,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # ---------------------------------------------------------------- trust
     banner("4. Wire in Person B's trust layer")
-    trust_config = TrustConfig(quarantine_refutations=2)
+    trust_config = TrustConfig(quarantine_refutations=args.quarantine_refutations,
+                               hierarchical=not args.no_hierarchical)
     ledger = TrustLedger(out_dir / "trust.sqlite3", store=pipeline.store, config=trust_config)
-    verifier = CorroborationVerifier(llm=pipeline.generator.llm, max_corroboration=3)
+    verifier = CorroborationVerifier(llm=pipeline.generator.llm,
+                                     max_corroboration=args.max_corroboration)
     queue = VerificationQueue()
     policy = TrustPolicy(ledger=ledger, on_quarantine=pipeline.on_quarantine, queue=queue)
     pipeline.trust_provider = ledger
@@ -286,6 +308,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         pipeline.scorer.theta_high = 1.01
     print(f"    verifier mode: {verifier.mode}   "
           f"(NLI runs on {config.embedding.device} embeddings, CUDA when visible)")
+    print(f"    quarantine after {args.quarantine_refutations} refutation(s); "
+          f"hierarchical={trust_config.hierarchical}")
     if args.force_medium:
         print("    demo mode: every passage escalated to MEDIUM (--force-medium)")
 
