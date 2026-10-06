@@ -181,7 +181,7 @@ class TrustConfig:
     # move corroboration mass, until they age or build verified history.
     cold_start_influence: float = 0.25      # influence multiplier for a brand-new source
     source_age_ramp_hours: float = 24.0     # age at which a source reaches full influence
-    cold_start_min_observations: int = 5    # verified observations that also mature a source
+    cold_start_min_observations: int = 5    # verified SUPPORT observations that mature a source
 
     # ---- Trust history for the B6 dynamics plots ----
     record_history: bool = True
@@ -1092,15 +1092,17 @@ class TrustLedger:
         on corroboration mass is capped - that is the Sybil defence.  The
         factor ramps from ``cold_start_influence`` to 1.0 as the source either
         ages past ``source_age_ramp_hours`` or accumulates
-        ``cold_start_min_observations`` verified observations.  A source the
-        ledger has never seen has no history at all and gets the floor.
+        ``cold_start_min_observations`` verified SUPPORT observations. REFUTEs
+        never mature a source; otherwise an attacker could earn influence by
+        repeatedly being caught. A source the ledger has never seen has no
+        history at all and gets the floor.
         """
         if not self.config.hierarchical:
             return 1.0
         ts = now if now is not None else time.time()
         with self._lock:
             row = self._conn.execute(
-                "SELECT created_at, n_observations FROM trust_entities "
+                "SELECT created_at, n_observations, n_refutations FROM trust_entities "
                 "WHERE entity_id = ? AND entity_type = 'source'",
                 (source_id,),
             ).fetchone()
@@ -1109,7 +1111,8 @@ class TrustLedger:
                 # observations never create the source entity), so age it from
                 # its first registered document instead of calling it unknown.
                 row = self._conn.execute(
-                    "SELECT MIN(e.created_at) AS created_at, 0 AS n_observations "
+                    "SELECT MIN(e.created_at) AS created_at, 0 AS n_observations, "
+                    "0 AS n_refutations "
                     "FROM doc_registry r JOIN trust_entities e "
                     "ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
                     "WHERE r.source_id = ?",
@@ -1117,7 +1120,10 @@ class TrustLedger:
                 ).fetchone()
         if row is None or row["created_at"] is None:
             return max(0.0, min(1.0, float(self.config.cold_start_influence)))
-        if int(row["n_observations"]) >= self.config.cold_start_min_observations:
+        support_observations = max(
+            0, int(row["n_observations"]) - int(row["n_refutations"]),
+        )
+        if support_observations >= self.config.cold_start_min_observations:
             return 1.0
         ramp = float(self.config.source_age_ramp_hours)
         if ramp <= 0.0:

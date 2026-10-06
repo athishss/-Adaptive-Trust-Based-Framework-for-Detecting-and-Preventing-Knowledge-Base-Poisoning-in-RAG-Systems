@@ -67,7 +67,8 @@ def main() -> int:
     check_module("pydantic", "pydantic", "pip install pydantic")
     check_module("yaml", "PyYAML", "pip install pyyaml", version_attr="__version__")
     check_module("joblib", "joblib", "pip install joblib")
-    check_module("pyarrow", "pyarrow (reads BEIR Parquet)", "pip install pyarrow")
+    check_module("pyarrow", "pyarrow (reads BEIR Parquet)", "pip install pyarrow",
+                 required=False)
     check_module("faiss", "faiss (large corpora)", "conda install -c conda-forge faiss-cpu",
                  required=False, version_attr="__version__")
 
@@ -88,6 +89,23 @@ def main() -> int:
     check_module("transformers", "transformers (real embeddings)",
                  "pip install transformers", required=False)
 
+    # PyTorch/XLA is supplied with compatible TPU runtimes; do not install a
+    # random torch_xla wheel over Colab's torch/XLA version pair.
+    try:
+        import torch_xla.core.xla_model as xm
+        xla_device = xm.xla_device()
+        if str(xla_device).startswith("xla"):
+            line(OK, "PyTorch/XLA TPU", str(xla_device))
+        else:
+            line(WARN, "PyTorch/XLA TPU", f"no TPU device ({xla_device})",
+                 "select a TPU runtime, or omit embedding.device=tpu")
+    except ImportError:
+        line(WARN, "PyTorch/XLA TPU", "not installed (optional)",
+             "use a TPU runtime with its compatible torch_xla package")
+    except Exception as exc:                        # TPU runtime absent or broken
+        line(WARN, "PyTorch/XLA TPU", f"unavailable: {type(exc).__name__}: {exc}",
+             "select a TPU runtime and keep its torch/torch_xla versions matched")
+
     # an answer model, if any is reachable
     if shutil.which("ollama"):
         line(OK, "ollama", "found on PATH")
@@ -98,7 +116,8 @@ def main() -> int:
         line(WARN, "vLLM", "not supported on Windows", "use Ollama, or run vLLM inside WSL2")
 
     # config files present (are we in the project folder?)
-    for relative in ("config/default.yaml", "config/nq_gpu.yaml", "scripts/download_data.py"):
+    for relative in ("config/default.yaml", "config/nq_gpu.yaml", "config/nq_tpu.yaml",
+                     "scripts/download_data.py"):
         if Path(relative).exists():
             line(OK, relative)
         else:
@@ -121,6 +140,7 @@ def main() -> int:
     print("Core pipeline is ready. Next:")
     print("  python scripts/demo_end_to_end.py")
     print("  python scripts/download_data.py --dataset nq --out data/nq --subset 200000")
+    print("  TPU users: open notebooks/trace_rag_colab_tpu.ipynb in Colab")
     return 0
 
 

@@ -2,10 +2,10 @@
 """End-to-end trust run over real data (Person B's smoke test).
 
 Runs the whole system on a BEIR corpus with Person B's trust layer wired in,
-so a GPU box (Colab, a workstation) can exercise the defence on real passages:
+so a CPU, CUDA, or PyTorch/XLA runtime can exercise the defence on real passages:
 
   1. ingest the clean corpus with simulated contributors (Person A's assigner);
-  2. index it (the GPU step);
+  2. index it (the embedding-accelerator step; storage/search stay on CPU);
   3. for each target question, take the passage that actually carries the gold
      answer (from BEIR ``qrels.tsv`` when it is there, otherwise the passage in
      the retrieved pool that contains it) and corrupt *that* with Person C's
@@ -54,6 +54,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import statistics
 import sys
 import time
@@ -84,11 +86,14 @@ def load_questions(path: Path) -> List[Dict[str, str]]:
     questions: List[Dict[str, str]] = []
     if text.startswith("{"):
         payload = json.loads(text)
+        false_answers = payload.get("false_answers", {})
         for item in payload.get("questions", []):
+            qid = str(item.get("qid") or item.get("_id"))
             questions.append({
-                "qid": str(item.get("qid") or item.get("_id")),
+                "qid": qid,
                 "question": str(item["question"]),
                 "gold_answer": str(item.get("gold_answer", "")),
+                "false_answer": str(item.get("false_answer") or false_answers.get(qid, "")),
             })
         return questions
     for line in text.splitlines():
@@ -98,6 +103,7 @@ def load_questions(path: Path) -> List[Dict[str, str]]:
                 "qid": str(row.get("_id") or row.get("qid")),
                 "question": str(row.get("text") or row.get("question")),
                 "gold_answer": str(row.get("gold_answer", "")),
+                "false_answer": str(row.get("false_answer", "")),
             })
     return questions
 
@@ -109,10 +115,29 @@ def first_sentence(text: str) -> str:
     return text.strip()
 
 
-def corrupt_passage(text: str, gold_answer: str) -> Tuple[str, str]:
-    """Return (poison_text, attack_type) built with Person C's helpers."""
-    if gold_answer and gold_answer.lower() in text.lower():
-        return entity_swap(text, gold_answer, WRONG_ANSWER), "poisonedrag_bbox"
+def _false_answer(gold_answer: str, supplied: str = "") -> str:
+    """Choose a type-compatible wrong answer for the smoke-test attack."""
+    candidate = supplied.strip()
+    if candidate:
+        if candidate.casefold() == gold_answer.strip().casefold():
+            raise ValueError("false_answer must differ from gold_answer")
+        return candidate
+
+    number = re.search(r"[-+]?\d[\d,]*(?:\.\d+)?", gold_answer)
+    if number:
+        value = float(number.group(0).replace(",", ""))
+        delta = max(1, round(abs(value) * 0.1))
+        replacement = str(int(value + delta)) if value.is_integer() else str(value + delta)
+        return gold_answer[:number.start()] + replacement + gold_answer[number.end():]
+    return WRONG_ANSWER
+
+
+def corrupt_passage(text: str, gold_answer: str,
+                    false_answer: str = "") -> Tuple[str, str]:
+    """Return a targeted, type-compatible (poison_text, attack_type) pair."""
+    if gold_answer and gold_answer.casefold() in text.casefold():
+        return entity_swap(text, gold_answer, _false_answer(gold_answer, false_answer)), \
+            "poisonedrag_bbox"
     sentence = first_sentence(text)
     return negation(text, sentence), "corruption_negation"
 
@@ -218,6 +243,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
+    # Retain the exact validated settings (including CLI overrides) beside the
+    # metrics so a run can be reproduced and audited later.
+    config.dump(out_dir / "resolved_config.yaml")
     # This runner constructs the ledger/verifier itself after ingestion so its
     # CLI trust overrides remain authoritative. Avoid creating an auto-wired
     # second SQLite ledger or loading the NLI model before that point.
@@ -246,7 +274,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"  store: {pipeline.store.counts()}")
 
     # ---------------------------------------------------------------- index
-    banner("2. Index the clean corpus (the GPU step)")
+    banner("2. Index the clean corpus (embedding accelerator step)")
     if not args.skip_index:
         indexed = pipeline.index_chunks()
         pipeline.save_index()
@@ -275,7 +303,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"  {target['qid']}: no passage retrieved, skipped")
             continue
         target_text, origin, how = chosen
-        poison_text, attack_type = corrupt_passage(target_text, target["gold_answer"])
+        poison_text, attack_type = corrupt_passage(
+            target_text, target["gold_answer"], target.get("false_answer", ""),
+        )
         record = make_poisoned_document(
             doc_id=f"poison_{target['qid']}", chunk_id=f"poison_{target['qid']}#0000",
             text=poison_text, source_id=ATTACKER_SOURCE,
@@ -328,8 +358,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # the verifier path is exercised even when the heuristic scorer is calm.
         pipeline.scorer.theta_low = 0.0
         pipeline.scorer.theta_high = 1.01
-    print(f"    verifier mode: {verifier.mode}   "
-          f"(NLI runs on {config.embedding.device} embeddings, CUDA when visible)")
+    print(f"    verifier mode: {verifier.mode} (device={verifier.device})   "
+          f"embedding device: {getattr(pipeline.embedder, 'device', 'cpu')}")
     print(f"    quarantine after {args.quarantine_refutations} refutation(s); "
           f"hierarchical={trust_config.hierarchical}")
     if args.force_medium:
@@ -389,6 +419,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "corpus": str(args.corpus),
+        "seed": int(args.seed),
+        "embedding_backend": config.embedding.backend,
+        "embedding_model": (config.embedding.model_name
+                            if config.embedding.backend == "huggingface" else "hashing"),
+        "embedding_device": str(getattr(pipeline.embedder, "device", "cpu")),
+        "verifier_device": verifier.device,
+        "nli_device_request": os.environ.get("TRACE_RAG_NLI_DEVICE", "auto"),
+        "generation_backend": config.generation.backend,
         "steps": len(per_step),
         "target_steps": len(target_steps),
         "verifier_mode": verifier.mode,

@@ -1,27 +1,25 @@
-# Full Natural Questions run: Contriever embeddings, FAISS IVF-PQ, Llama-3.1-8B via vLLM.
-# Start the generator first:  vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+# Experimental single-device PyTorch/XLA configuration for a TPU runtime.
+# It keeps Contriever and the core Trust settings from nq_gpu.yaml; FAISS and
+# the SQLite store remain on CPU. Use this for a bounded NQ subset first.
+# Keep max_length/model/seeds fixed between comparisons; changing them changes
+# the embedding method and makes results non-comparable.
 seed: 20260921
 
 ingestion:
-  # exact keeps ingestion at ~13k passages/s with flat memory; minhash would need
-  # about 5 GB and 20 minutes for the full 2.68M-passage corpus
+  chunk_words: 100
+  chunk_overlap_words: 20
   family_backend: exact
 
 embedding:
   backend: huggingface
   model_name: facebook/contriever
-  batch_size: 64
+  device: tpu
+  batch_size: 8
   max_length: 512
-  device: cuda
   normalize: true
 
 index:
-  backend: faiss
-  faiss_kind: ivfpq          # flat needs ~8.2 GB for 2.68M x 768 float32
-  nlist: 4096
-  pq_m: 96                   # 768 must be divisible by pq_m
-  nbits: 8
-  nprobe: 16
+  backend: numpy
 
 retrieval:
   candidate_pool: 50
@@ -31,12 +29,9 @@ retrieval:
 
 signals:
   neighbourhood_k: 10
-  source_mature_days: 180.0
-  source_mature_docs: 50
   min_corpus_for_isolation: 10000
 
 scorer:
-  model_path: runs/nq/scorer.joblib
   target_high_fpr: 0.02
   escalation_budget: 1.0
   calibration: isotonic
@@ -71,20 +66,21 @@ trust:
   verifier_min_mass: 0.20
   verifier_max_source_mass: 0.6
   verifier_counterfactual_influence: true
-  nli_mode: nli              # refuse silent lexical fallback in benchmark runs
+  nli_mode: nli
 
 generation:
-  backend: openai
+  backend: stub
   model_name: meta-llama/Llama-3.1-8B-Instruct
-  base_url: http://localhost:8000/v1
+  device: tpu
   temperature: 0.0
   seed: 20260921
+  max_tokens: 256
   max_context_docs: 5
   abstain_evidence_mass: 0.5
   require_citations: true
-  check_citations: true
-  citation_nli_threshold: 0.5
+  check_citations: false
+  timeout_s: 120.0
 
 storage:
-  root: runs/nq
+  root: runs/nq_tpu
   trust_db: trust.sqlite3

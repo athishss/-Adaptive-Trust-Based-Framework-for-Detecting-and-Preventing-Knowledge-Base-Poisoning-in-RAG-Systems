@@ -16,36 +16,65 @@ from .base import BaseEmbedder
 logger = get_logger(__name__)
 
 
-def resolve_device(device: str, torch) -> str:  # type: ignore[no-untyped-def]
-    """Turn a requested device into a usable one, or explain why it is not.
+def resolve_device(device: str, torch):  # type: ignore[no-untyped-def]
+    """Resolve CPU, CUDA, or PyTorch/XLA TPU devices with actionable errors."""
+    requested = str(device).strip().lower()
 
-    ``auto`` picks the GPU when there is one.  Asking for ``cuda`` without a
-    CUDA-enabled PyTorch used to fail deep inside torch with
-    "Torch not compiled with CUDA enabled", which says nothing about how to fix
-    it.
-    """
-    if device == "auto":
+    def xla_device():  # type: ignore[no-untyped-def]
+        try:
+            import torch_xla.core.xla_model as xm
+        except ImportError as exc:
+            raise RuntimeError(
+                "embedding.device='tpu' needs PyTorch/XLA in a TPU runtime. "
+                "Select Runtime → Change runtime type → TPU in Colab and use "
+                "the TPU-provided torch_xla installation."
+            ) from exc
+        try:
+            resolved = xm.xla_device()
+        except Exception as exc:
+            raise RuntimeError(
+                "PyTorch/XLA could not initialize a device. Select a TPU runtime "
+                "and keep the runtime-provided torch and torch_xla versions matched."
+            ) from exc
+        if not str(resolved).startswith("xla"):
+            raise RuntimeError("torch_xla is installed but no TPU/XLA device is available")
+        logger.info("embedding device: %s", resolved)
+        return resolved
+
+    if requested in {"tpu", "xla"} or requested.startswith("xla:"):
+        return xla_device()
+    if requested == "auto":
         if torch.cuda.is_available():
             logger.info("device 'auto': using GPU (%s)", torch.cuda.get_device_name(0))
             return "cuda"
+        try:
+            return xla_device()
+        except RuntimeError:
+            pass
         logger.warning(
-            "device 'auto': no CUDA GPU visible, falling back to the CPU. Embedding a large "
-            "corpus this way takes hours; install the CUDA build of PyTorch, or index a smaller "
-            "subset first.")
+            "device 'auto': no CUDA GPU or TPU visible, falling back to the CPU. "
+            "Embedding a large corpus this way takes hours; use an accelerator or index "
+            "a smaller subset first.")
         return "cpu"
-    if str(device).startswith("cuda") and not torch.cuda.is_available():
-        raise RuntimeError(
-            "device is 'cuda' but this PyTorch build cannot see a GPU "
-            "(torch.cuda.is_available() is False).\n"
-            "  Either install the CUDA build of PyTorch:\n"
-            "      pip uninstall -y torch\n"
-            "      pip install torch --index-url https://download.pytorch.org/whl/cu128\n"
-            "      (check https://pytorch.org/get-started/locally/ for the build matching "
-            "your driver in `nvidia-smi`)\n"
-            "  Or run on the CPU by adding to your command:\n"
-            "      --set embedding.device=cpu"
-        )
-    return device
+    if requested.startswith("cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "device is 'cuda' but this PyTorch build cannot see a GPU "
+                "(torch.cuda.is_available() is False).\n"
+                "  Either install the CUDA build of PyTorch:\n"
+                "      pip uninstall -y torch\n"
+                "      pip install torch --index-url https://download.pytorch.org/whl/cu128\n"
+                "      (check https://pytorch.org/get-started/locally/ for the build matching "
+                "your driver in `nvidia-smi`)\n"
+                "  Or run on the CPU by adding to your command:\n"
+                "      --set embedding.device=cpu"
+            )
+        return requested
+    if requested == "cpu":
+        return "cpu"
+    raise ValueError(
+        f"unknown embedding.device={device!r}; expected cpu, auto, cuda[:N], or tpu/xla"
+    )
 
 
 class HFEmbedder(BaseEmbedder):
@@ -66,6 +95,7 @@ class HFEmbedder(BaseEmbedder):
 
         self.model_name = model_name
         self.device = resolve_device(device, torch)
+        self._is_xla = str(self.device).startswith("xla")
         self.pooling = pooling
         self.max_length = int(max_length)
         self.query_prefix = query_prefix
@@ -94,12 +124,24 @@ class HFEmbedder(BaseEmbedder):
         with torch.inference_mode():
             for start in range(0, len(texts), batch_size):
                 batch = [f"{prefix}{t}" for t in texts[start:start + batch_size]]
-                encoded = self.tokenizer(batch, padding=True, truncation=True,
-                                         max_length=self.max_length,
-                                         return_tensors="pt").to(self.device)
+                actual_size = len(batch)
+                if self._is_xla and actual_size < batch_size:
+                    # Keep the last XLA batch shape static; trim the repeated
+                    # padding rows after the forward pass.
+                    batch.extend([batch[-1]] * (batch_size - actual_size))
+                encoded = self.tokenizer(
+                    batch,
+                    padding="max_length" if self._is_xla else True,
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors="pt",
+                ).to(self.device)
                 output = self.model(**encoded)
                 pooled = self._pool(output.last_hidden_state, encoded["attention_mask"])
-                vectors.append(pooled.float().cpu().numpy())
+                if self._is_xla:
+                    import torch_xla.core.xla_model as xm
+                    xm.mark_step()
+                vectors.append(pooled[:actual_size].float().cpu().numpy())
         if not vectors:
             return np.zeros((0, self.dim), dtype=np.float32)
         return np.vstack(vectors)

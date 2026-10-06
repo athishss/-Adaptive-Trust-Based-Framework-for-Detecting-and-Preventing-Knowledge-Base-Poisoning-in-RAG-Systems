@@ -20,8 +20,8 @@ Called only for MEDIUM-band passages.  The algorithm:
    the ``same_burst`` predicate into ``verify`` (``TrustPolicy`` does).
 
 4. **NLI or lexical comparison.**  For each independent passage:
-   - If a DeBERTa NLI cross-encoder is available (GPU): run
-     NLI(premise=d', hypothesis="The answer to q is a_d")
+   - If the DeBERTa NLI cross-encoder is available, run it on the selected
+     CPU/CUDA/XLA backend (``TRACE_RAG_NLI_DEVICE`` controls explicit device selection).
    - Otherwise: fall back to stop-word-filtered Jaccard overlap.
 
 5. **Aggregate.**  Trust-weighted support and refute masses (noisy-OR by
@@ -33,6 +33,7 @@ Called only for MEDIUM-band passages.  The algorithm:
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -56,6 +57,21 @@ _STOP_WORDS = frozenset(
     "than very also just".split()
 )
 
+# Conservative predicate families for the lexical fallback. Same-subject
+# passages that do not assert the question's relation are not contradictions.
+_QUERY_RELATION_FAMILIES = (
+    frozenset({"design", "designed", "designing", "architect", "architected"}),
+    frozenset({"build", "built", "building", "construct", "constructed", "erect", "erected"}),
+    frozenset({"discover", "discovered", "discovering", "find", "found"}),
+    frozenset({"paint", "painted", "painting"}),
+    frozenset({"formulate", "formulated", "formulating", "propose", "proposed"}),
+    frozenset({"invent", "invented", "create", "created", "develop", "developed"}),
+    frozenset({"write", "wrote", "written", "author", "authored"}),
+    frozenset({"direct", "directed", "compose", "composed"}),
+    frozenset({"walk", "walked", "land", "landed"}),
+    frozenset({"high", "higher", "highest", "tall", "taller", "height", "elevation", "altitude"}),
+)
+
 logger = get_logger(__name__)
 
 # Matches "[anything]" citation markers in LLM output
@@ -72,61 +88,141 @@ class NLIScorer:
     Falls back gracefully if the model can't be loaded (no GPU, missing deps).
     """
 
+    MODEL_NAME = "cross-encoder/nli-deberta-v3-base"
+
     def __init__(self) -> None:
         self._pipeline = None
         self._available: Optional[bool] = None
+        self._backend = "pipeline"
+        self._torch = None
+        self._tokenizer = None
+        self._model = None
+        self._device = None
+        self._xm = None
+        self._resolved_device = "uninitialized"
+
+    @property
+    def device(self) -> str:
+        """Resolved inference device, or an explicit unavailable/not-used state."""
+        if self._available is False:
+            return "unavailable"
+        return self._resolved_device
 
     @property
     def available(self) -> bool:
-        """Check if the NLI model can be loaded."""
+        """Load NLI on the requested accelerator, once per process.
+
+        Set ``TRACE_RAG_NLI_DEVICE=tpu`` in a PyTorch/XLA runtime. The ordinary
+        pipeline path remains CUDA/CPU, so normal installs do not depend on XLA.
+        """
         if self._available is not None:
             return self._available
+        requested = os.environ.get("TRACE_RAG_NLI_DEVICE", "auto").strip().lower()
+        if requested not in {"auto", "cpu", "cuda", "tpu", "xla"} and not (
+                requested.startswith("cuda:") or requested.startswith("xla:")):
+            self._available = False
+            logger.warning("NLI scorer unavailable: unsupported TRACE_RAG_NLI_DEVICE=%r", requested)
+            return False
         try:
-            from transformers import pipeline as hf_pipeline
-            # -1 is CPU, 0 is the first CUDA device.  Passing the string
-            # "cpu" pinned the model to CPU even on a GPU box, which made the
-            # 500-query sweeps in HANDOVER_B_TO_C.md hours long.
-            try:
-                import torch
-                device = 0 if torch.cuda.is_available() else -1
-            except Exception:  # pragma: no cover - torch missing or broken
-                device = -1
-            self._pipeline = hf_pipeline(
-                "text-classification",
-                model="cross-encoder/nli-deberta-v3-base",
-                device=device,
-                truncation=True,
-                max_length=512,
-            )
-            # Try a quick inference to confirm it works
-            self._pipeline("Test premise. [SEP] Test hypothesis.")
-            self._available = True
-            logger.info("NLI scorer loaded: cross-encoder/nli-deberta-v3-base")
+            import torch
+            self._torch = torch
+            if requested in {"tpu", "xla"} or requested.startswith("xla:"):
+                import torch_xla.core.xla_model as xm
+                from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+                self._device = xm.xla_device()
+                if not str(self._device).startswith("xla"):
+                    raise RuntimeError("torch_xla did not expose an XLA/TPU device")
+                self._resolved_device = str(self._device)
+                self._xm = xm
+                self._tokenizer = AutoTokenizer.from_pretrained(self.MODEL_NAME)
+                self._model = AutoModelForSequenceClassification.from_pretrained(
+                    self.MODEL_NAME,
+                ).to(self._device).eval()
+                self._backend = "xla"
+                self._available = True
+                # Compile/warm one representative forward pass now, not halfway
+                # through a result run where the first latency would be misleading.
+                self._predict_xla("Test premise.", "Test hypothesis.")
+                logger.info("NLI scorer loaded on XLA device %s", self._device)
+            else:
+                from transformers import pipeline as hf_pipeline
+
+                cuda_requested = requested.startswith("cuda")
+                cuda_available = bool(torch.cuda.is_available())
+                if cuda_requested and not cuda_available:
+                    raise RuntimeError("TRACE_RAG_NLI_DEVICE requests CUDA but CUDA is unavailable")
+                if requested == "auto" and cuda_available:
+                    device = 0
+                elif requested == "cuda":
+                    device = 0
+                elif requested.startswith("cuda:"):
+                    device = int(requested.split(":", 1)[1])
+                else:
+                    device = -1
+                self._resolved_device = "cpu" if device < 0 else f"cuda:{device}"
+                self._pipeline = hf_pipeline(
+                    "text-classification",
+                    model=self.MODEL_NAME,
+                    device=device,
+                    truncation=True,
+                    max_length=512,
+                )
+                self._pipeline({"text": "Test premise.",
+                                "text_pair": "Test hypothesis."})
+                self._backend = "pipeline"
+                self._available = True
+                logger.info("NLI scorer loaded: %s (device=%s)", self.MODEL_NAME, device)
         except Exception as exc:
             self._available = False
-            logger.info("NLI scorer unavailable (falling back to lexical): %s", exc)
+            self._pipeline = self._model = self._tokenizer = self._device = None
+            logger.warning("NLI scorer unavailable (falling back to lexical): %s", exc)
         return self._available
 
-    def predict(self, premise: str, hypothesis: str) -> Tuple[str, float]:
-        """Run NLI prediction.
+    def _predict_xla(self, premise: str, hypothesis: str) -> Tuple[str, float]:
+        max_length = int(os.environ.get("TRACE_RAG_NLI_MAX_LENGTH", "256"))
+        encoded = self._tokenizer(
+            premise, hypothesis, truncation=True, max_length=max_length,
+            padding="max_length", return_tensors="pt",
+        )
+        encoded = {key: value.to(self._device) for key, value in encoded.items()}
+        with self._torch.inference_mode():
+            logits = self._model(**encoded).logits[0]
+            probabilities = self._torch.softmax(logits, dim=-1)
+        self._xm.mark_step()
+        label_index = int(probabilities.argmax().cpu().item())
+        confidence = float(probabilities[label_index].cpu().item())
+        id2label = getattr(self._model.config, "id2label", {}) or {}
+        label = id2label.get(label_index, id2label.get(str(label_index), "")).lower()
+        if label.startswith("label_") or not label:
+            # The selected checkpoint uses the conventional 0/1/2 ordering.
+            label = {0: "contradiction", 1: "entailment", 2: "neutral"}.get(
+                label_index, "neutral",
+            )
+        return self._normalize_label(label, confidence)
 
-        Returns (label, score) where label is 'entailment', 'contradiction',
-        or 'neutral', and score is the confidence.
-        """
-        if not self.available or self._pipeline is None:
-            return "neutral", 0.0
-        # Cross-encoder expects "premise [SEP] hypothesis" or handles it internally
-        result = self._pipeline(f"{premise} [SEP] {hypothesis}")
-        if isinstance(result, list):
-            result = result[0]
-        label = result.get("label", "neutral").lower()
-        score = float(result.get("score", 0.0))
-        # Normalize labels (different models use different label names)
+    @staticmethod
+    def _normalize_label(label: str, score: float) -> Tuple[str, float]:
+        label = label.lower()
         if "entail" in label:
             return "entailment", score
-        elif "contra" in label:
+        if "contra" in label:
             return "contradiction", score
         return "neutral", score
+
+    def predict(self, premise: str, hypothesis: str) -> Tuple[str, float]:
+        """Run NLI prediction and return (label, confidence)."""
+        if not self.available:
+            return "neutral", 0.0
+        if self._backend == "xla":
+            return self._predict_xla(premise, hypothesis)
+        if self._pipeline is None:
+            return "neutral", 0.0
+        result = self._pipeline({"text": premise, "text_pair": hypothesis})
+        if isinstance(result, list):
+            result = result[0]
+        return self._normalize_label(str(result.get("label", "neutral")),
+                                     float(result.get("score", 0.0)))
 
 
 # Singleton NLI scorer (loaded on first use)
@@ -206,9 +302,17 @@ class CorroborationVerifier:
         self.counterfactual_influence = bool(counterfactual_influence)
         self.influence_agreement_threshold = float(influence_agreement_threshold)
 
-        # NLI mode: auto-detect if not specified
+        # An explicit request must not silently become a different experiment.
+        # Auto mode remains convenient for offline development, but a required
+        # NLI model/device failing to load is an actionable configuration error.
         if use_nli is True:
-            self._use_nli = _nli_scorer.available
+            if not _nli_scorer.available:
+                raise RuntimeError(
+                    "NLI verification was explicitly requested, but the NLI model "
+                    "could not be loaded. Check model access/dependencies; for TPU "
+                    "set TRACE_RAG_NLI_DEVICE=tpu in a working PyTorch/XLA runtime."
+                )
+            self._use_nli = True
         elif use_nli is False:
             self._use_nli = False
         else:
@@ -236,6 +340,11 @@ class CorroborationVerifier:
         configured method is the one that produced the numbers.
         """
         return "nli" if self._use_nli else "lexical"
+
+    @property
+    def device(self) -> str:
+        """Actual NLI inference device, or ``not-used`` for lexical mode."""
+        return _nli_scorer.device if self._use_nli else "not-used"
 
     # ------------------------------------------------------------------
     #  Verifier protocol
@@ -602,8 +711,21 @@ class CorroborationVerifier:
         best_support_per_source: Dict[str, float] = {}
         best_refute_per_source: Dict[str, float] = {}
 
+        target_numbers = {
+            number.replace(",", "")
+            for number in re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", target_claim)
+        }
         for doc in independent:
-            agreement = self._content_overlap(target_content, doc.text, query_tokens)
+            passage_numbers = {
+                number.replace(",", "")
+                for number in re.findall(r"\b\d[\d,]*(?:\.\d+)?\b", doc.text)
+            }
+            if target_numbers and passage_numbers:
+                # Shared units and topic words must not make incompatible
+                # numeric answers look supportive (e.g. 11,200 vs 8,849 metres).
+                agreement = (len(target_numbers & passage_numbers) / len(target_numbers))
+            else:
+                agreement = self._content_overlap(target_content, doc.text, query_tokens)
             trust = self._source_weight(doc, source_influence)
             source = doc.source_id
 
@@ -634,6 +756,14 @@ class CorroborationVerifier:
         answer, but cannot share the target's answer token.  A passage that
         shares neither claim nor query content is irrelevant, not contradictory.
         """
+        passage_tokens = set(tokenise(text))
+        query_tokens = set(tokenise(query)) if query else set()
+        relation_family = next(
+            (family for family in _QUERY_RELATION_FAMILIES if family & query_tokens),
+            None,
+        )
+        if relation_family is not None and not (relation_family & passage_tokens):
+            return False
         overlap = max(self._topical_overlap(claim, text),
                       self._topical_overlap(query, text) if query else 0)
         return overlap >= self.min_refute_topical_overlap

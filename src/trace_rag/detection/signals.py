@@ -191,7 +191,8 @@ def source_immaturity(age_days: float, n_docs: int, source_trust: float,
 def neighbourhood_density(target_vector: np.ndarray, index, k: int = 10,  # type: ignore[no-untyped-def]
                           exclude_ids: Optional[Sequence[str]] = None,
                           duplicate_threshold: float = 0.95,
-                          min_corpus_for_isolation: int = 10_000) -> float:
+                          min_corpus_for_isolation: int = 10_000,
+                          target_id: Optional[str] = None) -> float:
     """S6: how the passage sits in its corpus neighbourhood.
 
     Two effects are measured:
@@ -201,22 +202,46 @@ def neighbourhood_density(target_vector: np.ndarray, index, k: int = 10,  # type
     * **isolation** - the passage sits far from anything else in the corpus.
 
     Isolation is only used once the corpus is large enough for a neighbourhood
-    to mean something (``min_corpus_for_isolation``).  On a small corpus every
+    to mean something (``min_corpus_for_isolation``). On a small corpus every
     genuinely unique fact looks isolated, so using it there would punish clean
-    content - a false-positive source we would rather not have.
+    content. When ``target_id`` is supplied, the stored target vector is read
+    directly and excluded by ID; the score never assumes it is the first ANN
+    result, which is unsafe under approximate search or tied similarities.
     """
-    vector = np.asarray(target_vector, dtype=np.float32)
+    vector = np.asarray(target_vector, dtype=np.float32).reshape(-1)
     exclude = set(exclude_ids or ())
-    hits = index.search(vector[None, :], k + len(exclude) + 1, exclude=None)[0]
-    scores = [s for id_, s in hits if id_ not in exclude][:k + 1]
-    if len(scores) < 3:
+    if target_id is not None:
+        # Do not assume the queried passage is the first nearest neighbour:
+        # exact-score ties and backend ordering can put another duplicate first.
+        stored = index.get_vector(target_id)
+        if stored is None:
+            return 0.0
+        target_similarity = float(np.dot(vector, np.asarray(stored, dtype=np.float32)))
+        neighbour_exclusions = exclude | {target_id}
+        hits = index.search(
+            vector[None, :], k + len(neighbour_exclusions),
+            exclude=neighbour_exclusions,
+        )[0]
+        neighbour_scores = [float(score) for doc_id, score in hits
+                            if doc_id not in neighbour_exclusions][:k]
+    else:
+        # Backwards-compatible mode for callers that provide only a vector.
+        # The exact target ID is preferred by SignalComputer below.
+        hits = index.search(vector[None, :], k + len(exclude) + 1, exclude=exclude)[0]
+        scores = [float(score) for doc_id, score in hits if doc_id not in exclude]
+        if len(scores) < 3:
+            return 0.0
+        target_similarity, neighbour_scores = scores[0], scores[1:k + 1]
+
+    if len(neighbour_scores) < 2:
         return 0.0
-    arr = np.asarray(scores, dtype=np.float64)
-    neighbours = arr[1:]                                  # arr[0] is the passage itself
+    neighbours = np.asarray(neighbour_scores, dtype=np.float64)
     duplication = float((neighbours >= duplicate_threshold).mean())
     if len(index) < min_corpus_for_isolation:
         return _clip01(duplication)
-    gap = float(arr[0]) - float(neighbours.mean())
+    gap = target_similarity - float(neighbours.mean())
+    if gap < 1e-6:
+        gap = 0.0
     return _clip01(max(duplication, _clip01(gap * 2.0)))
 
 
@@ -305,7 +330,8 @@ class SignalComputer:
                   if enabled.get("s5", True) else 0.0)
             s6 = (neighbourhood_density(target_vector, self.index, self.config.neighbourhood_k,
                                         duplicate_threshold=self.config.duplicate_threshold,
-                                        min_corpus_for_isolation=self.config.min_corpus_for_isolation)
+                                        min_corpus_for_isolation=self.config.min_corpus_for_isolation,
+                                        target_id=doc.doc_id)
                   if enabled.get("s6", True) else 0.0)
 
             signals = SignalVector(s1, s2, s3, s4, s5, s6)

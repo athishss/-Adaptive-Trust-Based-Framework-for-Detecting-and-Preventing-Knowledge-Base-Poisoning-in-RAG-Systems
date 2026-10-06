@@ -103,6 +103,34 @@ def test_neighbourhood_density_flags_duplicate_swarms(populated_pipeline):
     assert poison_score >= clean_score
 
 
+def test_neighbourhood_density_excludes_target_by_id_not_neighbour_rank():
+    class ApproximateIndex:
+        hits = [("closest_other", 0.9), ("target", 0.6),
+                ("neighbour_2", 0.5), ("neighbour_3", 0.4)]
+        exclusions = None
+
+        def __len__(self):
+            return 20_000
+
+        def get_vector(self, doc_id):
+            return np.asarray([0.6, 0.8], dtype=np.float32) if doc_id == "target" else None
+
+        def search(self, queries, k, exclude=None):  # noqa: ARG002
+            self.exclusions = exclude
+            return [[(doc_id, score) for doc_id, score in self.hits
+                     if not exclude or doc_id not in exclude][:k]]
+
+    index = ApproximateIndex()
+    score = neighbourhood_density(
+        np.asarray([1.0, 0.0], dtype=np.float32), index, k=3,
+        min_corpus_for_isolation=10_000, target_id="target",
+    )
+    assert index.exclusions == {"target"}
+    # target similarity is 0.6 and the remaining-neighbour mean is also 0.6;
+    # the first ANN hit (0.9) must not be mistaken for the target's score.
+    assert score == pytest.approx(0.0)
+
+
 def test_all_signals_in_unit_range(populated_pipeline):
     outcome = populated_pipeline.retrieve(QUESTION, "q1")
     snapshots = populated_pipeline.signals.compute(QUESTION, outcome.documents, outcome.pool)

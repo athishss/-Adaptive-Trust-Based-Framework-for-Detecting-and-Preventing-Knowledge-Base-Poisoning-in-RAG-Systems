@@ -64,6 +64,21 @@ def test_stub_abstains_on_same_topic_without_the_answer_relation():
     assert response.text == "INSUFFICIENT EVIDENCE"
 
 
+def test_stub_extracts_numeric_answer_for_how_high():
+    doc = make_doc("everest", "Surveys in 2020 confirmed Mount Everest's revised "
+                   "height of 8849 metres.")
+    response = StubLLM().generate(build_single_doc_prompt("How high is Mount Everest?", doc))
+    assert response.text == "8849 metres [everest]"
+
+
+def test_stub_extracts_name_after_a_prepended_lowercase_title():
+    doc = make_doc("poison", "eiffel Zog the Alien was the engineer whose company "
+                   "designed and built the Eiffel Tower.")
+    response = StubLLM().generate(build_single_doc_prompt(
+        "Who designed the Eiffel Tower?", doc))
+    assert response.text == "Zog the Alien [poison]"
+
+
 def test_generator_answers_with_citation():
     docs = [make_doc("d1", "Gustave Eiffel designed the Eiffel Tower in 1889.", trust=0.9)]
     outcome = GroundedGenerator(StubLLM(), GenerationConfig()).generate(

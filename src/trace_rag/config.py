@@ -37,7 +37,8 @@ class EmbeddingConfig(BaseModel):
     model_name: str = "facebook/contriever"
     dim: int = Field(256, ge=16, description="only used by the hashing backend")
     batch_size: int = Field(32, ge=1)
-    device: str = "cpu"
+    max_length: int = Field(512, ge=8, le=4096)
+    device: str = "cpu"              # cpu | auto | cuda | tpu (PyTorch/XLA)
     query_prefix: str = ""          # BGE wants "Represent this sentence...: " style prefixes
     document_prefix: str = ""
     normalize: bool = True
@@ -98,6 +99,7 @@ class GenerationConfig(BaseModel):
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
     base_url: str = "http://localhost:8000/v1"
     api_key_env: str = "OPENAI_API_KEY"
+    device: str = "auto"              # for the local Hugging Face generation backend
     temperature: float = 0.0
     seed: int = 20260921
     max_tokens: int = Field(256, ge=16)

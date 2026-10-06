@@ -33,12 +33,15 @@ def test_config_validation_rejects_bad_values():
 
 
 def test_shipped_configs_parse_with_trust_settings():
-    for path in ("config/default.yaml", "config/full_nq.yaml", "config/nq_gpu.yaml"):
+    for path in ("config/default.yaml", "config/full_nq.yaml", "config/nq_gpu.yaml",
+                 "config/nq_tpu.yaml"):
         config = Config.load(path)
         assert config.storage.trust_db
         if path != "config/default.yaml":
             assert config.trust.enabled
             assert config.generation.require_citations
+    assert Config.load("config/nq_tpu.yaml").embedding.device == "tpu"
+    assert Config.load("config/nq_tpu.yaml").trust.nli_mode == "nli"
 
 
 def test_config_overrides_apply():

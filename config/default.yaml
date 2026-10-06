@@ -18,7 +18,8 @@ embedding:
   model_name: facebook/contriever
   dim: 256                    # hashing backend only
   batch_size: 32
-  device: cpu
+  max_length: 512
+  device: cpu                  # cpu | auto | cuda | tpu (PyTorch/XLA)
   normalize: true
 
 index:
@@ -101,6 +102,7 @@ generation:
   model_name: meta-llama/Llama-3.1-8B-Instruct
   base_url: http://localhost:8000/v1
   api_key_env: OPENAI_API_KEY
+  device: auto              # local Hugging Face generation can use CPU/CUDA/TPU
   temperature: 0.0
   seed: 20260921
   max_tokens: 256

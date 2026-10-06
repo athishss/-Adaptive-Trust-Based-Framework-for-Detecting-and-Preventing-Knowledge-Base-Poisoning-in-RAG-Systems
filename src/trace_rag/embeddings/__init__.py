@@ -17,6 +17,7 @@ def build_embedder(config: EmbeddingConfig) -> BaseEmbedder:
 
         pooling = "cls" if "bge" in config.model_name.lower() else "mean"
         return HFEmbedder(model_name=config.model_name, device=config.device, pooling=pooling,
+                          max_length=config.max_length,
                           query_prefix=config.query_prefix, document_prefix=config.document_prefix,
                           normalize=config.normalize)
     raise ValueError(f"unknown embedding backend: {config.backend}")

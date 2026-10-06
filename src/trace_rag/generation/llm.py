@@ -98,20 +98,30 @@ class StubLLM:
 
     @classmethod
     def _answers_who_question(cls, question: str, sentence: str) -> bool:
-        """Reject a topic match that omits a recognizable ``who`` relation."""
+        """Reject a topic match that omits an obvious queried relation/value."""
         normalized_question = normalise(question).lower()
-        if not normalized_question.startswith("who "):
-            return True
-        question_tokens = set(tokenise(normalized_question))
-        relation_tokens = question_tokens & cls._WHO_RELATIONS
-        if not relation_tokens:
-            return True
-        return bool(relation_tokens & set(tokenise(sentence)))
+        sentence_tokens = set(tokenise(sentence))
+        if normalized_question.startswith("who "):
+            relation_tokens = set(tokenise(normalized_question)) & cls._WHO_RELATIONS
+            return not relation_tokens or bool(relation_tokens & sentence_tokens)
+        if re.match(r"^(how high|what is the height|how tall)\b", normalized_question):
+            return bool(re.search(r"\d", sentence))
+        return True
 
     @classmethod
     def _concise_who_answer(cls, question: str, sentence: str) -> str:
-        """Return a name rather than a long sentence for common ``who`` QA."""
+        """Extract a short answer for common who/how-high smoke-test prompts."""
         normalized_question = normalise(question).lower()
+        if re.match(r"^(how high|what is the height|how tall)\b", normalized_question):
+            measured = re.search(
+                r"\b\d[\d,]*(?:\.\d+)?\s+(?:metres?|meters?|feet|foot|"
+                r"kilometres?|kilometers?|miles?)\b",
+                sentence,
+                flags=re.IGNORECASE,
+            )
+            if measured is None:
+                measured = re.search(r"\b\d[\d,]*(?:\.\d+)?\b", sentence)
+            return measured.group(0) if measured else sentence
         if not normalized_question.startswith("who "):
             return sentence
         relations = set(tokenise(normalized_question)) & cls._WHO_RELATIONS
@@ -125,12 +135,18 @@ class StubLLM:
         )
         if passive:
             return passive.group(1).strip()
-        leading = re.match(
-            r"^(?:(?:The|A|An)\s+)?([A-Z][A-Za-z'-]*(?:\s+(?:[A-Z][A-Za-z'-]*|the|of|and)){0,3})\b",
-            sentence,
+        question_terms = set(tokenise(normalized_question))
+        name_pattern = re.compile(
+            r"\b([A-Z][A-Za-z'-]*(?:\s+(?:[A-Z][A-Za-z'-]*|the|of|and)){0,3})\b"
         )
-        if leading:
-            return leading.group(1).strip()
+        for candidate in name_pattern.finditer(sentence):
+            name = candidate.group(1).strip()
+            name_terms = set(tokenise(name))
+            # Ignore title/topic words at the beginning of a passage (the
+            # ingestion adapter may prepend a lower-case title before the
+            # actual sentence). Keep at least one name token not in the query.
+            if name_terms - question_terms:
+                return name
         return sentence
 
 
@@ -213,8 +229,8 @@ class OllamaLLM:
 class HFLocalLLM:
     """In-process transformers generation (greedy)."""
 
-    def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct", device: str = "cuda",
-                 dtype: str = "bfloat16", seed: int = 20260921) -> None:
+    def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct", device: str = "auto",
+                 dtype: str = "auto", seed: int = 20260921) -> None:
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -227,7 +243,11 @@ class HFLocalLLM:
         self.name = model_name
         self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        resolved_dtype = getattr(torch, dtype, torch.float32)
+        if dtype == "auto":
+            resolved_dtype = (torch.bfloat16 if str(device).startswith(("cuda", "xla"))
+                              else torch.float32)
+        else:
+            resolved_dtype = getattr(torch, dtype, torch.float32)
         # device_map= needs the `accelerate` package and is only useful for
         # sharding across devices; a plain device string loads and moves the
         # model with torch alone, so a normal single-GPU or CPU run needs no
@@ -256,8 +276,13 @@ class HFLocalLLM:
         with Stopwatch() as watch, torch.inference_mode():
             output = self.model.generate(**inputs, max_new_tokens=int(max_tokens), do_sample=False,
                                          pad_token_id=self.tokenizer.eos_token_id)
-        completion = self.tokenizer.decode(output[0][inputs["input_ids"].shape[1]:],
-                                           skip_special_tokens=True).strip()
+            if str(self.device).startswith("xla"):
+                import torch_xla.core.xla_model as xm
+                xm.mark_step()
+            generated_ids = output[0][inputs["input_ids"].shape[1]:].cpu().tolist()
+            completion = self.tokenizer.decode(
+                generated_ids, skip_special_tokens=True,
+            ).strip()
         for marker in stop or ():
             if marker in completion:
                 completion = completion.split(marker)[0].strip()
@@ -276,5 +301,5 @@ def build_llm(config):  # type: ignore[no-untyped-def]
         return OllamaLLM(config.model_name, temperature=config.temperature, seed=config.seed,
                          timeout_s=config.timeout_s)
     if backend == "huggingface":
-        return HFLocalLLM(config.model_name, seed=config.seed)
+        return HFLocalLLM(config.model_name, device=config.device, seed=config.seed)
     raise ValueError(f"unknown generation backend: {backend}")

@@ -233,6 +233,21 @@ class TestB2SybilDefence:
         ledger.record_observation("d1", "src", "f1", "NEUTRAL", timestamp=1000.0)
         assert ledger.influence_factor("src", now=1000.0 + 24 * 3600) == pytest.approx(1.0)
 
+    def test_refutations_do_not_mature_new_source_influence(self):
+        cfg = TrustConfig(cold_start_influence=0.25,
+                          cold_start_min_observations=3,
+                          source_age_ramp_hours=24.0)
+        ledger = TrustLedger(":memory:", config=cfg)
+        for i in range(5):
+            ledger.record_observation(f"bad{i}", "attacker", f"badfam{i}", "REFUTE",
+                                      timestamp=1000.0)
+        assert ledger.influence_factor("attacker", now=1000.0) == pytest.approx(0.25)
+
+        for i in range(3):
+            ledger.record_observation(f"good{i}", "trusted", f"goodfam{i}", "SUPPORT",
+                                      timestamp=1000.0)
+        assert ledger.influence_factor("trusted", now=1000.0) == pytest.approx(1.0)
+
     def test_document_only_mode_has_no_influence_cap(self):
         ledger = TrustLedger(":memory:", config=TrustConfig(hierarchical=False))
         assert ledger.influence_factor("unknown_src", now=1000.0) == 1.0
@@ -311,6 +326,26 @@ class TestB3Verifier:
                            for i in range(5)]
         result = verifier.verify(QUERY, "q1", target, pool)
         assert result.llm_calls == 2
+
+    def test_numeric_disagreement_is_not_support_from_a_shared_unit(self):
+        verifier = CorroborationVerifier(llm=StubLLM(), use_nli=False)
+        target = _doc("poison", "Mount Everest reaches 11200 metres.", "attacker", "f1")
+        clean = _doc("clean", "Mount Everest has a summit elevation of 8849 metres.",
+                     "clean_source", "f2")
+        result = verifier.verify("How high is Mount Everest?", "q1", target, [target, clean])
+        assert result.outcome is VerificationOutcome.REFUTE
+        assert result.refute_mass >= verifier.min_mass
+
+    def test_same_subject_without_the_question_relation_is_not_refutation(self):
+        verifier = CorroborationVerifier(llm=StubLLM(), use_nli=False)
+        target = _doc("target", "Gustave Eiffel designed the Eiffel Tower.", "src1", "f1")
+        unrelated = _doc("height", "The Eiffel Tower stands 330 metres tall in Paris.",
+                         "src2", "f2")
+        result = verifier.verify("Who designed the Eiffel Tower?", "q1", target,
+                                 [target, unrelated])
+        assert verifier.device == "not-used"
+        assert result.outcome is VerificationOutcome.NEUTRAL
+        assert result.refute_mass == 0.0
 
     def test_counterfactual_influence_gates_refutation(self):
         """Plan Section 4.5: REFUTE needs an influential passage.

@@ -15,8 +15,9 @@ ingestion:
 embedding:
   backend: huggingface
   model_name: facebook/contriever
-  device: auto               # GPU when one is visible, otherwise CPU (with a warning)
-  batch_size: 128            # drop to 32 if you hit CUDA out-of-memory
+  device: auto               # CUDA GPU, TPU/XLA, then CPU when available
+  batch_size: 128            # drop to 32 if accelerator memory is tight
+  max_length: 512
   normalize: true
 
 index:
@@ -74,7 +75,7 @@ trust:
   verifier_min_mass: 0.20
   verifier_max_source_mass: 0.6
   verifier_counterfactual_influence: true
-  nli_mode: auto
+  nli_mode: nli              # refuse silent lexical fallback in benchmark runs
 
 generation:
   backend: openai            # an OpenAI-compatible server: vLLM, or Ollama below

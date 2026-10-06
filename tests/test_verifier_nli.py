@@ -187,3 +187,16 @@ def test_lexical_mode_also_refuses_to_refute_off_topic(monkeypatch):
 
     assert result.outcome is VerificationOutcome.NEUTRAL
     assert result.refute_mass == 0.0
+
+
+def test_explicit_nli_mode_does_not_silently_fall_back(monkeypatch):
+    import pytest
+
+    class UnavailableScorer:
+        @property
+        def available(self):
+            return False
+
+    monkeypatch.setattr(verifier_module, "_nli_scorer", UnavailableScorer())
+    with pytest.raises(RuntimeError, match="explicitly requested"):
+        CorroborationVerifier(llm=StubLLM(), use_nli=True)

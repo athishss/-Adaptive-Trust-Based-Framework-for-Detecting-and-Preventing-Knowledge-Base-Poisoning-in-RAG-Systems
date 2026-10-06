@@ -66,13 +66,18 @@ Person C's attacks and real data.
 
 ## Not done, and why
 
-* **No real dataset has run through this code.** The build environment blocks
-  Hugging Face, so NQ was never downloaded. Readers are tested against files
-  written to the published schema, not the published files, and the download
-  script's parsing and subset logic are tested offline against generated files.
-  `scripts/download_data.py` plus `docs/RUNNING_ON_GPU.md` are what close this,
-  and running them is the next step.
+* **No real dataset has run through this code in the current sandbox.** NQ
+  downloads, end-to-end subset evaluation, and benchmark outputs still need to
+  be executed from the Colab notebook/runbook. The readers and subset logic are
+  tested offline against generated files; this is not a substitute for running
+  the published files.
 * **No research result.** Detection accuracy, attack success rate and the
-  security/cost trade-off need Person C's attacks and Person B's ledger.
-* **Not run on a GPU.** Contriever and Llama-3.1-8B paths are verified with a
-  locally built tiny model and a stub server, not with real weights.
+  security/cost trade-off need the complete Person C matrix, real data, multiple
+  seeds, and confidence intervals. The mini stream is a plumbing regression
+  only.
+* **No live accelerator/model validation here.** TPU/XLA embedding and NLI
+  support is implemented and unit-tested with device/API mocks, and local HF
+  generation can select XLA, but this environment has no torch, transformers,
+  CUDA, or torch_xla. Contriever, DeBERTa NLI, and a real answer model have not
+  been run together on a GPU or TPU. Do not present the TPU path as validated
+  until `notebooks/trace_rag_colab_tpu.ipynb` completes on a real TPU runtime.
