@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from runpy import run_path
 
+import pytest
+
 
 _script = run_path("scripts/run_trust_stream.py")
 corrupt_passage = _script["corrupt_passage"]
@@ -50,6 +52,7 @@ def test_mini_stream_writes_reproducible_metrics_without_clean_quarantine(tmp_pa
             "--corpus", "examples/mini_corpus.jsonl",
             "--queries", "examples/mini_questions.json",
             "--steps", "12", "--targets", "2", "--out", str(out),
+            "--save-every", "5",
             "--set", "trust.nli_mode=lexical",
             "--set", "generation.backend=stub",
         ],
@@ -66,8 +69,36 @@ def test_mini_stream_writes_reproducible_metrics_without_clean_quarantine(tmp_pa
     assert metrics["generation_backend"] == "stub"
     assert metrics["generation_model"] == "stub"
     assert metrics["generation_device"] == "not-applicable"
+    assert metrics["clean_source_mode"] == "simulated_contributors"
+    assert metrics["clean_source_id"] is None
+    assert metrics["live_timestamps"] is False
+    assert metrics["provenance_note"].startswith("Clean contributor/source identities are simulated.")
     assert (out / "resolved_config.yaml").is_file()
     from trace_rag.config import Config
     assert Config.load(out / "resolved_config.yaml").trust.enabled is True
     assert (out / "stream.jsonl").is_file()
     assert (out / "trust_history.csv").is_file()
+
+
+def test_title_source_live_timestamp_mode_is_recorded(tmp_path):
+    repo = Path(__file__).resolve().parents[1]
+    out = tmp_path / "title-source-run"
+    result = subprocess.run(
+        [
+            sys.executable, "scripts/run_trust_stream.py",
+            "--config", "config/default.yaml",
+            "--corpus", "examples/mini_corpus.jsonl",
+            "--queries", "examples/mini_questions.json",
+            "--steps", "4", "--targets", "1", "--out", str(out),
+            "--source-from-title", "--live-timestamps", "--save-every", "0",
+            "--set", "trust.nli_mode=lexical",
+            "--set", "generation.backend=stub",
+        ],
+        cwd=repo, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + "\n" + result.stderr
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["clean_source_mode"] == "title_based"
+    assert metrics["source_title_prefix"] == "wiki-page"
+    assert metrics["live_timestamps"] is True
+    assert "record titles at page level" in metrics["provenance_note"]

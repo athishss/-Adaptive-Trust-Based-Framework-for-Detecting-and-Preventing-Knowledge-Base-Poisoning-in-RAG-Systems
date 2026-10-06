@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Download a BEIR dataset and prepare a working subset.
+"""Download a BEIR dataset and select evaluation queries.
 
 Downloads straight from Hugging Face (no account, no `datasets` library), with
-resume support, then optionally builds a development subset.
+resume support. By default the full corpus stays on disk as ``corpus.parquet``;
+a deterministic sample of query records is written to ``queries_subset.jsonl``
+without materializing corpus rows in memory. ``--subset`` is an optional,
+explicitly smaller development mode.
 
-Why the subset is not a random sample: a random slice of 50k passages from
-2.68M would drop almost every *gold* passage, so retrieval would look broken
-for reasons that have nothing to do with the defence.  ``--subset`` keeps every
-gold passage for the sampled queries and fills the rest at random, which is the
-standard way to shrink a retrieval benchmark honestly.
-
-    python scripts/download_data.py --dataset nq --out data/nq
+    python scripts/download_data.py --dataset nq --out data/nq --queries 500
     python scripts/download_data.py --dataset nq --out data/nq --subset 200000 --queries 500
 
-Then:
-
-    trace-rag --config config/full_nq.yaml ingest-beir --corpus data/nq/corpus_subset.parquet
-    trace-rag --config config/full_nq.yaml index
+The first command retains all 2.68M NQ passages. The second creates a
+gold-preserving corpus subset for quicker iteration.
 """
 
 from __future__ import annotations
@@ -122,6 +117,16 @@ def read_qrels(path: Path) -> Dict[str, Set[str]]:
     return gold
 
 
+def sample_query_ids(gold: Dict[str, Set[str]], n_queries: int,
+                     seed: int = 20260921) -> List[str]:
+    """Select a deterministic query sample from qrels without touching corpus rows."""
+    if n_queries <= 0:
+        raise ValueError("n_queries must be positive")
+    query_ids = sorted(gold)
+    random.Random(seed).shuffle(query_ids)
+    return query_ids[:n_queries]
+
+
 def build_subset(corpus_path: Path, gold_ids: Set[str], target_size: int, out_path: Path,
                  seed: int = 20260921) -> Tuple[int, int]:
     """Write a subset containing every gold passage plus a random fill."""
@@ -183,10 +188,14 @@ def main() -> int:
     parser.add_argument("--subset", type=int, default=None,
                         help="build a subset of this many passages (gold passages always kept)")
     parser.add_argument("--queries", type=int, default=500,
-                        help="how many test queries the subset must cover")
+                        help="how many qrels-backed test queries to write for evaluation")
     parser.add_argument("--seed", type=int, default=20260921)
     parser.add_argument("--skip-download", action="store_true", help="use files already on disk")
     args = parser.parse_args()
+    if args.queries <= 0:
+        parser.error("--queries must be positive")
+    if args.subset is not None and args.subset <= 0:
+        parser.error("--subset must be positive when supplied")
 
     spec = DATASETS[args.dataset]
     out_dir = Path(args.out or f"data/{args.dataset}")
@@ -209,12 +218,9 @@ def main() -> int:
     gold = read_qrels(qrels_path)
     print(f"qrels: {len(gold):,} test queries with gold passages")
 
+    chosen_queries = sample_query_ids(gold, args.queries, seed=args.seed)
     corpus_for_run = corpus_path
     if args.subset:
-        rng = random.Random(args.seed)
-        chosen_queries = sorted(gold)[:]
-        rng.shuffle(chosen_queries)
-        chosen_queries = chosen_queries[: args.queries]
         gold_ids: Set[str] = set()
         for query_id in chosen_queries:
             gold_ids |= gold[query_id]
@@ -225,8 +231,15 @@ def main() -> int:
         missing = len(gold_ids) - gold_kept
         if missing:
             print(f"  WARNING: {missing} gold passages were not found in the corpus file")
-        written = write_queries_subset(queries_path, chosen_queries, out_dir / "queries_subset.jsonl")
-        print(f"  wrote {kept:,} passages and {written} queries")
+        print(f"  wrote {kept:,} passages, including {gold_kept:,}/{len(gold_ids):,} gold passages")
+    else:
+        # Keep the complete corpus on disk. Sampling query IDs only reduces
+        # evaluation traffic; it never materializes millions of passages.
+        print(f"keeping all {spec['passages']} corpus passages; selecting "
+              f"{len(chosen_queries)} evaluation queries")
+
+    written = write_queries_subset(queries_path, chosen_queries, out_dir / "queries_subset.jsonl")
+    print(f"wrote {written:,} queries to {out_dir / 'queries_subset.jsonl'}")
 
     # prove the result is readable by the ingestor before claiming success
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -239,15 +252,16 @@ def main() -> int:
             break
     print(f"\nreadable by the ingestor: {len(sample)} sample rows, first id = {sample[0]['doc_id']!r}")
     print(f"""
-next (config/nq_gpu.yaml uses Contriever on the GPU and an exact FAISS index):
+selected corpus: {corpus_for_run}
+selected query file: {out_dir / 'queries_subset.jsonl'}
 
-  trace-rag --config config/nq_gpu.yaml ingest-beir --corpus {corpus_for_run}
-  trace-rag --config config/nq_gpu.yaml index
-  trace-rag --config config/nq_gpu.yaml query "who designed the eiffel tower?" --set generation.backend=stub
+For full BEIR NQ, keep corpus.parquet (all 2,681,468 passages) and use the
+query file only to bound evaluation traffic. config/nq_tpu.yaml uses Contriever
+on TPU/XLA and a CPU FAISS IVF-PQ index. The query sample is deterministic;
+this command does not claim a full-query benchmark.
 
-no GPU?   add            --set embedding.device=cpu      (slower; try a smaller --subset first)
-no LLM?   keep           --set generation.backend=stub   until vLLM or Ollama is running
-full corpus (2.68M)?     use config/full_nq.yaml, which switches the index to IVF-PQ
+For an explicitly smaller, gold-preserving development corpus, rerun with
+--subset <passage-count>. That mode is not the full-data experiment.
 """)
     return 0
 

@@ -2,7 +2,7 @@
 
 ## TPU / PyTorch XLA
 
-Use [`notebooks/trace_rag_colab_tpu.ipynb`](../notebooks/trace_rag_colab_tpu.ipynb) with [`COLAB_TPU_RUNBOOK.md`](COLAB_TPU_RUNBOOK.md). Select a **TPU** runtime before executing it. This path is experimental and has not been hardware-validated in the development sandbox; the notebook checks the actual XLA device and fails fast if one is unavailable.
+Use [`notebooks/trace_rag_colab_tpu.ipynb`](../notebooks/trace_rag_colab_tpu.ipynb) with [`COLAB_TPU_RUNBOOK.md`](COLAB_TPU_RUNBOOK.md). It targets the full BEIR NQ corpus, TPU/XLA embeddings and NLI, and a real Ollama generator running on the Colab CPU/GPU. Select a **TPU** runtime before executing it. This path is experimental and has not been hardware-validated in the development sandbox; the notebook checks the actual XLA device and fails fast if one is unavailable. Read the explicit provenance and controlled-attack caveats before using its output.
 
 ## CUDA GPU
 

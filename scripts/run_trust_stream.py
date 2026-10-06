@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""End-to-end trust run over real data (Person B's smoke test).
+"""End-to-end trust stream over a BEIR corpus (integration smoke test).
 
 Runs the whole system on a BEIR corpus with Person B's trust layer wired in,
 so a CPU, CUDA, or PyTorch/XLA runtime can exercise the defence on real passages:
 
-  1. ingest the clean corpus with simulated contributors (Person A's assigner);
+  1. ingest the clean corpus with either simulated contributors or one explicit
+     dataset-level source (BEIR corpora do not include contributor metadata);
   2. index it (the embedding-accelerator step; storage/search stay on CPU);
   3. for each target question, take the passage that actually carries the gold
      answer (from BEIR ``qrels.tsv`` when it is there, otherwise the passage in
@@ -28,12 +29,14 @@ script establishes is that the pieces run together on real data and that the
 trust dynamics behave - the numbers it prints are a smoke test, and it says so
 in the output.
 
-Usage (Colab / local):
+Usage (full BEIR NQ on Colab TPU with Ollama):
 
-    python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
-        --corpus data/nq/corpus_subset.parquet --queries data/nq/queries_subset.jsonl \
-        --qrels data/nq/qrels.tsv \
-        --steps 40 --targets 3 --out runs/nq/trust_stream
+    TRACE_RAG_NLI_DEVICE=tpu python scripts/run_trust_stream.py \
+        --config config/nq_tpu.yaml --corpus data/nq/corpus.parquet \
+        --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv \
+        --steps 500 --targets 10 --source-from-title --live-timestamps \
+        --save-every 50000 --out runs/nq/full_colab \
+        --set generation.backend=ollama --set generation.model_name=qwen2.5:3b
 
 Offline sanity check on the bundled mini corpus:
 
@@ -41,13 +44,10 @@ Offline sanity check on the bundled mini corpus:
         --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json \
         --steps 12 --targets 2 --out runs/trust_stream_mini
 
-On Colab with a real model, switch the generation backend without editing the
-shared config:
-
-    python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
-        --corpus data/nq/corpus_subset.parquet --queries data/nq/queries_subset.jsonl \
-        --qrels data/nq/qrels.tsv --out runs/nq/trust_stream \
-        --set generation.backend=ollama --set generation.model_name=qwen2.5:7b
+For the full NQ corpus, the `config/nq_tpu.yaml` command above uses IVF-PQ and
+Ollama; keep `corpus.parquet` full and sample only query records. If BEIR NQ's
+missing contributor metadata is not acceptable, provide an authentic source-
+labeled corpus rather than treating simulated source assignments as real.
 """
 
 from __future__ import annotations
@@ -66,7 +66,8 @@ from trace_rag.attacks.poisoned_rag import entity_swap, make_poisoned_document, 
 from trace_rag.attacks.stream import zipf_queries
 from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
-from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
+from trace_rag.ingestion import (FixedSourceAssigner, Ingestor, SourceAssigner,
+                                  TitleSourceAssigner, iter_beir_corpus)
 from trace_rag.pipeline import PersonAPipeline
 from trace_rag.trust import CorroborationVerifier, TrustLedger, TrustPolicy
 from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics, write_history_csv
@@ -224,9 +225,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--steps", type=int, default=40, help="queries in the stream")
     parser.add_argument("--targets", type=int, default=3, help="target questions to poison")
     parser.add_argument("--n-sources", type=int, default=2000, help="simulated contributors")
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument("--source-id", default=None,
+                              help="assign every clean passage one declared corpus-level source ID; "
+                                   "overrides simulated contributors")
+    source_group.add_argument("--source-from-title", action="store_true",
+                              help="derive page-level sources from each BEIR row's real title; "
+                                   "does not imply real authorship")
+    parser.add_argument("--live-timestamps", action="store_true",
+                        help="use wall-clock import/attack/query timestamps instead of "
+                             "fabricating historical source age and 60-second query intervals")
     parser.add_argument("--seed", type=int, default=20260921)
     parser.add_argument("--skip-index", action="store_true",
-                        help="reuse the saved index from a previous run")
+                        help="reuse the saved store/index; resume any missing index vectors")
+    parser.add_argument("--save-every", type=int, default=50_000,
+                        help="checkpoint the index after this many newly embedded passages (0 disables)")
     parser.add_argument("--force-medium", action="store_true",
                         help="demo mode: escalate every passage so the verifier path "
                              "always runs (the calibrated bands are the real setting)")
@@ -238,6 +251,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--max-corroboration", type=int, default=None,
                         help="independent passages (default: trust config)")
     args = parser.parse_args(argv)
+    if args.save_every < 0:
+        parser.error("--save-every cannot be negative")
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -261,27 +276,43 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     targets = questions[: max(1, args.targets)]
 
     # ---------------------------------------------------------------- ingest
-    banner("1. Ingest the clean corpus with simulated contributors")
+    if args.source_from_title:
+        provenance_label = "page-title-derived source identities"
+        clean_source_assigner = TitleSourceAssigner()
+        clean_source_mode = "title_based"
+    elif args.source_id:
+        provenance_label = f"single corpus-level source {args.source_id!r}"
+        clean_source_assigner = FixedSourceAssigner(args.source_id)
+        clean_source_mode = "fixed_corpus_source"
+    else:
+        provenance_label = "simulated contributors"
+        clean_source_assigner = SourceAssigner(n_sources=args.n_sources, seed=args.seed)
+        clean_source_mode = "simulated_contributors"
+    banner(f"1. Ingest the clean corpus with {provenance_label}")
     ingestor = Ingestor(pipeline.store, config.ingestion)
-    # The corpus lacks real contributor timestamps. Give it a historical
-    # simulated window so clean sources have earned history before the attack
-    # stream begins; a 20-year offset leaves the full 2.68M-passage NQ corpus
-    # (about 5.1 years at 60 seconds per passage) safely in the past.
-    clean_start_time = time.time() - 20 * 365.25 * 24 * 60 * 60
+    # BEIR does not provide contributor creation dates or event timestamps. The
+    # default smoke mode backdates/spaces imports for exercising maturity/burst
+    # logic. --live-timestamps instead records this run's actual wall-clock
+    # import time and makes no claim about the documents' original ages.
+    clean_start_time = (time.time() if args.live_timestamps else
+                        time.time() - 20 * 365.25 * 24 * 60 * 60)
     if not args.skip_index or pipeline.store.counts().get("chunks", 0) == 0:
-        report = ingestor.ingest_beir(args.corpus, SourceAssigner(n_sources=args.n_sources,
-                                                                 seed=args.seed),
-                                      limit=args.limit, start_time=clean_start_time,
-                                      seconds_per_doc=60.0)
+        report = ingestor.ingest_beir(
+            args.corpus, clean_source_assigner, limit=args.limit,
+            start_time=clean_start_time,
+            seconds_per_doc=0.0 if args.live_timestamps else 60.0,
+        )
         print(f"  ingested: {report.to_dict()}")
     print(f"  store: {pipeline.store.counts()}")
 
     # ---------------------------------------------------------------- index
     banner("2. Index the clean corpus (embedding accelerator step)")
-    if not args.skip_index:
-        indexed = pipeline.index_chunks()
-        pipeline.save_index()
-        print(f"  indexed: {indexed} passages   index size: {len(pipeline.index)}")
+    # index_chunks skips IDs already present. With --skip-index the saved FAISS
+    # checkpoint is loaded first, then any unindexed rows are resumed. Without
+    # it, indexing starts from a fresh index but still checkpoints periodically.
+    indexed = pipeline.index_chunks(save_every=args.save_every)
+    pipeline.save_index()
+    print(f"  indexed this session: {indexed} passages   index size: {len(pipeline.index)}")
 
     # ---------------------------------------------------------------- poison
     banner("3. Craft poison from each target's gold passage (Person C's helpers)")
@@ -316,7 +347,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             target_query=target["question"],
             metadata={"source_of_truth": origin},
         )
-        poison_ingested_at = poison_base_time + index * 20.0
+        poison_ingested_at = (time.time() if args.live_timestamps
+                              else poison_base_time + index * 20.0)
         chunks = ingestor.ingest_text(
             record.doc_id, record.text, record.source_id,
             ingested_at=poison_ingested_at, passage_mode=True,
@@ -377,7 +409,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     poison_ids = poison_chunk_ids
     stream_start_time = max(poison_ingest_times) + 1.0
     for step, question in enumerate(stream):
-        query_time = stream_start_time + step * 60.0
+        query_time = time.time() if args.live_timestamps else stream_start_time + step * 60.0
         result = pipeline.answer(question, f"stream_{step:04d}", now=query_time)
         drained = policy.drain_verification_queue(verifier)
         cited_poison = [d.doc_id for d in result.retrieval.documents
@@ -416,13 +448,41 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     clean_blocked = sorted(blocked - poison_ids)
     first_quarantine = next((row["step"] for row in per_step if row["newly_quarantined"]), None)
 
+    if args.source_from_title:
+        source_provenance_note = (
+            "Clean source IDs derive from authentic BEIR record titles at page level; this is "
+            "not real contributor/authorship metadata."
+        )
+    elif args.source_id:
+        source_provenance_note = (
+            f"Clean passages use the one declared corpus-level source ID {args.source_id!r}; "
+            "this is not contributor-level provenance."
+        )
+    else:
+        source_provenance_note = "Clean contributor/source identities are simulated."
+    timestamp_note = (
+        "Clean ingestion timestamps use this run's wall-clock import start; BEIR original "
+        "event times are unavailable."
+        if args.live_timestamps else
+        "Clean ingestion timestamps are simulated because BEIR original event times are unavailable."
+    )
+    provenance_note = (
+        f"{source_provenance_note} {timestamp_note} Controlled poison payloads and the "
+        "attacker identity are generated for this experiment."
+    )
+
     metrics = {
         "smoke_test": True,
-        "note": "component smoke test; Person C's runner owns ASR, baselines and CIs",
+        "note": "real-data trust-stream integration smoke; not a matched attack/baseline/seed matrix",
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "corpus": str(args.corpus),
         "seed": int(args.seed),
+        "clean_source_mode": clean_source_mode,
+        "clean_source_id": args.source_id,
+        "source_title_prefix": "wiki-page" if args.source_from_title else None,
+        "live_timestamps": bool(args.live_timestamps),
+        "provenance_note": provenance_note,
         "embedding_backend": config.embedding.backend,
         "embedding_model": (config.embedding.model_name
                             if config.embedding.backend == "huggingface" else "hashing"),

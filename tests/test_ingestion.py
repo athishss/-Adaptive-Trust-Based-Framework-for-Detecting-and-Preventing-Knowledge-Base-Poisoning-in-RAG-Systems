@@ -5,7 +5,7 @@ import time
 import pytest
 
 from trace_rag.config import IngestionConfig
-from trace_rag.ingestion import (Ingestor, ParseError, SourceAssigner,
+from trace_rag.ingestion import (Ingestor, ParseError, SourceAssigner, TitleSourceAssigner,
                                  chunk_passage, chunk_text, parse_file)
 from trace_rag.utils.hashing import FamilyAssigner
 
@@ -124,6 +124,24 @@ def test_source_assigner_is_deterministic_and_spread():
     assert [a.assign(f"d{i}") for i in range(50)] == [b.assign(f"d{i}") for i in range(50)]
     assigned = {a.assign(f"d{i}") for i in range(500)}
     assert 10 < len(assigned) <= 100
+
+
+def test_beir_title_source_assigner_uses_real_page_titles(tmp_path, store):
+    corpus = tmp_path / "corpus.jsonl"
+    corpus.write_text("\n".join([
+        '{"_id": "p1", "title": "  Eiffel Tower ", "text": "first passage body"}',
+        '{"_id": "p2", "title": "Eiffel Tower", "text": "second passage body"}',
+        '{"_id": "p3", "title": "Photosynthesis", "text": "another passage body"}',
+        '{"_id": "p4", "title": "", "text": "untitled passage body"}',
+    ]), encoding="utf-8")
+    report = Ingestor(store, IngestionConfig()).ingest_beir(
+        corpus, TitleSourceAssigner(), start_time=1234.0, seconds_per_doc=0.0,
+    )
+    assert report.documents == 4
+    source_ids = {chunk.source_id for chunk in store.iter_chunks()}
+    assert source_ids == {
+        "wiki-page:Eiffel Tower", "wiki-page:Photosynthesis", "wiki-page:untitled:p4",
+    }
 
 
 def test_beir_ingestion_spreads_timestamps(tmp_path, store):

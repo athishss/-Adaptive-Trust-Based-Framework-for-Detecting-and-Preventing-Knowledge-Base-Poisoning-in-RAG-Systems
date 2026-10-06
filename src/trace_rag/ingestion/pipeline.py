@@ -121,10 +121,11 @@ class Ingestor:
                     seconds_per_doc: float = 0.0) -> IngestionReport:
         """Ingest a BEIR ``corpus.jsonl``.
 
-        BEIR passages carry no contributor metadata, so ``source_assigner``
-        supplies simulated provenance (plan Section 6.1).  ``seconds_per_doc``
-        spreads ingestion timestamps so that the burst signal has a realistic
-        baseline instead of every clean passage sharing one timestamp.
+        BEIR passages carry no contributor/authorship metadata. ``source_assigner``
+        can simulate contributors, use a fixed corpus source, or derive page-level
+        IDs from record titles; title-derived IDs are not author identities.
+        ``seconds_per_doc`` deterministically spaces import timestamps when set,
+        which is a simulation rather than original source chronology.
         """
         report = IngestionReport()
         base = time.time() if start_time is None else float(start_time)
@@ -138,8 +139,12 @@ class Ingestor:
             if limit is not None and i >= limit:
                 break
             text = " ".join(part for part in (row["title"], row["text"]) if part)
+            if hasattr(source_assigner, "assign_record"):
+                source_id = source_assigner.assign_record(row["doc_id"], row["title"])
+            else:
+                source_id = source_assigner.assign(row["doc_id"])
             records = self.ingest_text(
-                doc_id=row["doc_id"], text=text, source_id=source_assigner.assign(row["doc_id"]),
+                doc_id=row["doc_id"], text=text, source_id=source_id,
                 title=row["title"], origin=str(corpus_path), passage_mode=True,
                 ingested_at=base + i * seconds_per_doc,
             )
@@ -182,6 +187,28 @@ class SourceAssigner:
         idx = int(np.searchsorted(self._cdf, u, side="left"))
         idx = min(idx, self.n_sources - 1)
         return f"{self.prefix}_{idx:06d}"
+
+
+class TitleSourceAssigner:
+    """Use a corpus record's real title as its source identity.
+
+    BEIR does not include authors/contributors, but its NQ rows retain the
+    originating Wikipedia page title. Grouping passages by that title is an
+    explicit page-level provenance policy, not a claim about page authorship.
+    """
+
+    def __init__(self, prefix: str = "wiki-page") -> None:
+        self.prefix = str(prefix)
+
+    def assign(self, doc_id: str) -> str:
+        """Fallback for sources that call the single-argument assign API."""
+        return f"{self.prefix}:untitled:{doc_id}"
+
+    def assign_record(self, doc_id: str, title: str = "") -> str:
+        normalized_title = " ".join(str(title or "").split())
+        if not normalized_title:
+            return self.assign(doc_id)
+        return f"{self.prefix}:{normalized_title}"
 
 
 class FixedSourceAssigner:

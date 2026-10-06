@@ -28,12 +28,18 @@ attack × baseline × seed case against a real benchmark. In particular:
 1. There is no full, independently reviewed benchmark protocol that maps every
    advertised baseline to the exact same chronological inputs and records all
    attack, false-positive, exposure, remediation, cost, and citation metrics.
-2. The mini-corpus smoke is only a plumbing/security regression. It is not
-   evidence of performance on Natural Questions or another representative
-   benchmark.
+2. The bundled mini-corpus smoke remains only a plumbing/security regression.
+   The Colab TPU notebook now contains a full-BEIR-NQ/Ollama integration path and
+   a one-query real-data baseline API diagnostic, but neither has been executed
+   in this development environment. They are not evidence of performance on
+   Natural Questions or another benchmark until a live run is completed and
+   audited.
 3. Real embedding, verifier, and answer-generation weights have not all been
    run end to end here. A run must record the actual `verifier_mode`, model
-   identifiers, data subset, configuration, random seed, and code revision.
+   identifiers, full-corpus/query-sample scope, configuration, random seed, and
+   code revision. BEIR NQ lacks original source identities and timestamps, and
+   controlled poisoning examples are generated mutations rather than real
+   incidents.
 4. Reported result tables, confidence intervals, and statistical comparisons
    must be generated from saved per-run artifacts; no paper headline number is
    established by the unit tests or a mini smoke.

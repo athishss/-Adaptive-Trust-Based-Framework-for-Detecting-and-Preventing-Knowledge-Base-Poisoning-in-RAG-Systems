@@ -1,8 +1,10 @@
-# Experimental single-device PyTorch/XLA configuration for a TPU runtime.
-# It keeps Contriever and the core Trust settings from nq_gpu.yaml; FAISS and
-# the SQLite store remain on CPU. Use this for a bounded NQ subset first.
-# Keep max_length/model/seeds fixed between comparisons; changing them changes
-# the embedding method and makes results non-comparable.
+# Experimental single-device PyTorch/XLA configuration for full BEIR NQ.
+# Contriever embeddings and NLI verification use TPU/XLA; FAISS IVF-PQ and
+# SQLite stay on CPU. Full indexing is long-running; run_trust_stream checkpoints
+# every 50k newly embedded passages and can resume with --skip-index.
+# BEIR NQ contains 2,681,468 passages but no authorship or original timestamps.
+# The Colab notebook derives source IDs from authentic page titles and uses
+# wall-clock import times; controlled attacker/poison events remain generated.
 seed: 20260921
 
 ingestion:
@@ -19,7 +21,12 @@ embedding:
   normalize: true
 
 index:
-  backend: numpy
+  backend: faiss
+  faiss_kind: ivfpq
+  nlist: 4096
+  pq_m: 96
+  nbits: 8
+  nprobe: 16
 
 retrieval:
   candidate_pool: 50
@@ -69,17 +76,16 @@ trust:
   nli_mode: nli
 
 generation:
-  backend: stub
-  model_name: meta-llama/Llama-3.1-8B-Instruct
-  device: tpu
+  backend: ollama
+  model_name: qwen2.5:3b
   temperature: 0.0
   seed: 20260921
-  max_tokens: 256
+  max_tokens: 96
   max_context_docs: 5
   abstain_evidence_mass: 0.5
   require_citations: true
   check_citations: false
-  timeout_s: 120.0
+  timeout_s: 180.0
 
 storage:
   root: runs/nq_tpu

@@ -139,7 +139,7 @@ def main() -> int:
         return 1
     print("Core pipeline is ready. Next:")
     print("  python scripts/demo_end_to_end.py")
-    print("  python scripts/download_data.py --dataset nq --out data/nq --subset 200000")
+    print("  python scripts/download_data.py --dataset nq --out data/nq --queries 500  # full corpus")
     print("  TPU users: open notebooks/trace_rag_colab_tpu.ipynb in Colab")
     return 0
 

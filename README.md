@@ -20,7 +20,10 @@ cd trace-rag                  # the extracted folder, containing pyproject.toml
 python scripts/check_setup.py # says what is installed and what to fix
 ```
 
-## Running on real data with a GPU
+## Running a development subset on a GPU
+
+This existing GPU walkthrough uses a gold-preserving 200k-passage development
+subset for faster iteration; it is not a full-NQ evaluation.
 
 ```bash
 conda env create -f environment.yml && conda activate trace-rag
@@ -39,8 +42,10 @@ Full CUDA walkthrough: [`docs/RUNNING_ON_GPU.md`](docs/RUNNING_ON_GPU.md).
 - TPU / PyTorch-XLA: [`notebooks/trace_rag_colab_tpu.ipynb`](notebooks/trace_rag_colab_tpu.ipynb) and [`docs/COLAB_TPU_RUNBOOK.md`](docs/COLAB_TPU_RUNBOOK.md).
 - CUDA GPU: [`notebooks/trace_rag_colab.ipynb`](notebooks/trace_rag_colab.ipynb) and [`docs/COLAB_RUNBOOK.md`](docs/COLAB_RUNBOOK.md).
 
-The TPU path is experimental until the notebook completes on a real TPU runtime;
-its default mini-corpus run is not a benchmark or answer-quality result.
+The TPU notebook now targets the full 2.68M-passage BEIR NQ corpus and a real
+Ollama model, but remains experimental until it completes on live hardware. It
+samples query traffic and uses controlled poison mutations; it is an integration
+smoke, not a complete attack/baseline/seed benchmark or real-incident study.
 
 ## Quick start
 

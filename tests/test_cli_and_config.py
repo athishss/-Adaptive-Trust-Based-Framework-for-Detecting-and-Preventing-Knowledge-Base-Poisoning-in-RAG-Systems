@@ -40,8 +40,11 @@ def test_shipped_configs_parse_with_trust_settings():
         if path != "config/default.yaml":
             assert config.trust.enabled
             assert config.generation.require_citations
-    assert Config.load("config/nq_tpu.yaml").embedding.device == "tpu"
-    assert Config.load("config/nq_tpu.yaml").trust.nli_mode == "nli"
+    tpu = Config.load("config/nq_tpu.yaml")
+    assert tpu.embedding.device == "tpu"
+    assert tpu.index.backend == "faiss" and tpu.index.faiss_kind == "ivfpq"
+    assert tpu.trust.nli_mode == "nli"
+    assert tpu.generation.backend == "ollama"
 
 
 def test_config_overrides_apply():

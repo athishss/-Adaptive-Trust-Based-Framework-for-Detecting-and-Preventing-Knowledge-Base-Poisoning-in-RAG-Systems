@@ -109,24 +109,30 @@ on GPU and must be measured again with Contriever and Llama-3.1-8B.
 | NLI input was constructed as one string rather than an explicit premise/hypothesis pair | Both the Transformers pipeline and XLA path now feed paired inputs | `test_nli_pipeline_receives_premise_and_hypothesis_as_a_pair` |
 | S6 assumed the target passage was the first returned neighbour | Signal computation passes the target id and excludes it by ID, independent of ANN ordering/ties | `test_neighbourhood_density_excludes_target_by_id_not_neighbour_rank` |
 | The HF device path supported CPU/CUDA only | Added PyTorch/XLA device resolution, static TPU embedding shapes, TPU NLI inference, optional local HF generation device selection, `config/nq_tpu.yaml`, and a Colab notebook | `tests/test_device_resolution.py` and config tests use mocks; **no actual TPU execution has occurred here** |
+| Full-corpus download did not emit a qrels-backed query sample unless corpus subset mode was requested | The default downloader now writes deterministic `queries_subset.jsonl` while retaining all source corpus rows on disk; it does not collect millions of corpus rows into Python lists | `tests/test_download_data.py` |
+| BEIR corpora lack author/contributor IDs, but the stream runner previously defaulted to simulated contributor labels and backdated source ages | Added page-title-derived source identity and wall-clock import/attack/query timestamps; metrics explicitly record the provenance limitation and generated controlled attacks | `test_beir_title_source_assigner_uses_real_page_titles`, `test_title_source_live_timestamp_mode_is_recorded` |
 
-`pytest -q -ra` passed in the development sandbox; six optional tests were
-skipped because FAISS, torch/Transformers, and Matplotlib were absent. Python
-`compileall`, `git diff --check`, and the setup check passed. The CPU mini smoke
+The final development-sandbox check ran `pytest -ra`: **247 passed, 6 skipped**.
+The optional skips were FAISS, torch/model-backend, and Matplotlib tests because
+those packages are absent. Python `compileall`, notebook JSON/code-cell syntax,
+`git diff --check`, and the setup check passed. The CPU mini smoke
 used the lexical verifier and `StubLLM`: 2 poison documents quarantined, 0 clean
 false quarantines, 0 poison citations, poison retrieval rate 0.5. This is a
 regression fixture only—not an accuracy or research result.
 
 ## Current unverified items
 
-* **Live TPU/XLA behavior.** The available tests mock XLA APIs. The sandbox has
-  no `torch`, `transformers`, `torch_xla`, CUDA, or TPU. Run
-  `notebooks/trace_rag_colab_tpu.ipynb` on Colab and retain its device, timing,
-  model, seed, and resolved-config metadata before claiming TPU execution.
-* **Real weights and data.** Contriever, the DeBERTa NLI model, and an answer
-  model have not been run together against published NQ files in this session.
-  The optional Colab NQ cell downloads source data and prepares a subset, but it
-  has not been executed here.
+* **Live TPU/XLA behavior.** The available tests mock XLA APIs. This sandbox has
+  no `torch`, `transformers`, `torch_xla`, CUDA, or TPU. The updated Colab
+  notebook requests the complete BEIR NQ corpus, TPU/XLA Contriever and NLI,
+  and a real Ollama model; run it on Colab and retain the actual device, model,
+  data-scope, seed, and resolved-config metadata before claiming hardware use.
+* **Real weights and data.** Contriever, the DeBERTa NLI model, Ollama, and full
+  BEIR NQ have not been run together in this development environment. The
+  notebook downloads all NQ corpus passages and samples only evaluation queries,
+  but it has not been executed here. BEIR has no contributor identities or
+  original timestamps; the notebook uses authentic page-title source IDs and
+  wall-clock import times, while its controlled poison mutations are generated.
 * **Research evaluation.** The mini stream is not representative. The callback
   matrix is not a complete controlled attack × baseline × seed benchmark, and
   no ASR, confidence interval, baseline comparison, or headline result is
