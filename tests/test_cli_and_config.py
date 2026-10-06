@@ -23,6 +23,22 @@ def test_config_validation_rejects_bad_values():
         Config.load(None, scorer={"theta_low": 0.9, "theta_high": 0.2})
     with pytest.raises(Exception):
         Config.load(None, retrieval={"top_k": 0})
+    with pytest.raises(Exception, match="w_r"):
+        Config.load(None, trust={"w_s": 1.0, "w_r": 1.0})
+    with pytest.raises(Exception, match="reject_refutations"):
+        Config.load(None, trust={"quarantine_refutations": 3,
+                                 "reject_refutations": 3})
+    with pytest.raises(Exception):
+        Config.load(None, generation={"citation_nli_threshold": 1.5})
+
+
+def test_shipped_configs_parse_with_trust_settings():
+    for path in ("config/default.yaml", "config/full_nq.yaml", "config/nq_gpu.yaml"):
+        config = Config.load(path)
+        assert config.storage.trust_db
+        if path != "config/default.yaml":
+            assert config.trust.enabled
+            assert config.generation.require_citations
 
 
 def test_config_overrides_apply():

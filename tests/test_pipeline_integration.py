@@ -178,3 +178,21 @@ def test_index_persists_across_pipeline_instances(config):
     assert len(reopened.index) == 1
     assert reopened.answer("Who designed the tower?", "q1").retrieval.documents
     reopened.close()
+
+
+def test_config_enabled_trust_components_are_wired_and_closed(tmp_path):
+    from trace_rag.config import Config
+    from trace_rag.trust.ledger import TrustLedger
+    from trace_rag.trust.policy import TrustPolicy
+
+    config = Config.load(None, storage={"root": str(tmp_path / "run")},
+                         trust={"enabled": True, "nli_mode": "lexical"})
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    ledger = pipeline.trust_provider
+    assert isinstance(ledger, TrustLedger)
+    assert isinstance(pipeline.policy, TrustPolicy)
+    assert pipeline.retriever.trust is ledger
+    assert pipeline.verifier.mode == "lexical"
+    assert pipeline.policy.queue.max_size == config.trust.queue_max_size
+    assert ledger.path.endswith(config.storage.trust_db)
+    pipeline.close()

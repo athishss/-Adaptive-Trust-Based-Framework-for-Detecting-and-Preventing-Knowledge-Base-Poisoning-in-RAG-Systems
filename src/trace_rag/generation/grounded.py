@@ -14,7 +14,8 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 from ..config import GenerationConfig
 from ..contracts import AnswerRecord, Citation, LLMResponse, RetrievedDocument
 from ..utils.timing import Stopwatch
-from .citations import check_citations, citation_precision, evidence_mass, parse_citations
+from .citations import (check_citations, citation_precision, evidence_mass,
+                        missing_citation_sentences, parse_citations)
 from .prompts import build_answer_prompt
 
 ABSTAIN_TEXT = "INSUFFICIENT EVIDENCE"
@@ -41,6 +42,13 @@ class GroundedGenerator:
         self.llm = llm
         self.config = config or GenerationConfig()
         self.citation_checker = citation_checker
+        if self.citation_checker is None and self.config.check_citations:
+            # Lazy import avoids loading the NLI stack for offline/default runs.
+            from ..trust.verifier import citation_entailment_check
+
+            threshold = self.config.citation_nli_threshold
+            self.citation_checker = lambda premise, hypothesis: citation_entailment_check(
+                premise, hypothesis, threshold)
 
     def generate(self, query: str, query_id: str, documents: Sequence[RetrievedDocument],
                  excluded_doc_ids: Sequence[str] = (), step: int = 0) -> GenerationOutcome:
@@ -60,14 +68,26 @@ class GroundedGenerator:
             return self._abstain(query, query_id, "model_abstained", documents, excluded_doc_ids,
                                  trust_snapshots, step, prompt, response, watch.elapsed_ms)
 
-        citations, invalid, cleaned = parse_citations(text, documents)
+        citations, invalid, _cleaned = parse_citations(text, documents)
         citations = check_citations(citations, documents, self.citation_checker)
 
+        # Never accept identifiers outside the retrieved context, even if one
+        # valid citation appears elsewhere in the same answer.
+        if invalid:
+            return self._abstain(query, query_id, "invalid_citations", documents,
+                                 excluded_doc_ids, trust_snapshots, step, prompt, response,
+                                 watch.elapsed_ms, invalid=invalid)
+
         if self.config.require_citations and not citations:
-            reason = "invalid_citations" if invalid else "no_citations"
-            return self._abstain(query, query_id, reason, documents, excluded_doc_ids,
-                                 trust_snapshots, step, prompt, response, watch.elapsed_ms,
-                                 invalid=invalid)
+            return self._abstain(query, query_id, "no_citations", documents,
+                                 excluded_doc_ids, trust_snapshots, step, prompt, response,
+                                 watch.elapsed_ms)
+
+        missing = missing_citation_sentences(text) if self.config.require_citations else []
+        if missing:
+            return self._abstain(query, query_id, "missing_sentence_citations", documents,
+                                 excluded_doc_ids, trust_snapshots, step, prompt, response,
+                                 watch.elapsed_ms)
 
         mass = evidence_mass(citations, documents)
         if mass < self.config.abstain_evidence_mass:

@@ -57,6 +57,45 @@ scorer:
   calibration: isotonic
   random_state: 20260921
 
+trust:
+  enabled: false              # enable the full B verifier/ledger/policy wiring
+  w_s: 1.0
+  w_r: 2.0                    # refutation is asymmetric: w_r > w_s
+  w_max: 5.0
+  support_family_alpha: 0.5
+  support_source_alpha: 0.3
+  refute_family_beta: 1.0
+  refute_source_beta: 0.5
+  prior_weight: 5.0           # m in T_eff empirical-Bayes blend
+  kappa: 3.0
+  t_cap: 0.6
+  decay_gamma: 0.95
+  decay_interval: 100
+  quarantine_refutations: 2
+  reject_refutations: 3
+  hierarchical: true
+  recovery_threshold: 0.6
+  quarantine_t_eff: 0.2
+  monitored_t_eff: 0.6
+  burst_trust_discount: 0.3
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+  cold_start_influence: 0.25
+  source_age_ramp_hours: 24.0
+  cold_start_min_observations: 5
+  record_history: true
+  queue_max_size: 1000
+  verifier_max_corroboration: 3
+  verifier_support_threshold: 0.15
+  verifier_refute_threshold: 0.10
+  verifier_min_mass: 0.20
+  verifier_min_refute_topical_overlap: 1
+  verifier_max_redundant_coverage: 0.8
+  verifier_max_source_mass: 0.6
+  verifier_counterfactual_influence: true
+  verifier_influence_agreement_threshold: 0.6
+  nli_mode: auto              # auto | nli | lexical; record verifier.mode per run
+
 generation:
   backend: stub               # -> openai (vLLM) / ollama / huggingface
   model_name: meta-llama/Llama-3.1-8B-Instruct
@@ -68,12 +107,14 @@ generation:
   max_context_docs: 5
   abstain_evidence_mass: 0.5  # tau_ans
   require_citations: true
-  check_citations: false      # true once Person B's NLI checker is wired in
+  check_citations: false      # enable the fail-closed NLI support check
+  citation_nli_threshold: 0.5
   timeout_s: 120.0
 
 storage:
   root: runs/default
   provenance_db: provenance.sqlite3
   answer_db: answers.sqlite3
+  trust_db: trust.sqlite3
   index_path: index
   scorer_path: scorer.joblib

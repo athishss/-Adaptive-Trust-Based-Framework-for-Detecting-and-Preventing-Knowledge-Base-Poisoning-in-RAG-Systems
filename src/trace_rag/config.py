@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class IngestionConfig(BaseModel):
@@ -104,14 +104,110 @@ class GenerationConfig(BaseModel):
     max_context_docs: int = Field(5, ge=1)
     abstain_evidence_mass: float = Field(0.5, ge=0.0, description="tau_ans: min trust-weighted evidence mass; one neutral-trust source == 0.5, two independent neutral sources == 0.75")
     require_citations: bool = True
-    check_citations: bool = False       # needs Person B's NLI verifier
+    check_citations: bool = False       # fail-closed NLI check for each cited sentence
+    citation_nli_threshold: float = Field(0.5, ge=0, le=1)
     timeout_s: float = Field(120.0, gt=0)
+
+
+class TrustSettings(BaseModel):
+    """Typed configuration for hierarchical trust, verification and policy."""
+
+    enabled: bool = False
+    w_s: float = Field(1.0, gt=0)
+    w_r: float = Field(2.0, gt=0)
+    w_max: float = Field(5.0, gt=0)
+    support_family_alpha: float = Field(0.5, ge=0)
+    support_source_alpha: float = Field(0.3, ge=0)
+    refute_family_beta: float = Field(1.0, ge=0)
+    refute_source_beta: float = Field(0.5, ge=0)
+    prior_weight: float = Field(5.0, gt=0, description="m in the empirical-Bayes blend")
+    kappa: float = Field(3.0, ge=0)
+    t_cap: float = Field(0.6, ge=0, le=1)
+    decay_gamma: float = Field(0.95, ge=0, le=1)
+    decay_interval: int = Field(100, ge=1)
+    quarantine_refutations: int = Field(2, ge=1)
+    reject_refutations: int = Field(3, ge=1)
+    hierarchical: bool = True
+    recovery_threshold: float = Field(0.6, ge=0, le=1)
+    quarantine_t_eff: float = Field(0.2, ge=0, le=1)
+    monitored_t_eff: float = Field(0.6, ge=0, le=1)
+    burst_trust_discount: float = Field(0.3, ge=0, le=1)
+    burst_window_seconds: float = Field(60.0, gt=0)
+    burst_min_docs: int = Field(4, ge=2)
+    cold_start_influence: float = Field(0.25, ge=0, le=1)
+    source_age_ramp_hours: float = Field(24.0, gt=0)
+    cold_start_min_observations: int = Field(5, ge=1)
+    record_history: bool = True
+    queue_max_size: int = Field(1000, ge=1)
+    verifier_max_corroboration: int = Field(3, ge=1)
+    verifier_support_threshold: float = Field(0.15, ge=0, le=1)
+    verifier_refute_threshold: float = Field(0.10, ge=0, le=1)
+    verifier_min_mass: float = Field(0.20, ge=0, le=1)
+    verifier_min_refute_topical_overlap: int = Field(1, ge=0)
+    verifier_max_redundant_coverage: float = Field(0.80, ge=0, le=1)
+    verifier_max_source_mass: float = Field(0.60, ge=0, le=1)
+    verifier_counterfactual_influence: bool = True
+    verifier_influence_agreement_threshold: float = Field(0.60, ge=0, le=1)
+    nli_mode: Literal["auto", "nli", "lexical"] = "auto"
+
+    @model_validator(mode="after")
+    def _consistent_thresholds(self) -> "TrustSettings":
+        if self.w_r <= self.w_s:
+            raise ValueError("trust.w_r must be greater than trust.w_s")
+        if not (self.quarantine_t_eff < self.monitored_t_eff):
+            raise ValueError("trust.quarantine_t_eff must be below trust.monitored_t_eff")
+        if self.reject_refutations <= self.quarantine_refutations:
+            raise ValueError("trust.reject_refutations must exceed quarantine_refutations")
+        if self.verifier_refute_threshold > self.verifier_support_threshold:
+            raise ValueError("verifier refute threshold must not exceed support threshold")
+        return self
+
+    def to_ledger_config(self):  # type: ignore[no-untyped-def]
+        """Build the Person B ledger config without importing B at module load."""
+        from .trust.ledger import TrustConfig
+
+        return TrustConfig(
+            w_s=self.w_s, w_r=self.w_r, w_max=self.w_max,
+            support_family_alpha=self.support_family_alpha,
+            support_source_alpha=self.support_source_alpha,
+            refute_family_beta=self.refute_family_beta,
+            refute_source_beta=self.refute_source_beta,
+            prior_weight=self.prior_weight, kappa=self.kappa, t_cap=self.t_cap,
+            decay_gamma=self.decay_gamma, decay_interval=self.decay_interval,
+            quarantine_refutations=self.quarantine_refutations,
+            reject_refutations=self.reject_refutations,
+            hierarchical=self.hierarchical, recovery_threshold=self.recovery_threshold,
+            quarantine_t_eff=self.quarantine_t_eff,
+            monitored_t_eff=self.monitored_t_eff,
+            burst_trust_discount=self.burst_trust_discount,
+            burst_window_seconds=self.burst_window_seconds,
+            burst_min_docs=self.burst_min_docs,
+            cold_start_influence=self.cold_start_influence,
+            source_age_ramp_hours=self.source_age_ramp_hours,
+            cold_start_min_observations=self.cold_start_min_observations,
+            record_history=self.record_history,
+        )
+
+    def verifier_kwargs(self) -> Dict[str, Any]:
+        return {
+            "max_corroboration": self.verifier_max_corroboration,
+            "support_threshold": self.verifier_support_threshold,
+            "refute_threshold": self.verifier_refute_threshold,
+            "min_mass": self.verifier_min_mass,
+            "min_refute_topical_overlap": self.verifier_min_refute_topical_overlap,
+            "max_redundant_coverage": self.verifier_max_redundant_coverage,
+            "max_source_mass": self.verifier_max_source_mass,
+            "counterfactual_influence": self.verifier_counterfactual_influence,
+            "influence_agreement_threshold": self.verifier_influence_agreement_threshold,
+            "use_nli": None if self.nli_mode == "auto" else self.nli_mode == "nli",
+        }
 
 
 class StorageConfig(BaseModel):
     root: str = "runs/default"
     provenance_db: str = "provenance.sqlite3"
     answer_db: str = "answers.sqlite3"
+    trust_db: str = "trust.sqlite3"
     index_path: str = "index"
     scorer_path: str = "scorer.joblib"
 
@@ -124,6 +220,7 @@ class Config(BaseModel):
     retrieval: RetrievalConfig = RetrievalConfig()
     signals: SignalsConfig = SignalsConfig()
     scorer: ScorerConfig = ScorerConfig()
+    trust: TrustSettings = TrustSettings()
     generation: GenerationConfig = GenerationConfig()
     storage: StorageConfig = StorageConfig()
 

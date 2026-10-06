@@ -96,6 +96,7 @@ class PersonAPipeline:
         self.index = index
         self.embedder = embedder
         self.trust_provider = trust_provider or NullTrustProvider()
+        self._owned_trust_provider = None
         self.verifier = verifier
         self.policy = policy or DefaultPolicy()
         self.scorer = scorer or HeuristicScorer(config.scorer.theta_low, config.scorer.theta_high)
@@ -125,7 +126,47 @@ class PersonAPipeline:
         scorer = kwargs.pop("scorer", None)
         if scorer is None and config.scorer.model_path and Path(config.scorer.model_path).exists():
             scorer = SuspicionScorer.load(config.scorer.model_path)
-        return cls(config=config, store=store, index=index, embedder=embedder, scorer=scorer, **kwargs)
+
+        owned_ledger = None
+        auto_queue = None
+        auto_policy = False
+        if config.trust.enabled:
+            from .trust.ledger import TrustLedger
+            from .trust.policy import TrustPolicy
+            from .trust.queue import VerificationQueue
+            from .trust.verifier import CorroborationVerifier
+
+            trust_provider = kwargs.get("trust_provider")
+            if trust_provider is None:
+                owned_ledger = TrustLedger(
+                    config.path(config.storage.trust_db), store=store,
+                    config=config.trust.to_ledger_config(),
+                )
+                trust_provider = owned_ledger
+                kwargs["trust_provider"] = trust_provider
+            if kwargs.get("llm") is None:
+                kwargs["llm"] = build_llm(config.generation)
+            if kwargs.get("verifier") is None:
+                kwargs["verifier"] = CorroborationVerifier(
+                    llm=kwargs["llm"], **config.trust.verifier_kwargs(),
+                )
+            auto_queue = VerificationQueue(max_size=config.trust.queue_max_size)
+            if kwargs.get("policy") is None and isinstance(trust_provider, TrustLedger):
+                # The callback needs the constructed pipeline, so install the
+                # policy immediately after __init__ below.
+                auto_policy = True
+                kwargs["policy"] = DefaultPolicy()
+
+        pipeline = cls(config=config, store=store, index=index, embedder=embedder,
+                       scorer=scorer, **kwargs)
+        if config.trust.enabled and auto_policy and isinstance(pipeline.trust_provider, TrustLedger):
+            pipeline.policy = TrustPolicy(
+                    ledger=pipeline.trust_provider,
+                    on_quarantine=pipeline.on_quarantine,
+                    queue=auto_queue,
+                )
+        pipeline._owned_trust_provider = owned_ledger
+        return pipeline
 
     # ------------------------------------------------------------------ core
     def retrieve(self, query: str, query_id: str = "q0") -> RetrievalOutcome:
@@ -167,7 +208,7 @@ class PersonAPipeline:
 
         with Stopwatch() as watch:
             decision = self.policy.decide(query, query_id, retrieval.documents, assessments,
-                                          self.verifier, pool=retrieval.pool)
+                                          self.verifier, pool=retrieval.pool, now=now)
         timings["policy"] = watch.elapsed_ms
 
         by_id = {d.doc_id: d for d in retrieval.documents}
@@ -313,5 +354,10 @@ class PersonAPipeline:
         }
 
     def close(self) -> None:
+        if self._owned_trust_provider is not None:
+            close = getattr(self._owned_trust_provider, "close", None)
+            if close is not None:
+                close()
+            self._owned_trust_provider = None
         self.store.close()
         self.answer_log.close()

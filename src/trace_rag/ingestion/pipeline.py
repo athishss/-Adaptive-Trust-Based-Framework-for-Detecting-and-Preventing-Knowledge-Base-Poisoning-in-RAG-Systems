@@ -57,8 +57,8 @@ class Ingestor:
     # ----------------------------------------------------------------- public
     def ingest_text(self, doc_id: str, text: str, source_id: str, title: str = "",
                     origin: str = "", ingested_at: Optional[float] = None,
-                    passage_mode: bool = False, metadata: Optional[Dict[str, object]] = None
-                    ) -> List[ChunkRecord]:
+                    passage_mode: bool = False, metadata: Optional[Dict[str, object]] = None,
+                    family_id: Optional[str] = None) -> List[ChunkRecord]:
         text = normalise(text)
         if not text:
             return []
@@ -69,9 +69,10 @@ class Ingestor:
         records: List[ChunkRecord] = []
         for piece in pieces:
             chunk_id = make_chunk_id(doc_id, piece.ordinal)
-            family_id = self.families.assign(chunk_id, piece.text)
+            detected_family = self.families.assign(chunk_id, piece.text)
+            assigned_family = family_id or detected_family
             records.append(ChunkRecord(
-                chunk_id=chunk_id, doc_id=doc_id, source_id=source_id, family_id=family_id,
+                chunk_id=chunk_id, doc_id=doc_id, source_id=source_id, family_id=assigned_family,
                 ordinal=piece.ordinal, text=piece.text, n_words=piece.n_words,
                 sha256=sha256_text(piece.text), ingested_at=ts,
             ))

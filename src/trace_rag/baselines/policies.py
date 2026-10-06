@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Sequence
 
-from trace_rag.contracts import PolicyDecision, RetrievedDocument, VerificationResult
+from trace_rag.contracts import (PolicyDecision, RetrievedDocument, VerificationOutcome,
+                                 VerificationResult)
 from trace_rag.trust.policy import TrustPolicy
 from trace_rag.trust.verifier import CorroborationVerifier
 
@@ -92,7 +93,7 @@ def trust_threshold_filter(
     blocked = []
 
     for doc in documents:
-        if float(doc.trust.trust) < threshold:
+        if float(doc.trust.t_eff) < threshold:
             blocked.append(doc.doc_id)
         else:
             kept.append(doc)
@@ -127,7 +128,7 @@ def always_on_loo(
         verified.append(result)
         llm_calls += int(result.llm_calls)
 
-        if result.outcome.value == "REFUTE":
+        if result.outcome is VerificationOutcome.REFUTE:
             blocked.append(target.doc_id)
         else:
             kept.append(target)
@@ -196,7 +197,7 @@ class RobustRAGPolicy:
         pre_excluded = []
 
         for doc in documents:
-            if float(doc.trust.trust) < self.trust_floor:
+            if float(doc.trust.t_eff) < self.trust_floor:
                 pre_excluded.append(doc.doc_id)
             else:
                 eligible.append(doc)

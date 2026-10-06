@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS trust_entities (
     PRIMARY KEY (entity_id, entity_type)
 );
 
+CREATE TABLE IF NOT EXISTS trust_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS admin_review (
     entity_id   TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL DEFAULT 'doc',
@@ -126,11 +131,15 @@ class TrustConfig:
     Sensitivity sweeps (B5) vary each of these.
     """
 
-    # ---- Beta update magnitudes (asymmetric: refute > support) ----
-    support_doc_alpha: float = 1.0
+    # ---- Bounded asymmetric Beta updates (plan Section 4.6) ----
+    # A verifier's support/refute mass is the strength r in the update rule.
+    # Refutation is deliberately stronger than support; every individual delta
+    # is capped so one unusually confident comparison cannot dominate the ledger.
+    w_s: float = 1.0
+    w_r: float = 2.0
+    w_max: float = 5.0
     support_family_alpha: float = 0.5
     support_source_alpha: float = 0.3
-    refute_doc_beta: float = 2.0
     refute_family_beta: float = 1.0
     refute_source_beta: float = 0.5
 
@@ -155,7 +164,7 @@ class TrustConfig:
     # False = document-level trust only: no family/source updates, no
     # source-inherited prior and no source clamp on t_eff.
     hierarchical: bool = True
-    recovery_threshold: float = 0.5    # t above this: MONITORED -> TRUSTED
+    recovery_threshold: float = 0.60   # T_eff >= this: MONITORED -> TRUSTED
     quarantine_t_eff: float = 0.20     # T_eff below this -> QUARANTINED (Section 4.7)
     monitored_t_eff: float = 0.60      # T_eff below this -> MONITORED (Section 4.7)
 
@@ -177,6 +186,49 @@ class TrustConfig:
     # ---- Trust history for the B6 dynamics plots ----
     record_history: bool = True
 
+    def __post_init__(self) -> None:
+        """Reject invalid trust settings before they can corrupt the ledger."""
+        import math
+
+        positive = {
+            "w_s": self.w_s,
+            "w_r": self.w_r,
+            "w_max": self.w_max,
+            "prior_weight": self.prior_weight,
+            "decay_interval": self.decay_interval,
+            "burst_window_seconds": self.burst_window_seconds,
+            "burst_min_docs": self.burst_min_docs,
+            "source_age_ramp_hours": self.source_age_ramp_hours,
+            "cold_start_min_observations": self.cold_start_min_observations,
+            "quarantine_refutations": self.quarantine_refutations,
+            "reject_refutations": self.reject_refutations,
+        }
+        if any(not math.isfinite(float(v)) or float(v) <= 0 for v in positive.values()):
+            bad = [name for name, value in positive.items()
+                   if not math.isfinite(float(value)) or float(value) <= 0]
+            raise ValueError(f"trust settings must be positive finite values: {bad}")
+        if self.w_r <= self.w_s:
+            raise ValueError("w_r must be greater than w_s")
+        if not 0.0 <= self.decay_gamma <= 1.0:
+            raise ValueError("decay_gamma must be in [0, 1]")
+        if self.kappa < 0 or not math.isfinite(self.kappa):
+            raise ValueError("kappa must be finite and non-negative")
+        if not 0.0 <= self.t_cap <= 1.0:
+            raise ValueError("t_cap must be in [0, 1]")
+        if not 0.0 <= self.cold_start_influence <= 1.0:
+            raise ValueError("cold_start_influence must be in [0, 1]")
+        for name in ("support_family_alpha", "support_source_alpha",
+                     "refute_family_beta", "refute_source_beta"):
+            value = float(getattr(self, name))
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if not (0.0 <= self.quarantine_t_eff < self.monitored_t_eff <= 1.0):
+            raise ValueError("trust-state thresholds must satisfy 0 <= quarantine < monitored <= 1")
+        if not 0.0 <= self.recovery_threshold <= 1.0:
+            raise ValueError("recovery_threshold must be in [0, 1]")
+        if not 0.0 <= self.burst_trust_discount <= 1.0:
+            raise ValueError("burst_trust_discount must be in [0, 1]")
+
 
 class TrustLedger:
     """SQLite-backed trust provider with Beta-distribution model.
@@ -193,7 +245,7 @@ class TrustLedger:
         self.config = config or TrustConfig()
         self._lock = threading.RLock()
         self._blocked_cache: Optional[Set[str]] = None
-        self._query_count: int = 0        # for decay scheduling (per query, plan 4.6)
+        self._query_count: int = 0        # persisted decay counter (per query, plan 4.6)
 
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +266,13 @@ class TrustLedger:
                         f"ALTER TABLE trust_entities ADD COLUMN {col} {defn}")
                 except sqlite3.OperationalError:
                     pass  # column already exists
+            self._conn.execute(
+                "INSERT OR IGNORE INTO trust_meta(key, value) VALUES('query_count', '0')"
+            )
+            row = self._conn.execute(
+                "SELECT value FROM trust_meta WHERE key = 'query_count'"
+            ).fetchone()
+            self._query_count = int(row["value"]) if row is not None else 0
             self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -229,6 +288,39 @@ class TrustLedger:
 
         with self._lock:
             mappings = self._get_mappings(doc_ids)
+            # Materialise priors lazily when a passage first enters retrieval.
+            # This is initialization, not evidence: only SUPPORT/REFUTE outcomes
+            # may change alpha/beta. It ensures a new document immediately
+            # inherits its source prior and starts in the policy-appropriate band.
+            records = self.store.get_chunks(doc_ids) if self.store is not None else {}
+            source_times: Dict[str, float] = {}
+            if self.store is not None:
+                for source_id in {value[0] for value in mappings.values()}:
+                    stats = self.store.source_stats(source_id)
+                    if stats is not None:
+                        source_times[source_id] = float(stats.first_seen)
+            for doc_id in doc_ids:
+                source_id, family_id = mappings.get(doc_id, ("unknown", "unknown"))
+                if source_id == "unknown" or family_id == "unknown":
+                    continue
+                record = records.get(doc_id)
+                doc_time = float(record.ingested_at) if record is not None else now
+                source_time = source_times.get(source_id, now)
+                if self.config.hierarchical:
+                    self._ensure_entity("source", source_id, source_time)
+                    self._ensure_entity("family", family_id, doc_time)
+                self._register_doc(doc_id, source_id, family_id)
+                is_burst = self._detect_burst(source_id, doc_time)
+                self._ensure_entity("doc", doc_id, doc_time, source_id=source_id,
+                                    is_burst=is_burst)
+            # A shared family/source can change a document's effective trust
+            # between its own observations. Persist that lifecycle transition
+            # here so blocked_doc_ids(), audit history and admin recovery all
+            # agree with the snapshot used by retrieval.
+            for doc_id in doc_ids:
+                if doc_id in mappings:
+                    self._check_demotion(doc_id, now, trigger="T_EFF")
+            self._conn.commit()
             trust_data = self._batch_get_entities(doc_ids, mappings)
 
         result: Dict[str, TrustSnapshot] = {}
@@ -295,15 +387,34 @@ class TrustLedger:
     # ------------------------------------------------------------------
 
     def record_observation(self, doc_id: str, source_id: str, family_id: str,
-                           outcome: str, timestamp: Optional[float] = None) -> None:
-        """Update trust based on a verification outcome.
+                           outcome: str, timestamp: Optional[float] = None,
+                           strength: float = 1.0) -> None:
+        """Apply a corroborated verifier outcome to the trust hierarchy.
 
-        *outcome* must be ``'SUPPORT'``, ``'REFUTE'`` or ``'NEUTRAL'``.
-        NEUTRAL observations are recorded but do not change alpha/beta.
+        NEUTRAL is deliberately a no-op: it does not create reputation, change
+        alpha/beta, increment observation counts, or alter lifecycle state.
+        The verifier's trust-weighted evidence mass is ``strength``; support and
+        refutation deltas are asymmetric and individually bounded by ``w_max``.
         """
         if outcome not in ("SUPPORT", "REFUTE", "NEUTRAL"):
             raise ValueError(f"outcome must be SUPPORT/REFUTE/NEUTRAL, got {outcome!r}")
         ts = timestamp if timestamp is not None else time.time()
+        if outcome == "NEUTRAL":
+            # Register provenance and materialise cold-start priors, but do not
+            # count a verified observation or alter any existing Beta values.
+            with self._lock:
+                self._register_doc(doc_id, source_id, family_id)
+                is_burst = self._detect_burst(source_id, ts)
+                if self.config.hierarchical:
+                    self._ensure_entity("source", source_id, ts)
+                    self._ensure_entity("family", family_id, ts)
+                self._ensure_entity("doc", doc_id, ts, source_id=source_id,
+                                    is_burst=is_burst)
+                self._conn.commit()
+            return
+        if not 0.0 <= float(strength) <= 1.0:
+            raise ValueError("strength must be in [0, 1]")
+        strength = float(strength)
 
         with self._lock:
             self._register_doc(doc_id, source_id, family_id)
@@ -311,47 +422,39 @@ class TrustLedger:
             # its prior already carries the discount, and it back-applies the
             # discount to the documents that opened the burst (plan B2/S4).
             is_burst = self._detect_burst(source_id, ts)
+            support_base = min(self.config.w_s * strength, self.config.w_max)
+            refute_base = min(self.config.w_r * strength, self.config.w_max)
 
             if outcome == "SUPPORT":
                 self._update_entity("doc", doc_id,
-                                    alpha_delta=self.config.support_doc_alpha, ts=ts,
+                                    alpha_delta=support_base, ts=ts,
                                     source_id=source_id, is_burst=is_burst)
                 if self.config.hierarchical:
                     self._update_entity("family", family_id,
-                                        alpha_delta=self.config.support_family_alpha, ts=ts)
+                                        alpha_delta=min(support_base * self.config.support_family_alpha,
+                                                        self.config.w_max), ts=ts)
                     self._update_entity("source", source_id,
-                                        alpha_delta=self.config.support_source_alpha, ts=ts)
-            elif outcome == "REFUTE":
+                                        alpha_delta=min(support_base * self.config.support_source_alpha,
+                                                        self.config.w_max), ts=ts)
+            else:  # REFUTE
                 self._update_entity("doc", doc_id,
-                                    beta_delta=self.config.refute_doc_beta, ts=ts,
+                                    beta_delta=refute_base, ts=ts,
                                     is_refutation=True,
                                     source_id=source_id, is_burst=is_burst)
                 if self.config.hierarchical:
                     self._update_entity("family", family_id,
-                                        beta_delta=self.config.refute_family_beta, ts=ts,
+                                        beta_delta=min(refute_base * self.config.refute_family_beta,
+                                                       self.config.w_max), ts=ts,
                                         is_refutation=True)
                     self._update_entity("source", source_id,
-                                        beta_delta=self.config.refute_source_beta, ts=ts,
+                                        beta_delta=min(refute_base * self.config.refute_source_beta,
+                                                       self.config.w_max), ts=ts,
                                         is_refutation=True)
-            else:
-                # NEUTRAL: ensure the entity exists so n_observations is tracked
-                self._ensure_entity("doc", doc_id, ts,
-                                    source_id=source_id, is_burst=is_burst)
-                self._conn.execute(
-                    "UPDATE trust_entities SET n_observations = n_observations + 1, "
-                    "updated_at = ? WHERE entity_id = ? AND entity_type = 'doc'",
-                    (ts, doc_id),
-                )
-                # NEUTRAL changes no alpha/beta, but it is still a point in the
-                # trust history: the B6 plots must show evidence accumulating on
-                # documents the verifier never reached a verdict for.
-                if self.config.record_history:
-                    self._record_history(doc_id, "doc", ts)
 
-            # State machine transitions (doc-level only)
+            # State machine transitions are based only on a verified outcome.
             if outcome == "REFUTE":
                 self._check_demotion(doc_id, ts)
-            elif outcome == "SUPPORT":
+            else:
                 self._check_recovery(doc_id, ts)
 
             self._conn.commit()
@@ -359,26 +462,14 @@ class TrustLedger:
 
     def record_high_band(self, doc_id: str, source_id: str, family_id: str,
                          timestamp: Optional[float] = None) -> None:
-        """Apply a small trust penalty for a HIGH-band assessment (no verification).
+        """Deprecated no-op: suspicion alone must never update trust.
 
-        The passage was too suspicious for even the verifier, so it gets a mild
-        beta bump.  This is weaker than a full REFUTE — it only moves the
-        Beta distribution slightly towards distrust.
+        HIGH-band passages are excluded from the current answer and queued for
+        off-path verification. Only that verifier's SUPPORT/REFUTE outcome may
+        write to the trust ledger.
         """
-        ts = timestamp if timestamp is not None else time.time()
-        with self._lock:
-            self._register_doc(doc_id, source_id, family_id)
-            is_burst = self._detect_burst(source_id, ts)
-            self._update_entity("doc", doc_id,
-                                beta_delta=self.config.high_band_beta_penalty, ts=ts,
-                                source_id=source_id, is_burst=is_burst)
-            if self.config.hierarchical:
-                self._update_entity("source", source_id,
-                                    beta_delta=self.config.high_band_beta_penalty * 0.3, ts=ts)
-            # Check if trust dropped below thresholds
-            self._check_demotion(doc_id, ts, trigger="HIGH_BAND")
-            self._conn.commit()
-            self._blocked_cache = None
+        del doc_id, source_id, family_id, timestamp
+        logger.warning("ignoring unverified HIGH-band trust update; enqueue it for verification")
 
     def quarantine(self, doc_ids: Sequence[str], reason: str = "quarantined",
                    timestamp: Optional[float] = None) -> List[str]:
@@ -388,6 +479,11 @@ class TrustLedger:
         with self._lock:
             for doc_id in doc_ids:
                 self._ensure_entity("doc", doc_id, ts)
+                row = self._conn.execute(
+                    "SELECT status FROM trust_entities "
+                    "WHERE entity_id = ? AND entity_type = 'doc'", (doc_id,),
+                ).fetchone()
+                old_status = row["status"] if row is not None else "TRUSTED"
                 cursor = self._conn.execute(
                     "UPDATE trust_entities SET status = 'QUARANTINED', "
                     "quarantined_at = ?, updated_at = ? "
@@ -396,6 +492,8 @@ class TrustLedger:
                     (ts, ts, doc_id),
                 )
                 if cursor.rowcount and cursor.rowcount > 0:
+                    self._log_transition(doc_id, "doc", old_status, "QUARANTINED",
+                                         "ADMIN_OR_POLICY", str(reason), ts)
                     newly.append(doc_id)
             self._conn.commit()
             self._blocked_cache = None
@@ -404,19 +502,9 @@ class TrustLedger:
         return newly
 
     def get_status(self, doc_id: str) -> TrustStatus:
-        """Get current lifecycle status of a document."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT status FROM trust_entities "
-                "WHERE entity_id = ? AND entity_type = 'doc'",
-                (doc_id,),
-            ).fetchone()
-        if row is None:
-            return TrustStatus.TRUSTED
-        try:
-            return TrustStatus(row["status"])
-        except ValueError:
-            return TrustStatus.TRUSTED
+        """Get the current status, including an effective-trust cold-start state."""
+        snapshot = self.get_trust([doc_id]).get(doc_id)
+        return snapshot.status if snapshot is not None else TrustStatus.MONITORED
 
     # ------------------------------------------------------------------
     #  Internal helpers
@@ -563,6 +651,45 @@ class TrustLedger:
              a, b, row["status"], int(row["n_observations"]), ts),
         )
 
+    def _effective_trust_for_doc(self, doc_id: str) -> float:
+        """Compute hierarchical T_eff from the current persisted Beta values."""
+        doc = self._conn.execute(
+            "SELECT alpha, beta, n_observations FROM trust_entities "
+            "WHERE entity_id = ? AND entity_type = 'doc'", (doc_id,),
+        ).fetchone()
+        if doc is None:
+            return 0.5
+        alpha, beta = float(doc["alpha"]), float(doc["beta"])
+        t_doc = alpha / (alpha + beta) if alpha + beta > 0 else 0.5
+        n_obs = int(doc["n_observations"])
+        t_source = t_family = 0.5
+        if self.config.hierarchical:
+            mapping = self._conn.execute(
+                "SELECT source_id, family_id FROM doc_registry WHERE doc_id = ?", (doc_id,),
+            ).fetchone()
+            if mapping is not None:
+                for entity_type, entity_id in (("source", mapping["source_id"]),
+                                               ("family", mapping["family_id"])):
+                    parent = self._conn.execute(
+                        "SELECT alpha, beta FROM trust_entities "
+                        "WHERE entity_type = ? AND entity_id = ?",
+                        (entity_type, entity_id),
+                    ).fetchone()
+                    trust = (float(parent["alpha"]) / (float(parent["alpha"]) + float(parent["beta"]))
+                             if parent is not None else 0.5)
+                    if entity_type == "source":
+                        t_source = trust
+                    else:
+                        t_family = trust
+        parent_trust = min(t_source, t_family) if self.config.hierarchical else 0.5
+        weight = min(1.0, n_obs / max(1.0, self.config.prior_weight))
+        t_eff = weight * t_doc + (1.0 - weight) * parent_trust
+        if self.config.hierarchical:
+            t_eff = min(t_eff, t_source)
+        if n_obs < self.config.prior_weight:
+            t_eff = min(t_eff, self.config.t_cap)
+        return float(max(0.0, min(1.0, t_eff)))
+
     def _check_demotion(self, doc_id: str, ts: float,
                         trigger: str = "REFUTE") -> None:
         """After a REFUTE or T_eff drop, cascade through state transitions.
@@ -588,33 +715,29 @@ class TrustLedger:
             n_ref = int(row["n_refutations"])
             a, b = float(row["alpha"]), float(row["beta"])
             t_doc = a / (a + b) if (a + b) > 0 else 0.5
+            t_eff = self._effective_trust_for_doc(doc_id)
             new_status = None
 
-            # Check refutation-count thresholds (original logic)
-            if status == "TRUSTED" and n_ref >= 1:
+            if status == "TRUSTED" and (
+                    (trigger == "REFUTE" and n_ref >= 1)
+                    or t_eff < self.config.monitored_t_eff):
                 new_status = "MONITORED"
-            elif status == "MONITORED" and n_ref >= self.config.quarantine_refutations:
+            elif status == "MONITORED" and (
+                    (trigger == "REFUTE" and n_ref >= self.config.quarantine_refutations)
+                    or t_eff < self.config.quarantine_t_eff):
                 new_status = "QUARANTINED"
             elif status == "QUARANTINED" and n_ref >= self.config.reject_refutations:
-                # Plan Section 4.7: REJECTED is an administrator decision.
-                # Raise a review request and keep the document QUARANTINED
-                # (and blocked) until a human approves the rejection.
-                self._raise_review(doc_id, f"n_ref={n_ref} t_doc={t_doc:.4f}", ts)
+                # REJECTED is an administrator decision; keep the document
+                # quarantined until a human approves the rejection.
+                self._raise_review(doc_id, f"n_ref={n_ref} t_eff={t_eff:.4f}", ts)
                 return
-
-            # Also check T_eff-based thresholds (plan Section 4.7)
-            if new_status is None:
-                if status == "TRUSTED" and t_doc < self.config.monitored_t_eff:
-                    new_status = "MONITORED"
-                elif status == "MONITORED" and t_doc < self.config.quarantine_t_eff:
-                    new_status = "QUARANTINED"
 
             if new_status is None:
                 return  # no more transitions
 
-            # Write audit log entry
+            # Every lifecycle transition carries both document and effective trust.
             self._log_transition(doc_id, "doc", status, new_status, trigger,
-                                 f"n_ref={n_ref} t_doc={t_doc:.4f}", ts)
+                                 f"n_ref={n_ref} t_doc={t_doc:.4f} t_eff={t_eff:.4f}", ts)
 
             if new_status == "QUARANTINED":
                 self._conn.execute(
@@ -629,8 +752,9 @@ class TrustLedger:
                     "WHERE entity_id = ? AND entity_type = 'doc'",
                     (new_status, ts, doc_id),
                 )
-            logger.info("trust: %s %s -> %s (refutations=%d, t_doc=%.3f)",
-                        doc_id, status, new_status, n_ref, t_doc)
+            self._blocked_cache = None
+            logger.info("trust: %s %s -> %s (refutations=%d, t_eff=%.3f)",
+                        doc_id, status, new_status, n_ref, t_eff)
 
     def begin_query(self, timestamp: Optional[float] = None) -> None:
         """Mark the start of one query.
@@ -642,10 +766,14 @@ class TrustLedger:
         ts = timestamp if timestamp is not None else time.time()
         with self._lock:
             self._query_count += 1
-            if (self.config.decay_gamma < 1.0 and self.config.decay_interval > 0
+            if (self.config.decay_gamma < 1.0
                     and self._query_count % self.config.decay_interval == 0):
                 self._apply_decay(ts)
-                self._conn.commit()
+            self._conn.execute(
+                "UPDATE trust_meta SET value = ? WHERE key = 'query_count'",
+                (str(self._query_count),),
+            )
+            self._conn.commit()
 
     def _check_recovery(self, doc_id: str, ts: float) -> None:
         """After a SUPPORT, check whether the doc can be promoted back."""
@@ -658,11 +786,10 @@ class TrustLedger:
             return
         if row["status"] != "MONITORED":
             return  # QUARANTINED and REJECTED never recover automatically
-        a, b = float(row["alpha"]), float(row["beta"])
-        trust = a / (a + b) if (a + b) > 0 else 0.5
+        trust = self._effective_trust_for_doc(doc_id)
         if trust >= self.config.recovery_threshold:
             self._log_transition(doc_id, "doc", "MONITORED", "TRUSTED",
-                                 "SUPPORT", f"trust={trust:.4f}", ts)
+                                 "SUPPORT", f"t_eff={trust:.4f}", ts)
             self._conn.execute(
                 "UPDATE trust_entities SET status = 'TRUSTED', updated_at = ? "
                 "WHERE entity_id = ? AND entity_type = 'doc'",
@@ -677,8 +804,11 @@ class TrustLedger:
     def _raise_review(self, doc_id: str, reason: str, ts: float) -> None:
         """Queue a document for an administrator decision (idempotent)."""
         cursor = self._conn.execute(
-            "INSERT OR IGNORE INTO admin_review(entity_id, entity_type, reason, "
-            "raised_at, state) VALUES(?, 'doc', ?, ?, 'pending')",
+            "INSERT INTO admin_review(entity_id, entity_type, reason, raised_at, state) "
+            "VALUES(?, 'doc', ?, ?, 'pending') "
+            "ON CONFLICT(entity_id) DO UPDATE SET "
+            "reason = excluded.reason, raised_at = excluded.raised_at, state = 'pending' "
+            "WHERE admin_review.state != 'pending'",
             (doc_id, reason, ts),
         )
         if cursor.rowcount:
@@ -921,8 +1051,8 @@ class TrustLedger:
         recent = int(self._conn.execute(
             "SELECT COUNT(*) AS n FROM doc_registry r "
             "JOIN trust_entities e ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
-            "WHERE r.source_id = ? AND e.created_at >= ?",
-            (source_id, since),
+            "WHERE r.source_id = ? AND e.created_at >= ? AND e.created_at <= ?",
+            (source_id, since, ts),
         ).fetchone()["n"])
         if recent + 1 < self.config.burst_min_docs:
             return False
@@ -939,8 +1069,8 @@ class TrustLedger:
             docs = self._conn.execute(
                 "SELECT r.doc_id FROM doc_registry r "
                 "JOIN trust_entities e ON e.entity_id = r.doc_id AND e.entity_type = 'doc' "
-                "WHERE r.source_id = ? AND e.created_at >= ?",
-                (source_id, since),
+                "WHERE r.source_id = ? AND e.created_at >= ? AND e.created_at <= ?",
+                (source_id, since, ts),
             ).fetchall()
             for doc_row in docs:
                 self._conn.execute(

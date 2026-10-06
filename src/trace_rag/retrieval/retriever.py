@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..config import RetrievalConfig
-from ..contracts import NullTrustProvider, RetrievedDocument, TrustProvider, TrustSnapshot
+from ..contracts import NullTrustProvider, RetrievedDocument, TrustProvider, TrustSnapshot, TrustStatus
 from ..ingestion.provenance import ChunkRecord, ProvenanceStore
 from ..utils.timing import Stopwatch
 
@@ -76,12 +76,17 @@ class TrustWeightedRetriever:
             trust_map = self.trust.get_trust(chunk_ids)
 
             pool: List[RetrievedDocument] = []
+            dynamically_blocked = 0
             for rank, (chunk_id, similarity) in enumerate(hits):
                 record = records.get(chunk_id)
                 if record is None:                     # index/store drift: skip, never crash
                     continue
                 snapshot = trust_map.get(chunk_id) or TrustSnapshot.neutral(
                     chunk_id, record.source_id, record.family_id)
+                if (self.config.exclude_blocked
+                        and snapshot.status in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)):
+                    dynamically_blocked += 1
+                    continue
                 pool.append(self._make_document(record, similarity, rank, snapshot))
 
             ranked = sorted(pool, key=lambda d: (-self._score(d), d.doc_id))
@@ -95,7 +100,8 @@ class TrustWeightedRetriever:
             )
         return RetrievalOutcome(
             query=query, query_id=query_id, documents=top, pool=tuple(pool),
-            query_vector=query_vector, latency_ms=watch.elapsed_ms, n_blocked=len(blocked),
+            query_vector=query_vector, latency_ms=watch.elapsed_ms,
+            n_blocked=len(blocked) + dynamically_blocked,
         )
 
     def retrieve_batch(self, queries: Sequence[str], query_ids: Optional[Sequence[str]] = None,

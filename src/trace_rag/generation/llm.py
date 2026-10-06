@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import List, Optional, Sequence
@@ -31,11 +32,21 @@ class StubLLM:
 
     It picks the context passage with the highest lexical overlap with the
     question and returns its most relevant sentence with a correct citation.
-    That makes end-to-end tests meaningful (citations, abstention and the
-    provenance log are all exercised) without downloading a model.
+    For common ``who`` questions it also requires the sentence to contain the
+    queried relation (for example, ``designed``); sharing only the subject is
+    not enough to claim an answer. That keeps topic-adjacent passages from
+    masquerading as evidence in offline verification tests.
     """
 
     name = "stub"
+    _WHO_RELATIONS = frozenset({
+        "built", "build", "designed", "design", "discovered", "discover",
+        "found", "painted", "paint", "formulated", "formulate", "invented",
+        "invent", "created", "create", "founded", "found", "authored",
+        "wrote", "directed", "composed", "developed", "proposed", "walk",
+        "walked", "landed", "led", "made", "constructed", "construct",
+        "erected", "named", "identified", "first",
+    })
 
     def __init__(self, abstain_marker: str = "INSUFFICIENT EVIDENCE") -> None:
         self.abstain_marker = abstain_marker
@@ -54,10 +65,12 @@ class StubLLM:
                     score = overlap / max(1, len(q_tokens))
                     if score > best_score:
                         best_id, best_sentence, best_score = doc_id, sentence, score
-            if best_id is None or best_score == 0.0:
+            if (best_id is None or best_score == 0.0
+                    or not self._answers_who_question(question, best_sentence)):
                 text = self.abstain_marker
             else:
-                text = f"{best_sentence.rstrip('.')} [{best_id}]"
+                answer = self._concise_who_answer(question, best_sentence)
+                text = f"{answer.rstrip('.')} [{best_id}]"
         return LLMResponse(text=text, llm_calls=1, latency_ms=watch.elapsed_ms, model=self.name)
 
     @staticmethod
@@ -82,6 +95,43 @@ class StubLLM:
         if current_id is not None:
             blocks.append((current_id, normalise(" ".join(buffer))))
         return question, blocks
+
+    @classmethod
+    def _answers_who_question(cls, question: str, sentence: str) -> bool:
+        """Reject a topic match that omits a recognizable ``who`` relation."""
+        normalized_question = normalise(question).lower()
+        if not normalized_question.startswith("who "):
+            return True
+        question_tokens = set(tokenise(normalized_question))
+        relation_tokens = question_tokens & cls._WHO_RELATIONS
+        if not relation_tokens:
+            return True
+        return bool(relation_tokens & set(tokenise(sentence)))
+
+    @classmethod
+    def _concise_who_answer(cls, question: str, sentence: str) -> str:
+        """Return a name rather than a long sentence for common ``who`` QA."""
+        normalized_question = normalise(question).lower()
+        if not normalized_question.startswith("who "):
+            return sentence
+        relations = set(tokenise(normalized_question)) & cls._WHO_RELATIONS
+        if not relations:
+            return sentence
+        alternatives = "|".join(re.escape(word) for word in sorted(relations, key=len, reverse=True))
+        passive = re.search(
+            rf"\b(?:{alternatives})\s+by\s+((?:[A-Z][A-Za-z'-]*|the|of|and)"
+            rf"(?:\s+(?:[A-Z][A-Za-z'-]*|the|of|and))*)",
+            sentence,
+        )
+        if passive:
+            return passive.group(1).strip()
+        leading = re.match(
+            r"^(?:(?:The|A|An)\s+)?([A-Z][A-Za-z'-]*(?:\s+(?:[A-Z][A-Za-z'-]*|the|of|and)){0,3})\b",
+            sentence,
+        )
+        if leading:
+            return leading.group(1).strip()
+        return sentence
 
 
 class _HTTPBackend:

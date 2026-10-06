@@ -21,7 +21,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 
-from ..contracts import RetrievedDocument, Verifier, VerificationResult
+from ..contracts import RetrievedDocument, VerificationOutcome, TrustStatus, Verifier, VerificationResult
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +38,16 @@ class PendingVerification:
     reason: str = "HIGH band"
     enqueued_at: float = 0.0
 
+    def to_dict(self) -> dict:
+        return {
+            "query": self.query,
+            "query_id": self.query_id,
+            "doc": self.doc.to_dict(),
+            "pool": [doc.to_dict() for doc in self.pool],
+            "reason": self.reason,
+            "enqueued_at": float(self.enqueued_at),
+        }
+
 
 class VerificationQueue:
     """Bounded FIFO of passages awaiting verification.
@@ -46,8 +56,11 @@ class VerificationQueue:
     its earlier entry (the newest pool is the one worth corroborating against).
     """
 
-    def __init__(self, max_size: int = 1000) -> None:
+    def __init__(self, max_size: int = 1000, on_quarantine=None) -> None:  # type: ignore[no-untyped-def]
+        if int(max_size) <= 0:
+            raise ValueError("max_size must be positive")
         self.max_size = int(max_size)
+        self.on_quarantine = on_quarantine
         self._items: "deque[PendingVerification]" = deque()
         self._lock = threading.Lock()
         self._worker: Optional[threading.Thread] = None
@@ -133,11 +146,26 @@ class VerificationQueue:
                 logger.warning("queued verification failed for %s",
                                item.doc.doc_id, exc_info=True)
                 continue
-            if ledger is not None:
+            if ledger is not None and result.influential and result.outcome in (
+                    VerificationOutcome.SUPPORT, VerificationOutcome.REFUTE):
+                before = ledger.get_status(item.doc.doc_id)
+                strength = (result.support_mass if result.outcome is VerificationOutcome.SUPPORT
+                            else result.refute_mass)
                 ledger.record_observation(
                     item.doc.doc_id, item.doc.source_id, item.doc.family_id,
-                    outcome=result.outcome.value, timestamp=ts,
+                    outcome=result.outcome.value, timestamp=ts, strength=strength,
                 )
+                after = ledger.get_status(item.doc.doc_id)
+                if (after in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)
+                        and before not in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)
+                        and self.on_quarantine is not None):
+                    try:
+                        self.on_quarantine(
+                            [item.doc.doc_id], reason="off-path corroboration refutation",
+                        )
+                    except Exception:
+                        logger.warning("off-path quarantine callback failed for %s",
+                                       item.doc.doc_id, exc_info=True)
             results.append(result)
             self.processed += 1
         return results

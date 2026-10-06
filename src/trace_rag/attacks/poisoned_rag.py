@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Dict, Mapping, Optional
 
 
@@ -38,24 +39,36 @@ def entity_swap(text: str, original: str, replacement: str) -> str:
         raise ValueError("original entity must not be empty")
     if not replacement:
         raise ValueError("replacement entity must not be empty")
-    if original not in text:
+    match = re.search(rf"(?<!\w){re.escape(original)}(?!\w)", text, flags=re.IGNORECASE)
+    if match is None:
         raise ValueError("original entity was not found in text")
-
-    return text.replace(original, replacement)
+    # A single targeted swap models one corrupted claim; replacing every
+    # mention can create unnatural contradictory passages and leak attack labels.
+    return text[:match.start()] + replacement + text[match.end():]
 
 
 def negation(text: str, claim: str) -> str:
-    """Explicitly negate a target claim inside a document."""
-    if not claim:
+    """Replace an affirmative claim with its negation, preserving surrounding text.
+
+    Matching is case-insensitive and ignores terminal punctuation. If the exact
+    claim phrase is absent, the negated claim is prepended as an injected
+    sentence; the helper never silently leaves an exact affirmative copy in
+    place when it can replace it.
+    """
+    if not claim or not claim.strip():
         raise ValueError("claim must not be empty")
 
-    clean_claim = claim.rstrip(".!? ")
+    phrase = claim.strip().rstrip(".!? ")
+    if not phrase:
+        raise ValueError("claim must contain non-punctuation text")
+    pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)[.!?]?", re.IGNORECASE)
+    match = pattern.search(text)
+    found = match.group(0) if match is not None else phrase
+    clean_claim = found.rstrip(".!? ")
     replacement = f"It is not true that {clean_claim}."
-
-    if claim in text:
-        return text.replace(claim, replacement, 1)
-
-    return f"{replacement} {text}"
+    if match is not None:
+        return text[:match.start()] + replacement + text[match.end():]
+    return f"{replacement} {text}".strip()
 
 
 def instruction_injection(text: str, instruction: str) -> str:

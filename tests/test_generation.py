@@ -56,6 +56,14 @@ def test_evidence_mass_is_zero_without_citations():
     assert evidence_mass([], [make_doc("a")]) == 0.0
 
 
+def test_stub_abstains_on_same_topic_without_the_answer_relation():
+    doc = make_doc("height", "The Eiffel Tower is a wrought-iron lattice tower "
+                   "and stands about 330 metres tall.")
+    response = StubLLM().generate(build_single_doc_prompt(
+        "Who designed the Eiffel Tower?", doc))
+    assert response.text == "INSUFFICIENT EVIDENCE"
+
+
 def test_generator_answers_with_citation():
     docs = [make_doc("d1", "Gustave Eiffel designed the Eiffel Tower in 1889.", trust=0.9)]
     outcome = GroundedGenerator(StubLLM(), GenerationConfig()).generate(
@@ -101,6 +109,23 @@ def test_generator_abstains_when_citations_missing():
     assert outcome.record.abstained and outcome.record.abstain_reason == "no_citations"
 
 
+def test_every_answer_sentence_must_be_cited():
+    docs = [make_doc("d1", "Alpha is supported.", trust=0.9)]
+    text = "Alpha is supported [d1]. Beta is an uncited claim."
+    outcome = GroundedGenerator(ScriptedLLM(text), GenerationConfig()).generate("q?", "q1", docs)
+    assert outcome.record.abstained
+    assert outcome.record.abstain_reason == "missing_sentence_citations"
+
+
+def test_valid_citation_plus_unknown_id_is_rejected():
+    docs = [make_doc("d1", "Alpha is supported.", trust=0.9)]
+    outcome = GroundedGenerator(ScriptedLLM("Alpha is supported [d1]. Beta [made_up]."),
+                                GenerationConfig()).generate("q?", "q1", docs)
+    assert outcome.record.abstained
+    assert outcome.record.abstain_reason == "invalid_citations"
+    assert outcome.invalid_citations == ("made_up",)
+
+
 def test_citation_checker_marks_support():
     docs = [make_doc("d1", "Gustave Eiffel designed the tower.", trust=0.9)]
 
@@ -125,6 +150,21 @@ def test_check_citations_without_checker_leaves_state_unknown():
     citations = [Citation("d1", "d1", "sentence")]
     assert check_citations(citations, [make_doc("d1")])[0].supported is None
     assert citation_precision(citations) is None
+
+
+def test_configured_citation_nli_fails_closed_when_unavailable(monkeypatch):
+    from trace_rag.trust import verifier as verifier_module
+
+    monkeypatch.setattr(verifier_module._nli_scorer, "predict",
+                        lambda premise, hypothesis: ("neutral", 0.0))
+    docs = [make_doc("d1", "The sky is blue.", trust=0.9)]
+    outcome = GroundedGenerator(
+        ScriptedLLM("The sky is blue [d1]."),
+        GenerationConfig(check_citations=True),
+    ).generate("What color is the sky?", "q1", docs)
+    assert outcome.record.abstained
+    assert outcome.record.abstain_reason == "citations_unsupported"
+    assert outcome.record.citations[0].supported is False
 
 
 def test_context_is_capped_by_config():

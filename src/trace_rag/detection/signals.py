@@ -242,10 +242,11 @@ class SignalComputer:
         self.config = config or SignalsConfig()
 
     def _source_info(self, source_id: str, ingested_at: float, now: float) -> _SourceInfo:
-        stats = self.store.source_stats(source_id)
+        stats = self.store.source_stats(source_id, as_of=now)
         if stats is None:
             return _SourceInfo(age_days=0.0, n_docs=0, n_chunks=0, burst=1)
-        burst = self.store.burst_count(source_id, ingested_at, self.config.burst_window_hours)
+        burst = self.store.burst_count(source_id, ingested_at,
+                                       self.config.burst_window_hours, as_of=now)
         return _SourceInfo(age_days=stats.age_days(now), n_docs=stats.n_docs,
                            n_chunks=stats.n_chunks, burst=burst)
 
@@ -275,7 +276,9 @@ class SignalComputer:
             info = source_cache[key]
             newness.append(1.0 - _clip01(info.age_days / max(1e-6, self.config.source_mature_days)))
 
-        family_sizes = self.store.family_sizes([d.family_id for d in documents])
+        family_sizes = self.store.family_sizes(
+            [d.family_id for d in documents], as_of=now,
+        )
         index_by_id = {doc_id: i for i, doc_id in enumerate(pool_ids)}
 
         out: Dict[str, FeatureSnapshot] = {}

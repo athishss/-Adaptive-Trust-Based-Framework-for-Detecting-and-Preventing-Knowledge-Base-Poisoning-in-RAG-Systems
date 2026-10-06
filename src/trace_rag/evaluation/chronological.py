@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from trace_rag.attacks.stream import validate_target_order
 from trace_rag.ingestion.pipeline import Ingestor
 from trace_rag.pipeline import PersonAPipeline
 
@@ -20,15 +21,23 @@ def run_stream(
     are evaluated. This guarantees that a poison event cannot affect a query
     before the poison has entered the corpus.
     """
+    # Accept the typed schedule dataclasses as well as the mappings consumed by
+    # older callers. Normalize once so chronological validation and execution
+    # see exactly the same payload.
+    event_rows = [event.to_dict() if hasattr(event, "to_dict") else event
+                  for event in events]
+    query_rows = [query.to_dict() if hasattr(query, "to_dict") else query
+                  for query in queries]
+    validate_target_order(event_rows, query_rows)
     answers: list[object] = []
 
     events_by_step: dict[int, list[Mapping[str, Any]]] = {}
     queries_by_step: dict[int, list[Mapping[str, Any]]] = {}
 
-    for event in events:
+    for event in event_rows:
         events_by_step.setdefault(int(event["step"]), []).append(event)
 
-    for query in queries:
+    for query in query_rows:
         queries_by_step.setdefault(int(query["step"]), []).append(query)
 
     all_steps = sorted(set(events_by_step) | set(queries_by_step))
@@ -49,7 +58,9 @@ def run_stream(
                     "is_poison": bool(event.get("is_poison", False)),
                     "family_id": event.get("family_id"),
                     "attack_type": event.get("attack_type"),
+                    "target_query": event.get("target_query"),
                 },
+                family_id=event.get("family_id"),
             )
 
             new_chunk_ids.extend(record.chunk_id for record in records)
@@ -64,6 +75,7 @@ def run_stream(
                 query=str(query["query"]),
                 query_id=str(query.get("query_id", f"q_{step}")),
                 step=step,
+                now=float(step),
             )
             answers.append(result)
 

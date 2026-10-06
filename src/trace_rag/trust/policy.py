@@ -24,6 +24,7 @@ from ..contracts import (
     PolicyDecision,
     RetrievedDocument,
     SecurityAssessment,
+    TrustStatus,
     VerificationOutcome,
     VerificationResult,
     Verifier,
@@ -68,7 +69,9 @@ class TrustPolicy:
                  queue: Optional[VerificationQueue] = None) -> None:
         self.ledger = ledger
         self._on_quarantine = on_quarantine
-        self.queue = queue
+        self.queue = queue if queue is not None else VerificationQueue(on_quarantine=on_quarantine)
+        if on_quarantine is not None and self.queue.on_quarantine is None:
+            self.queue.on_quarantine = on_quarantine
 
     # ------------------------------------------------------------------
     #  Policy protocol
@@ -89,71 +92,101 @@ class TrustPolicy:
         """
         by_id: Dict[str, SecurityAssessment] = {a.doc_id: a for a in assessments}
         pool = kwargs.get("pool", documents)  # full candidate pool for corroboration
-        now = time.time()
-        # Trust decay is scheduled per query (plan Section 4.6), and decide() is
-        # called exactly once per query by the pipeline.
+        now_value = kwargs.get("now")
+        now = time.time() if now_value is None else float(now_value)
+        # Trust decay is scheduled per query, and decide() is called once by the pipeline.
         self.ledger.begin_query(now)
+
+        # Retrieval normally materialises these rows through get_trust(). Keep
+        # the policy correct for direct/API callers too: register the supplied
+        # pool as provenance-only NEUTRAL observations before source influence
+        # or burst checks. NEUTRAL does not change any Beta counts or trust.
+        for doc in pool:
+            ingested_at = doc.metadata.get("ingested_at", now)
+            try:
+                registration_time = float(ingested_at)
+            except (TypeError, ValueError):
+                registration_time = now
+            self.ledger.record_observation(
+                doc.doc_id, doc.source_id, doc.family_id,
+                outcome=VerificationOutcome.NEUTRAL.value,
+                timestamp=registration_time,
+            )
 
         context: List[str] = []
         excluded: List[str] = []
         verified: List[VerificationResult] = []
         newly_quarantined: List[str] = []
+        unavailable: List[str] = []
 
         for doc in documents:
+            status_before = doc.trust.status
+            if status_before in (TrustStatus.QUARANTINED, TrustStatus.REJECTED):
+                excluded.append(doc.doc_id)
+                continue
+
             assessment = by_id.get(doc.doc_id)
             band = assessment.band if assessment else Band.LOW
 
             if band is Band.HIGH:
-                # Exclude now; verify off the latency path (plan Section 4.4).
+                # Cheap suspicion excludes this answer and queues a verifier;
+                # it never writes trust or quarantines by itself.
                 excluded.append(doc.doc_id)
-                self.ledger.record_high_band(
-                    doc.doc_id, doc.source_id, doc.family_id, timestamp=now,
-                )
-                if self.queue is not None:
-                    self.queue.enqueue(query, query_id, doc, pool,
-                                       reason="HIGH band")
+                self.queue.enqueue(query, query_id, doc, pool, reason="HIGH band",
+                                   timestamp=now)
                 continue
 
-            if band is Band.MEDIUM and verifier is not None:
-                # Verify against independent corroboration (using full pool).
-                # Only our own verifier accepts the ledger context; any other
-                # Verifier implementation keeps the protocol signature.
+            # Every MONITORED passage is re-verified whenever it is used,
+            # even if the cheap scorer produced LOW for this particular query.
+            if status_before is TrustStatus.MONITORED and band is Band.LOW:
+                band = Band.MEDIUM
+
+            if band is Band.MEDIUM:
+                if verifier is None:
+                    # Fail closed: the contract requires verification before a
+                    # MEDIUM/MONITORED passage is admitted to generation.
+                    excluded.append(doc.doc_id)
+                    unavailable.append(doc.doc_id)
+                    continue
+
                 if isinstance(verifier, CorroborationVerifier):
                     result = verifier.verify(
                         query, query_id, doc, pool,
                         same_burst=self.ledger.same_burst,
-                        source_influence=lambda src: self.ledger.influence_factor(
-                            src, now),
+                        source_influence=lambda src: self.ledger.influence_factor(src, now),
                     )
                 else:
                     result = verifier.verify(query, query_id, doc, pool)
                 verified.append(result)
 
-                # Update trust based on outcome
-                self.ledger.record_observation(
-                    doc.doc_id, doc.source_id, doc.family_id,
-                    outcome=result.outcome.value, timestamp=now,
-                )
+                # A result can update trust only if the verifier says this
+                # passage influenced the answer and reached SUPPORT/REFUTE.
+                if (result.influential and result.outcome in
+                        (VerificationOutcome.SUPPORT, VerificationOutcome.REFUTE)):
+                    before = self.ledger.get_status(doc.doc_id)
+                    strength = (result.support_mass
+                                if result.outcome is VerificationOutcome.SUPPORT
+                                else result.refute_mass)
+                    self.ledger.record_observation(
+                        doc.doc_id, doc.source_id, doc.family_id,
+                        outcome=result.outcome.value, timestamp=now, strength=strength,
+                    )
+                    after = self.ledger.get_status(doc.doc_id)
+                else:
+                    before = after = status_before
 
-                if result.outcome is VerificationOutcome.REFUTE:
+                if result.influential and result.outcome is VerificationOutcome.REFUTE:
                     excluded.append(doc.doc_id)
-                    # Check if the doc was quarantined by the state machine
-                    status = self.ledger.get_status(doc.doc_id)
-                    if status.value in ("QUARANTINED", "REJECTED"):
+                    if (after in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)
+                            and before not in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)):
                         newly_quarantined.append(doc.doc_id)
-                    continue
-
-                # SUPPORT or NEUTRAL → allow
-                context.append(doc.doc_id)
+                else:
+                    # SUPPORT and NEUTRAL remain usable; NEUTRAL leaves trust
+                    # unchanged and the document remains MONITORED.
+                    context.append(doc.doc_id)
                 continue
 
-            if band is Band.MEDIUM and verifier is None:
-                # No verifier available → benefit of the doubt
-                context.append(doc.doc_id)
-                continue
-
-            # LOW band → use
-            context.append(doc.doc_id)
+            context.append(doc.doc_id)  # TRUSTED + LOW band
 
         # Trigger quarantine callback for newly quarantined passages
         if newly_quarantined and self._on_quarantine is not None:
@@ -169,6 +202,8 @@ class TrustPolicy:
             "newly_quarantined": newly_quarantined,
             "n_verified": len(verified),
             "n_excluded": len(excluded),
+            "verification_unavailable": unavailable,
+            "n_verification_unavailable": len(unavailable),
         }
 
         return PolicyDecision(

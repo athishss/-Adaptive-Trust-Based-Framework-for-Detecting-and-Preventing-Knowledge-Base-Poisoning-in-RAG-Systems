@@ -56,6 +56,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -65,7 +66,7 @@ from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
 from trace_rag.pipeline import PersonAPipeline
-from trace_rag.trust import CorroborationVerifier, TrustConfig, TrustLedger, TrustPolicy
+from trace_rag.trust import CorroborationVerifier, TrustLedger, TrustPolicy
 from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics, write_history_csv
 from trace_rag.trust.queue import VerificationQueue
 
@@ -204,19 +205,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--force-medium", action="store_true",
                         help="demo mode: escalate every passage so the verifier path "
                              "always runs (the calibrated bands are the real setting)")
-    parser.add_argument("--quarantine-refutations", type=int, default=2,
-                        help="refutations before a document is quarantined (plan default 2)")
+    parser.add_argument("--quarantine-refutations", type=int, default=None,
+                        help="refutations before quarantine (default: trust config)")
     parser.add_argument("--no-hierarchical", action="store_true",
                         help="V2 ablation: document-only trust, no family/source prior "
                              "and no inheritance")
-    parser.add_argument("--max-corroboration", type=int, default=3,
-                        help="independent passages the verifier will consult")
+    parser.add_argument("--max-corroboration", type=int, default=None,
+                        help="independent passages (default: trust config)")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
+    # This runner constructs the ledger/verifier itself after ingestion so its
+    # CLI trust overrides remain authoritative. Avoid creating an auto-wired
+    # second SQLite ledger or loading the NLI model before that point.
+    config.trust.enabled = False
     pipeline = PersonAPipeline.from_config(config, load_existing_index=args.skip_index)
     questions = load_questions(Path(args.queries))
     if not questions:
@@ -227,10 +232,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ---------------------------------------------------------------- ingest
     banner("1. Ingest the clean corpus with simulated contributors")
     ingestor = Ingestor(pipeline.store, config.ingestion)
+    # The corpus lacks real contributor timestamps. Give it a historical
+    # simulated window so clean sources have earned history before the attack
+    # stream begins; a 20-year offset leaves the full 2.68M-passage NQ corpus
+    # (about 5.1 years at 60 seconds per passage) safely in the past.
+    clean_start_time = time.time() - 20 * 365.25 * 24 * 60 * 60
     if not args.skip_index or pipeline.store.counts().get("chunks", 0) == 0:
         report = ingestor.ingest_beir(args.corpus, SourceAssigner(n_sources=args.n_sources,
                                                                  seed=args.seed),
-                                      limit=args.limit, seconds_per_doc=60.0)
+                                      limit=args.limit, start_time=clean_start_time,
+                                      seconds_per_doc=60.0)
         print(f"  ingested: {report.to_dict()}")
     print(f"  store: {pipeline.store.counts()}")
 
@@ -251,9 +262,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("  no qrels file: targets fall back to the retrieved pool")
     wanted = {doc_id for target in targets for doc_id in gold_ids.get(target["qid"], [])}
     gold_texts = fetch_passages(Path(args.corpus), wanted) if wanted else {}
+    poison_base_time = time.time()
     poison_docs = []
     poison_chunk_ids: set = set()
     poison_info: List[Dict[str, str]] = []
+    poison_ingest_times: List[float] = []
     for index, target in enumerate(targets):
         outcome = pipeline.retriever.retrieve(target["question"], f"craft_{target['qid']}")
         chosen = choose_target(outcome, gold_texts, gold_ids.get(target["qid"], []),
@@ -270,9 +283,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             target_query=target["question"],
             metadata={"source_of_truth": origin},
         )
-        chunks = ingestor.ingest_text(record.doc_id, record.text, record.source_id,
-                                      ingested_at=1_800_000_000.0 + index * 20.0,
-                                      passage_mode=True)
+        poison_ingested_at = poison_base_time + index * 20.0
+        chunks = ingestor.ingest_text(
+            record.doc_id, record.text, record.source_id,
+            ingested_at=poison_ingested_at, passage_mode=True,
+            family_id=record.family_id,
+        )
+        poison_ingest_times.append(poison_ingested_at)
         # The pipeline and the ledger work in chunk ids (``doc#0000``), so keep
         # those: comparing document ids against them silently matched nothing.
         poison_chunk_ids.update(chunk.chunk_id for chunk in chunks)
@@ -290,11 +307,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # ---------------------------------------------------------------- trust
     banner("4. Wire in Person B's trust layer")
-    trust_config = TrustConfig(quarantine_refutations=args.quarantine_refutations,
-                               hierarchical=not args.no_hierarchical)
+    trust_config = config.trust.to_ledger_config()
+    if args.quarantine_refutations is not None:
+        trust_config.quarantine_refutations = args.quarantine_refutations
+    if args.no_hierarchical:
+        trust_config.hierarchical = False
     ledger = TrustLedger(out_dir / "trust.sqlite3", store=pipeline.store, config=trust_config)
-    verifier = CorroborationVerifier(llm=pipeline.generator.llm,
-                                     max_corroboration=args.max_corroboration)
+    verifier_kwargs = config.trust.verifier_kwargs()
+    if args.max_corroboration is not None:
+        verifier_kwargs["max_corroboration"] = args.max_corroboration
+    verifier = CorroborationVerifier(llm=pipeline.generator.llm, **verifier_kwargs)
     queue = VerificationQueue()
     policy = TrustPolicy(ledger=ledger, on_quarantine=pipeline.on_quarantine, queue=queue)
     pipeline.trust_provider = ledger
@@ -320,8 +342,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     per_step: List[Dict[str, object]] = []
     poison_ids = poison_chunk_ids
+    stream_start_time = max(poison_ingest_times) + 1.0
     for step, question in enumerate(stream):
-        result = pipeline.answer(question, f"stream_{step:04d}")
+        query_time = stream_start_time + step * 60.0
+        result = pipeline.answer(question, f"stream_{step:04d}", now=query_time)
         drained = policy.drain_verification_queue(verifier)
         cited_poison = [d.doc_id for d in result.retrieval.documents
                         if d.doc_id in poison_ids and d.doc_id in (result.answer or "")]
@@ -373,9 +397,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else getattr(pipeline.generator.llm, "name", "unknown")),
         "poison_documents": len(poison_docs),
         "poison_targets": poison_info,
-        "poison_retrieved_rate": (len(poison_retrieved) / len(target_steps)) if target_steps else 0.0,
+        "poison_retrieved_rate": (len(poison_retrieved) / len(target_steps)) if target_steps else None,
         "poison_cited_in_answer": len(poison_answers),
-        "poison_citation_rate": (len(poison_answers) / len(target_steps)) if target_steps else 0.0,
+        "poison_citation_rate": (len(poison_answers) / len(target_steps)) if target_steps else None,
         "poison_quarantined": len(poisoned_blocked),
         "clean_false_quarantine": len(clean_blocked),
         "clean_false_quarantine_ids": clean_blocked,
@@ -403,9 +427,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     banner("7. Trust-dynamics figures (B6)")
     history = ledger.export_history()
     write_history_csv(history, out_dir / "trust_history.csv")
-    figures = plot_trust_dynamics(history, out_dir / "figures")
-    timeline = plot_quarantine_timeline(ledger.get_audit_log(limit=10000),
-                                        out_dir / "figures" / "quarantine_timeline.png")
+    try:
+        figures = plot_trust_dynamics(history, out_dir / "figures")
+        timeline = plot_quarantine_timeline(ledger.get_audit_log(limit=10000),
+                                            out_dir / "figures" / "quarantine_timeline.png")
+    except RuntimeError as exc:
+        # Plotting is an optional report extra; metrics/history must still be
+        # written and a smoke run must not fail merely because matplotlib is absent.
+        figures, timeline = [], None
+        print(f"  plots skipped: {exc}")
     print(f"  history rows: {len(history)}   figures: {len(figures)}")
     for path in figures:
         print(f"    {path}")

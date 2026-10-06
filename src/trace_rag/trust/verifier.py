@@ -133,6 +133,17 @@ class NLIScorer:
 _nli_scorer = NLIScorer()
 
 
+def citation_entailment_check(premise: str, hypothesis: str,
+                              threshold: float = 0.5) -> Tuple[bool, float]:
+    """Return whether a citation passage entails its answer sentence.
+
+    Unlike corroboration, citation validation is fail-closed: unavailable NLI
+    returns neutral/zero confidence and therefore cannot mark a claim supported.
+    """
+    label, score = _nli_scorer.predict(premise, hypothesis)
+    return label == "entailment" and score >= threshold, score
+
+
 class CorroborationVerifier:
     """Corroboration-gated counterfactual verifier.
 
@@ -152,8 +163,8 @@ class CorroborationVerifier:
     min_mass : float
         Minimum aggregated mass required to issue a non-NEUTRAL verdict.
     min_refute_topical_overlap : int
-        Minimum number of content words a passage must share with the claim
-        before it is allowed to contribute *refuting* evidence.  Passages
+        Minimum number of content words a passage must share with the claim or
+        query before it is allowed to contribute *refuting* evidence. Passages
         below this floor are irrelevant, not contradictory, and are ignored.
     max_redundant_coverage : float
         Share of a claim's content words that other pool passages may already
@@ -178,7 +189,7 @@ class CorroborationVerifier:
 
     def __init__(self, llm=None, max_corroboration: int = 3,
                  support_threshold: float = 0.15, refute_threshold: float = 0.10,
-                 min_mass: float = 0.10, use_nli: Optional[bool] = None,
+                 min_mass: float = 0.20, use_nli: Optional[bool] = None,
                  min_refute_topical_overlap: int = 1,
                  max_redundant_coverage: float = 0.80,
                  max_source_mass: float = 0.6,
@@ -545,7 +556,8 @@ class CorroborationVerifier:
                 best_support_per_source[source] = max(
                     best_support_per_source.get(source, 0.0), weight,
                 )
-            elif label == "contradiction" and self._may_refute(target_claim, doc.text):
+            elif label == "contradiction" and self._may_refute(
+                    target_claim, doc.text, query=query):
                 weight = trust * confidence
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
@@ -573,9 +585,12 @@ class CorroborationVerifier:
         the query words are the common frame shared by every passage on the
         topic, so a passage asserting a rival answer ("... discovered by Alan
         Wu" against "... discovered by Maria Chen") must not look like partial
-        agreement merely because both contain "discovered" and the subject.  The
-        influence proxy and the refutation gate are different metrics and keep
-        the query words - see ``_topical_overlap``.
+        agreement merely because both contain "discovered" and the subject.
+        It is answer-term coverage rather than Jaccard: a concise answer such as
+        ``Gustave Eiffel`` should still be fully supported by a longer passage
+        that contains those answer terms. The influence proxy and refutation
+        gate are different metrics and keep the query words - see
+        ``_topical_overlap``.
 
         Returns (support_mass, refute_mass, llm_calls).
         """
@@ -598,7 +613,7 @@ class CorroborationVerifier:
                     best_support_per_source.get(source, 0.0), weight,
                 )
             elif (agreement <= self.refute_threshold
-                    and self._may_refute(target_claim, doc.text)):
+                    and self._may_refute(target_claim, doc.text, query=query)):
                 weight = trust * (1.0 - agreement)
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
@@ -609,16 +624,19 @@ class CorroborationVerifier:
         refute_mass = self._noisy_or(best_refute_per_source)
         return support_mass, refute_mass, 0  # no LLM calls: the text is the evidence
 
-    def _may_refute(self, claim: str, text: str) -> bool:
+    def _may_refute(self, claim: str, text: str, query: str = "") -> bool:
         """Whether a passage is allowed to contribute *refuting* evidence.
 
-        Refutation requires the passage to be topically related to the claim.
-        A passage that shares no content words with it is irrelevant, not
-        contradictory - and both the NLI model and the lexical comparison
-        reward irrelevance with a full-confidence refutation, which was
-        measured to REFUTE an honest claim from a single off-topic passage.
+        Refutation requires the passage to be topically related to either the
+        extracted answer claim or the question.  This matters when claim
+        extraction returns only a concise answer (for example, ``Zog``): the
+        corroborating passage may mention the question's subject and a rival
+        answer, but cannot share the target's answer token.  A passage that
+        shares neither claim nor query content is irrelevant, not contradictory.
         """
-        return self._topical_overlap(claim, text) >= self.min_refute_topical_overlap
+        overlap = max(self._topical_overlap(claim, text),
+                      self._topical_overlap(query, text) if query else 0)
+        return overlap >= self.min_refute_topical_overlap
 
     @staticmethod
     def _topical_overlap(claim: str, text: str) -> int:
@@ -640,18 +658,20 @@ class CorroborationVerifier:
     @staticmethod
     def _content_overlap(target_content: set, text: str,
                          noise: set) -> float:
-        """Content-word Jaccard overlap between pre-tokenised *target_content*
-        words and the content words of *text*, with *noise* (query + stop words)
-        stripped from both sides.
+        """Fraction of answer-content words covered by a passage.
 
-        Returns 0..1: high means agreement, low means disagreement.
+        ``noise`` (query + stop words) is stripped from both sides so the
+        question's shared topic cannot make rival answers look alike. The
+        denominator is the target answer, not the union: a concise answer such
+        as ``Gustave Eiffel`` can be supported by a longer passage containing
+        that name without being diluted by every other word in the passage.
+        Returns 0..1, where 1 means every target answer term appears.
         """
         other_content = set(tokenise(text)) - noise
         if not target_content or not other_content:
             return 0.0
         overlap = len(target_content & other_content)
-        union = len(target_content | other_content)
-        return float(overlap / union) if union else 0.0
+        return float(overlap / len(target_content))
 
     @staticmethod
     def _noisy_or(per_source: Dict[str, float]) -> float:

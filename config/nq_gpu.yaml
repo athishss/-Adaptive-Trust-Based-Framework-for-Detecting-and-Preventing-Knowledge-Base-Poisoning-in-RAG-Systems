@@ -44,6 +44,38 @@ scorer:
   escalation_budget: 1.0
   calibration: isotonic
 
+trust:
+  enabled: true
+  w_s: 1.0
+  w_r: 2.0
+  w_max: 5.0
+  prior_weight: 5.0
+  kappa: 3.0
+  t_cap: 0.6
+  decay_gamma: 0.95
+  decay_interval: 100
+  quarantine_refutations: 2
+  reject_refutations: 3
+  hierarchical: true
+  recovery_threshold: 0.6
+  quarantine_t_eff: 0.2
+  monitored_t_eff: 0.6
+  burst_trust_discount: 0.3
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+  cold_start_influence: 0.25
+  source_age_ramp_hours: 24.0
+  cold_start_min_observations: 5
+  record_history: true
+  queue_max_size: 1000
+  verifier_max_corroboration: 3
+  verifier_support_threshold: 0.15
+  verifier_refute_threshold: 0.10
+  verifier_min_mass: 0.20
+  verifier_max_source_mass: 0.6
+  verifier_counterfactual_influence: true
+  nli_mode: auto
+
 generation:
   backend: openai            # an OpenAI-compatible server: vLLM, or Ollama below
   model_name: meta-llama/Llama-3.1-8B-Instruct
@@ -53,6 +85,8 @@ generation:
   max_context_docs: 5
   abstain_evidence_mass: 0.5
   require_citations: true
+  check_citations: true
+  citation_nli_threshold: 0.5
   # laptop / no vLLM alternative:
   # backend: ollama
   # model_name: llama3.1:8b
@@ -60,3 +94,4 @@ generation:
 
 storage:
   root: runs/nq
+  trust_db: trust.sqlite3

@@ -13,6 +13,7 @@ from trace_rag.contracts import (
     TrustSnapshot,
     TrustStatus,
     VerificationOutcome,
+    VerificationResult,
 )
 from trace_rag.trust.ledger import TrustConfig, TrustLedger
 from trace_rag.trust.verifier import CorroborationVerifier
@@ -96,12 +97,13 @@ class TestTrustLedger:
         # because refute penalty (2.0) > support reward (1.0)
         assert after_refute < 0.5
 
-    def test_neutral_does_not_change_trust(self, ledger):
+    def test_neutral_does_not_change_trust_or_observation_count(self, ledger):
         ledger.record_observation("d1", "src", "fam", "NEUTRAL")
-        # n_observations increments but alpha/beta unchanged
+        # Neutral verdicts register provenance but are not reputation evidence.
         snap = ledger.get_trust(["d1"])["d1"]
         assert snap.t_doc == pytest.approx(0.5)
-        assert snap.n_doc_observations == 1
+        assert snap.n_doc_observations == 0
+        assert snap.status is TrustStatus.MONITORED
 
     def test_state_machine_trusted_to_monitored(self, ledger):
         ledger.record_observation("d1", "src", "fam", "REFUTE")
@@ -130,8 +132,8 @@ class TestTrustLedger:
     def test_recovery_from_monitored(self, ledger):
         ledger.record_observation("d1", "src", "fam", "REFUTE")   # → MONITORED
         assert ledger.get_status("d1") is TrustStatus.MONITORED
-        # Support enough to raise trust above recovery threshold
-        for _ in range(5):
+        # Support enough to raise effective hierarchical trust above 0.60.
+        for _ in range(7):
             ledger.record_observation("d1", "src", "fam", "SUPPORT")
         assert ledger.get_status("d1") is TrustStatus.TRUSTED
 
@@ -313,11 +315,13 @@ class TestTrustPolicy:
         assert "d1" in decision.excluded_doc_ids
         assert "d1" not in decision.context_doc_ids
 
-    def test_medium_band_without_verifier_passes(self, policy):
+    def test_medium_band_without_verifier_fails_closed(self, policy):
         docs = [_doc("d1")]
         assessments = [_assessment("d1", Band.MEDIUM)]
         decision = policy.decide("q", "q1", docs, assessments, verifier=None)
-        assert "d1" in decision.context_doc_ids
+        assert "d1" not in decision.context_doc_ids
+        assert "d1" in decision.excluded_doc_ids
+        assert decision.notes["verification_unavailable"] == ["d1"]
 
     def test_medium_band_with_verifier_support(self, policy):
         verifier = CorroborationVerifier()
@@ -347,28 +351,53 @@ class TestTrustPolicy:
         assert "poison" in decision.excluded_doc_ids
         assert "clean" in decision.context_doc_ids
 
-    def test_trust_is_updated_after_verification(self, policy, ledger):
-        verifier = CorroborationVerifier()
-        target = _doc("t1", "Gustave Eiffel designed the Eiffel Tower.", "s1", "f1")
-        corr = _doc("t2", "Gustave Eiffel was the designer.", "s2", "f2")
-        docs = [target, corr]
-        assessments = [
-            _assessment("t1", Band.MEDIUM),
-            _assessment("t2", Band.LOW),
-        ]
-        policy.decide("who designed the eiffel tower?", "q1",
-                      docs, assessments, verifier=verifier)
-        # Trust should have been updated
-        snap = ledger.get_trust(["t1"])["t1"]
-        assert snap.n_doc_observations > 0
+    def test_influential_verification_updates_trust(self, policy, ledger):
+        class StrongSupportVerifier:
+            def verify(self, query, query_id, target, pool):  # noqa: ARG002
+                return VerificationResult(
+                    doc_id=target.doc_id, query_id=query_id,
+                    single_doc_answer="corroborated claim", influential=True,
+                    support_mass=0.8, refute_mass=0.0,
+                    outcome=VerificationOutcome.SUPPORT,
+                )
 
-    def test_high_band_applies_passive_penalty(self, policy, ledger):
+        target = _doc("t1", "Gustave Eiffel designed the Eiffel Tower.", "s1", "f1")
+        assessments = [_assessment("t1", Band.MEDIUM)]
+        decision = policy.decide("who designed the eiffel tower?", "q1",
+                                 [target], assessments, verifier=StrongSupportVerifier())
+        snap = ledger.get_trust(["t1"])["t1"]
+        assert decision.verified[0].outcome is VerificationOutcome.SUPPORT
+        assert snap.n_doc_observations == 1
+        assert snap.t_doc > 0.5
+
+    def test_neutral_verification_does_not_update_trust(self, policy, ledger):
+        class NeutralVerifier:
+            def verify(self, query, query_id, target, pool):  # noqa: ARG002
+                return VerificationResult(
+                    doc_id=target.doc_id, query_id=query_id,
+                    single_doc_answer="uncertain claim", influential=True,
+                    support_mass=0.0, refute_mass=0.0,
+                    outcome=VerificationOutcome.NEUTRAL,
+                )
+
+        target = _doc("t1", "A claim that cannot be corroborated.", "s1", "f1")
+        decision = policy.decide("question", "q1", [target],
+                                 [_assessment("t1", Band.MEDIUM)],
+                                 verifier=NeutralVerifier())
+        snap = ledger.get_trust(["t1"])["t1"]
+        assert decision.verified[0].outcome is VerificationOutcome.NEUTRAL
+        assert snap.n_doc_observations == 0
+        assert snap.t_doc == pytest.approx(0.5)
+
+    def test_high_band_is_queued_without_trust_penalty(self, policy, ledger):
         docs = [_doc("d1", source_id="s1", family_id="f1")]
         assessments = [_assessment("d1", Band.HIGH)]
-        policy.decide("q", "q1", docs, assessments)
+        decision = policy.decide("q", "q1", docs, assessments)
         snap = ledger.get_trust(["d1"])["d1"]
-        # HIGH-band penalty should have lowered trust below neutral
-        assert snap.t_doc < 0.5
+        assert "d1" in decision.excluded_doc_ids
+        assert len(policy.queue) == 1
+        assert snap.t_doc == pytest.approx(0.5)
+        assert snap.n_doc_observations == 0
 
     def test_quarantine_callback_fires(self, tmp_path):
         # Set quarantine_refutations=1 so first refute MONITORED→QUARANTINED is fast
@@ -614,17 +643,15 @@ class TestTrustDecay:
 class TestTEffStateTransitions:
     """P6: T_eff-based state machine transitions."""
 
-    def test_low_trust_triggers_monitored(self):
-        """When t_doc drops below monitored_t_eff, doc becomes MONITORED."""
-        config = TrustConfig(monitored_t_eff=0.60, high_band_beta_penalty=2.0)
+    def test_refutation_demotes_by_effective_trust(self):
+        """Verified evidence, not a HIGH suspicion label, drives trust status."""
+        config = TrustConfig(monitored_t_eff=0.60)
         ledger = TrustLedger(":memory:", config=config)
-        # Multiple HIGH-band penalties to drop trust below 0.60
-        for _ in range(3):
-            ledger.record_high_band("doc1", "s1", "f1")
+        ledger.record_high_band("doc1", "s1", "f1")
+        assert ledger.get_status("doc1") is TrustStatus.TRUSTED
+        ledger.record_observation("doc1", "s1", "f1", "REFUTE")
         status = ledger.get_status("doc1")
-        # Should be at least MONITORED due to low t_doc
-        assert status in (TrustStatus.MONITORED, TrustStatus.QUARANTINED), \
-            f"Expected MONITORED or QUARANTINED with low trust, got {status}"
+        assert status in (TrustStatus.MONITORED, TrustStatus.QUARANTINED)
 
 
 class TestAuditLog:

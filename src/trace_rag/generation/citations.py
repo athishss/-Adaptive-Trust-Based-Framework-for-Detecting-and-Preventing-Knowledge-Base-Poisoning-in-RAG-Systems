@@ -11,6 +11,21 @@ from ..utils.textnorm import sentences
 CITATION_PATTERN = re.compile(r"\[([^\[\]]{1,120}?)\]")
 
 
+def _answer_sentences(answer: str) -> List[str]:
+    # Models commonly put a citation after sentence-final punctuation.  The
+    # shared splitter would otherwise detach e.g. "Claim? [d1]" into an
+    # uncited claim plus a citation-only fragment, preventing sentence-level
+    # validation. Attach that suffix marker before splitting.
+    attached = re.sub(r"([.!?])\s+(\[[^\[\]]+\])", r"\1\2", answer or "")
+    return sentences(attached)
+
+
+def missing_citation_sentences(answer: str) -> List[str]:
+    """Return every non-empty answer sentence without at least one citation marker."""
+    return [sentence for sentence in _answer_sentences(answer)
+            if not CITATION_PATTERN.search(sentence)]
+
+
 def parse_citations(answer: str, allowed: Sequence[RetrievedDocument]
                     ) -> Tuple[List[Citation], List[str], str]:
     """Extract per-sentence citations.
@@ -22,7 +37,7 @@ def parse_citations(answer: str, allowed: Sequence[RetrievedDocument]
     allowed_map: Dict[str, RetrievedDocument] = {d.doc_id: d for d in allowed}
     citations: List[Citation] = []
     invalid: List[str] = []
-    for sentence in sentences(answer):
+    for sentence in _answer_sentences(answer):
         for raw in CITATION_PATTERN.findall(sentence):
             for candidate in (part.strip() for part in raw.split(",")):
                 if not candidate:

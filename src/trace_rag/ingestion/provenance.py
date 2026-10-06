@@ -272,26 +272,48 @@ class ProvenanceStore:
                 yield self._row_to_chunk(row)
             last_id = rows[-1]["chunk_id"]
 
-    def source_stats(self, source_id: str) -> Optional[SourceStats]:
+    def source_stats(self, source_id: str,
+                     as_of: Optional[float] = None) -> Optional[SourceStats]:
+        """Return source history, optionally limited to records known by ``as_of``."""
         with self._lock:
-            row = self._conn.execute("SELECT * FROM sources WHERE source_id = ?", (source_id,)).fetchone()
-        if row is None:
+            if as_of is None:
+                row = self._conn.execute(
+                    "SELECT * FROM sources WHERE source_id = ?", (source_id,)
+                ).fetchone()
+                if row is None:
+                    return None
+                return SourceStats(row["source_id"], row["first_seen"], row["last_seen"],
+                                   int(row["n_docs"]), int(row["n_chunks"]))
+
+            row = self._conn.execute(
+                "SELECT MIN(ingested_at) AS first_seen, MAX(ingested_at) AS last_seen, "
+                "COUNT(*) AS n_docs, (SELECT COUNT(*) FROM chunks "
+                "WHERE source_id = ? AND ingested_at <= ?) AS n_chunks "
+                "FROM documents WHERE source_id = ? AND ingested_at <= ?",
+                (source_id, float(as_of), source_id, float(as_of)),
+            ).fetchone()
+        if row is None or row["first_seen"] is None:
             return None
-        return SourceStats(row["source_id"], row["first_seen"], row["last_seen"],
+        return SourceStats(source_id, float(row["first_seen"]), float(row["last_seen"]),
                            int(row["n_docs"]), int(row["n_chunks"]))
 
-    def burst_count(self, source_id: str, around: float, window_hours: float = 24.0) -> int:
-        """Chunks from ``source_id`` ingested within +/- window of ``around``.
+    def burst_count(self, source_id: str, around: float, window_hours: float = 24.0,
+                    as_of: Optional[float] = None) -> int:
+        """Count source chunks near ``around`` that were known by ``as_of``.
 
-        This is the raw quantity behind signal S4.  It counts chunks, not
-        documents, because an attacker can pack many passages into one upload.
+        It counts chunks, not documents, because an attacker can pack many
+        passages into one upload. ``as_of`` prevents later arrivals from
+        leaking into a historical S4 feature.
         """
         half = float(window_hours) * 3600.0
+        sql = ("SELECT COUNT(*) AS n FROM chunks WHERE source_id = ? "
+               "AND ingested_at BETWEEN ? AND ?")
+        params: list[object] = [source_id, around - half, around + half]
+        if as_of is not None:
+            sql += " AND ingested_at <= ?"
+            params.append(float(as_of))
         with self._lock:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM chunks WHERE source_id = ? AND ingested_at BETWEEN ? AND ?",
-                (source_id, around - half, around + half),
-            ).fetchone()
+            row = self._conn.execute(sql, params).fetchone()
         return int(row["n"])
 
     def family_size(self, family_id: str) -> int:
@@ -301,16 +323,22 @@ class ProvenanceStore:
             ).fetchone()
         return int(row["n"])
 
-    def family_sizes(self, family_ids: Sequence[str]) -> Dict[str, int]:
+    def family_sizes(self, family_ids: Sequence[str],
+                     as_of: Optional[float] = None) -> Dict[str, int]:
+        """Count family chunks, optionally using only records known by ``as_of``."""
         if not family_ids:
             return {}
         uniq = sorted(set(family_ids))
         placeholders = ",".join("?" * len(uniq))
+        sql = (f"SELECT family_id, COUNT(*) AS n FROM chunks "
+               f"WHERE family_id IN ({placeholders})")
+        params: list[object] = list(uniq)
+        if as_of is not None:
+            sql += " AND ingested_at <= ?"
+            params.append(float(as_of))
+        sql += " GROUP BY family_id"
         with self._lock:
-            rows = self._conn.execute(
-                f"SELECT family_id, COUNT(*) AS n FROM chunks WHERE family_id IN ({placeholders}) "
-                f"GROUP BY family_id", uniq
-            ).fetchall()
+            rows = self._conn.execute(sql, params).fetchall()
         return {row["family_id"]: int(row["n"]) for row in rows}
 
     def counts(self) -> Dict[str, int]:

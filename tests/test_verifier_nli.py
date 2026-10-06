@@ -8,7 +8,7 @@ premises that never mention the claim, the model returns ``contradiction`` with
 confidence 1.0 (measured), and the verifier turned that straight into refute
 mass ``trust * confidence``.  One unrelated passage was therefore enough to
 REFUTE an honest claim (measured ``refute_mass`` 0.50 against a ``min_mass``
-of 0.10), which excludes the passage from the answer and feeds it to the
+of 0.20), which excludes the passage from the answer and feeds it to the
 quarantine state machine.
 
 The discriminator used by the fix is topical relatedness.  Measured on these
@@ -151,6 +151,24 @@ def test_supporting_passage_produces_support(monkeypatch):
 
     assert result.outcome is VerificationOutcome.SUPPORT
     assert result.support_mass > 0.0
+
+
+def test_cold_start_source_needs_more_than_its_capped_mass(monkeypatch):
+    """A new source's influence cap must not be enough to trigger REFUTE."""
+    monkeypatch.setattr(verifier_module, "_nli_scorer", StubScorer("contradiction"))
+    verifier = CorroborationVerifier(llm=StubLLM(), use_nli=True,
+                                     min_mass=0.20, counterfactual_influence=False)
+    target = _doc(0, TARGET_TEXT, "attacker", "fam_attacker")
+    other = _doc(1, TOPICAL_CONTRADICTION, "new_source", "fam_1")
+
+    cold = verifier.verify(QUERY, "q1", target, [target, other],
+                           source_influence=lambda _source: 0.25)
+    mature = verifier.verify(QUERY, "q2", target, [target, other],
+                             source_influence=lambda _source: 1.0)
+
+    assert cold.refute_mass == 0.125
+    assert cold.outcome is VerificationOutcome.NEUTRAL
+    assert mature.outcome is VerificationOutcome.REFUTE
 
 
 def test_lexical_mode_also_refuses_to_refute_off_topic(monkeypatch):

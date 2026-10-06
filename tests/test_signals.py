@@ -135,3 +135,21 @@ def test_signal_computation_uses_no_llm(populated_pipeline):
     outcome = populated_pipeline.retrieve(QUESTION, "q1")
     populated_pipeline.signals.compute(QUESTION, outcome.documents, outcome.pool)
     assert getattr(llm, "calls", 0) == before
+
+
+def test_source_and_family_signals_ignore_late_arrivals(populated_pipeline):
+    from trace_rag.ingestion import Ingestor
+
+    doc = populated_pipeline.store.get_chunks(["nq_1#0000"])["nq_1#0000"]
+    now = doc.ingested_at + 1_000.0
+    retrieved = populated_pipeline.retrieve(QUESTION, "q1").by_id()[doc.chunk_id]
+    before = populated_pipeline.signals.compute(QUESTION, [retrieved], [retrieved], now=now)[doc.chunk_id]
+
+    Ingestor(populated_pipeline.store, populated_pipeline.config.ingestion).ingest_text(
+        "late_same_family", doc.text, doc.source_id, ingested_at=now + 10_000.0,
+        passage_mode=True, family_id=doc.family_id,
+    )
+    after = populated_pipeline.signals.compute(QUESTION, [retrieved], [retrieved], now=now)[doc.chunk_id]
+    assert after.extras["x_source_n_docs"] == before.extras["x_source_n_docs"]
+    assert after.extras["x_family_size"] == before.extras["x_family_size"]
+    assert after.signals.s4_ingestion_burst == before.signals.s4_ingestion_burst

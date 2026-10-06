@@ -188,6 +188,16 @@ class TestB2SybilDefence:
         assert burst.t_doc < normal.t_doc, \
             "first documents of a burst must carry the discounted prior"
 
+    def test_burst_detection_does_not_use_future_registrations(self):
+        """An old passage cannot see later ingestions when computing its prior."""
+        ledger = TrustLedger(":memory:", config=TrustConfig(burst_min_docs=4))
+        for i in range(3):
+            ledger.record_observation(f"future{i}", "source", "family", "NEUTRAL",
+                                      timestamp=200.0 + i)
+        ledger.record_observation("past", "source", "family", "NEUTRAL",
+                                  timestamp=100.0)
+        assert not ledger._is_burst_source("source")
+
     def test_same_burst_needs_a_shared_group(self):
         ledger = TrustLedger(":memory:")
         for i in range(4):
@@ -366,9 +376,9 @@ class TestB4Queue:
         results = policy.drain_verification_queue(verifier)
         assert verifier.calls == 1
         assert [r.doc_id for r in results] == ["d1"]
-        # One observation from the HIGH-band penalty, one from the drained
-        # verification: the queued outcome is recorded exactly like an inline one.
-        assert ledger.get_trust(["d1"])["d1"].n_doc_observations == 2
+        # Only the influential verifier result writes trust; suspicion alone
+        # never counts as evidence.
+        assert ledger.get_trust(["d1"])["d1"].n_doc_observations == 1
         assert len(queue) == 0
 
     def test_queue_dedupes_by_doc_id(self):
