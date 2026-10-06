@@ -243,10 +243,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
+    # This runner always exercises the trust stream, even when based on the
+    # development config whose pipeline auto-wiring flag is disabled.
+    config.trust.enabled = True
     # Retain the exact validated settings (including CLI overrides) beside the
     # metrics so a run can be reproduced and audited later.
     config.dump(out_dir / "resolved_config.yaml")
-    # This runner constructs the ledger/verifier itself after ingestion so its
+    # The runner constructs the ledger/verifier itself after ingestion so its
     # CLI trust overrides remain authoritative. Avoid creating an auto-wired
     # second SQLite ledger or loading the NLI model before that point.
     config.trust.enabled = False
@@ -427,6 +430,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "verifier_device": verifier.device,
         "nli_device_request": os.environ.get("TRACE_RAG_NLI_DEVICE", "auto"),
         "generation_backend": config.generation.backend,
+        "generation_model": (config.generation.model_name
+                             if config.generation.backend != "stub" else "stub"),
+        "generation_device": str(getattr(pipeline.generator.llm, "device", "not-applicable")),
         "steps": len(per_step),
         "target_steps": len(target_steps),
         "verifier_mode": verifier.mode,

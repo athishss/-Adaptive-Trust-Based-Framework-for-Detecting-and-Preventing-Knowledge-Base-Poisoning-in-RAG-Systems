@@ -63,6 +63,11 @@ def test_mini_stream_writes_reproducible_metrics_without_clean_quarantine(tmp_pa
     assert metrics["clean_false_quarantine"] == 0
     assert metrics["poison_citation_rate"] == 0.0
     assert metrics["embedding_device"] == "cpu"
+    assert metrics["generation_backend"] == "stub"
+    assert metrics["generation_model"] == "stub"
+    assert metrics["generation_device"] == "not-applicable"
     assert (out / "resolved_config.yaml").is_file()
+    from trace_rag.config import Config
+    assert Config.load(out / "resolved_config.yaml").trust.enabled is True
     assert (out / "stream.jsonl").is_file()
     assert (out / "trust_history.csv").is_file()

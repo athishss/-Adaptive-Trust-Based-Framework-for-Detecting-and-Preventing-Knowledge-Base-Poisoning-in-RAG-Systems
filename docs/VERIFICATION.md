@@ -98,20 +98,40 @@ source, and identical output across separate processes.
 Embedding and the real LLM are not in those numbers — they are the actual cost
 on GPU and must be measured again with Contriever and Llama-3.1-8B.
 
-## What is still unverified
+## Sixth pass (trust false positives, artifact integrity, and TPU paths)
 
-* **Real model weights.** The embedder is verified against a randomly
-  initialised BERT built locally (pooling, L2 normalisation, batching
-  invariance, attention-mask correctness) and the HTTP backends against a stub
-  server that mimics the vLLM and Ollama APIs, including error paths. What that
-  does not prove is behaviour with Contriever and Llama-3.1-8B specifically:
-  run one query through each on your machine.
-* Behaviour at true corpus scale (millions of passages) is extrapolated from
-  20k-passage measurements, not observed.
-* The bundled mini corpus is trivially separable; no accuracy claim should come
-  from it. The A7 ablation makes this visible: every signal can be removed with
-  no AUC loss, because any single one separates the toy poison.
-* **No real dataset has been through this code.** The build environment has no
-  internet egress to Hugging Face, so NQ/HotpotQA/MS-MARCO were never
-  downloaded. The Parquet and JSONL readers are tested against files written to
-  the exact published schema, not against the published files themselves.
+| Defect / gap | Fix | Regression evidence |
+|---|---|---|
+| A same-topic passage with no assertion of the query's relation (for example, Eiffel Tower height text used against a "who designed" claim) could be treated as a lexical refutation | Lexical refutation now requires the question predicate family to occur in the independent passage when one is identified | `test_same_subject_without_the_question_relation_is_not_refutation`; 12-step mini stream now quarantines both injected poisons with zero clean false quarantines |
+| A numeric answer could be falsely supported by shared units/topic words, or a numeric poison could be replaced with an entity answer | Numeric comparisons require matching number values; stream poison helpers accept type-compatible false answers and generate numeric fallbacks | `test_numeric_disagreement_is_not_support_from_a_shared_unit`, `tests/test_run_trust_stream.py` |
+| Repeated refutations could mature a new source's cold-start influence | Only positive/support observations count toward the support-history maturity threshold | `test_refutations_do_not_mature_new_source_influence` |
+| Explicit `nli_mode: nli` could silently run lexical comparison when model loading failed | Explicit NLI requests now fail fast; the actual verifier mode/device and resolved config are saved with stream artifacts | `test_explicit_nli_mode_does_not_silently_fall_back`, `test_mini_stream_writes_reproducible_metrics_without_clean_quarantine` |
+| NLI input was constructed as one string rather than an explicit premise/hypothesis pair | Both the Transformers pipeline and XLA path now feed paired inputs | `test_nli_pipeline_receives_premise_and_hypothesis_as_a_pair` |
+| S6 assumed the target passage was the first returned neighbour | Signal computation passes the target id and excludes it by ID, independent of ANN ordering/ties | `test_neighbourhood_density_excludes_target_by_id_not_neighbour_rank` |
+| The HF device path supported CPU/CUDA only | Added PyTorch/XLA device resolution, static TPU embedding shapes, TPU NLI inference, optional local HF generation device selection, `config/nq_tpu.yaml`, and a Colab notebook | `tests/test_device_resolution.py` and config tests use mocks; **no actual TPU execution has occurred here** |
+
+`pytest -q -ra` passed in the development sandbox; six optional tests were
+skipped because FAISS, torch/Transformers, and Matplotlib were absent. Python
+`compileall`, `git diff --check`, and the setup check passed. The CPU mini smoke
+used the lexical verifier and `StubLLM`: 2 poison documents quarantined, 0 clean
+false quarantines, 0 poison citations, poison retrieval rate 0.5. This is a
+regression fixture only—not an accuracy or research result.
+
+## Current unverified items
+
+* **Live TPU/XLA behavior.** The available tests mock XLA APIs. The sandbox has
+  no `torch`, `transformers`, `torch_xla`, CUDA, or TPU. Run
+  `notebooks/trace_rag_colab_tpu.ipynb` on Colab and retain its device, timing,
+  model, seed, and resolved-config metadata before claiming TPU execution.
+* **Real weights and data.** Contriever, the DeBERTa NLI model, and an answer
+  model have not been run together against published NQ files in this session.
+  The optional Colab NQ cell downloads source data and prepares a subset, but it
+  has not been executed here.
+* **Research evaluation.** The mini stream is not representative. The callback
+  matrix is not a complete controlled attack × baseline × seed benchmark, and
+  no ASR, confidence interval, baseline comparison, or headline result is
+  established by these tests.
+* **Scale and enterprise operations.** Full multi-million-passage scale,
+  deployment security/privacy, tenant isolation, SLOs, operational monitoring,
+  backup/restore, and company-specific policy have not been validated. See
+  `docs/PRODUCTION_READINESS.md`.

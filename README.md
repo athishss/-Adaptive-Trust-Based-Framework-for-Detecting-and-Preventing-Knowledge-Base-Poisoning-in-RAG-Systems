@@ -1,17 +1,15 @@
-# TRACE-RAG — Person A
+# TRACE-RAG — research prototype
 
-Provenance-aware retrieval, cheap poisoning signals and grounded generation for
-the TRACE-RAG secure-RAG project.
+TRACE-RAG combines provenance-aware retrieval, poisoning signals, a trust ledger,
+corroboration verification, quarantine/remediation, attack helpers, baseline
+policies, evaluation utilities, and cited/abstaining generation for RAG systems.
 
-This repository is **Person A's half of the system**: everything from a raw
-document to a cited answer, plus the detection layer that decides which passages
-deserve expensive verification. Person B (trust ledger, corroboration-gated
-verifier, quarantine) and Person C (attacks, baselines, evaluation) plug in
-through `trace_rag.contracts` — see [`docs/INTERFACES.md`](docs/INTERFACES.md).
-
-It runs end to end with no model downloads (hashing embedder + offline stub LLM),
-so tests and the demo work anywhere; swap two lines of config for Contriever +
-FAISS + Llama-3.1-8B when you run real experiments.
+It runs offline with a hashing embedder and stub answer model; Hugging Face
+embeddings, NLI verification, local/remote generation, NumPy/FAISS indexes, and
+CPU/CUDA/PyTorch-XLA device selection are configurable. **This is a research
+prototype, not production-ready for company deployment.** See
+[`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) for the assessment
+and remaining security, privacy, reliability, and benchmark work.
 
 ---
 
@@ -34,14 +32,21 @@ trace-rag --config config/nq_gpu.yaml index
 trace-rag --config config/nq_gpu.yaml query "who designed the eiffel tower?"
 ```
 
-Full walkthrough, including serving Llama-3.1-8B and the troubleshooting table:
-[`docs/RUNNING_ON_GPU.md`](docs/RUNNING_ON_GPU.md).
+Full CUDA walkthrough: [`docs/RUNNING_ON_GPU.md`](docs/RUNNING_ON_GPU.md).
+
+## Running in Google Colab
+
+- TPU / PyTorch-XLA: [`notebooks/trace_rag_colab_tpu.ipynb`](notebooks/trace_rag_colab_tpu.ipynb) and [`docs/COLAB_TPU_RUNBOOK.md`](docs/COLAB_TPU_RUNBOOK.md).
+- CUDA GPU: [`notebooks/trace_rag_colab.ipynb`](notebooks/trace_rag_colab.ipynb) and [`docs/COLAB_RUNBOOK.md`](docs/COLAB_RUNBOOK.md).
+
+The TPU path is experimental until the notebook completes on a real TPU runtime;
+its default mini-corpus run is not a benchmark or answer-quality result.
 
 ## Quick start
 
 ```bash
 pip install -e ".[dev,faiss]"        # core + tests + FAISS
-pytest -q                            # 175 tests
+pytest -q                            # optional model/FAISS tests skip if extras are absent
 python scripts/demo_end_to_end.py    # full pipeline on the bundled mini corpus
 python scripts/profile_and_ablate.py # A7: latency percentiles + signal ablation
 ```
@@ -87,9 +92,10 @@ print(result.answer, result.record.abstained, result.llm_calls)
 | A7 Profiling & ablation | `scripts/profile_and_ablate.py` | Per-stage latency percentiles, LLM calls per query, and held-out AUC with each signal switched off. |
 | L7 Grounded generation | `generation/` | Mandatory `[passage-id]` citations, hallucinated citations rejected, abstention when the trust-weighted evidence mass is too low. |
 
-Layers L4 (verifier) and L6 (policy/quarantine) belong to Person B; this repo
-ships working null/default implementations so the pipeline runs without them and
-so Person B has a reference to match.
+The verifier and policy layers are implemented under `src/trace_rag/trust/`;
+null/default interfaces remain available for offline tests and ablations. Attack,
+baseline, stream, and evaluation helpers are under `src/trace_rag/attacks/`,
+`baselines/`, and `evaluation/`.
 
 ### Design decisions worth knowing
 
@@ -134,8 +140,8 @@ on `--limit 500000` first.
 ## Tests
 
 ```bash
-pytest -q                                    # 175 tests
-pytest -q --cov=trace_rag --cov-report=term-missing   # 92% coverage
+pytest -q
+pytest -q --cov=trace_rag --cov-report=term-missing   # inspect current coverage locally
 ```
 
 What the suite actually checks, beyond the usual unit tests:
@@ -180,6 +186,10 @@ src/trace_rag/
   detection/          # six signals, calibrated scorer, leakage-guarded training
   generation/         # prompts, LLM backends, citations, grounded generation
   provenance/         # answer log and retroactive remediation
+  trust/              # ledger, corroboration verifier, policy, queue
+  attacks/            # poison construction and adaptive streams
+  baselines/          # baseline policies
+  evaluation/         # stream adapters, metrics, and statistics
   pipeline.py         # PersonAPipeline: the assembled system
   cli.py              # trace-rag command line
 config/  docs/  examples/  scripts/  tests/
@@ -187,35 +197,32 @@ config/  docs/  examples/  scripts/  tests/
 
 ## Honest limits
 
-* Real Natural Questions data has been through this pipeline end to end
-  (ingest, Contriever embeddings, FAISS, retrieval) on a laptop GPU. That run
-  is what exposed defects 13 and 14 in `docs/VERIFICATION.md`. What has **not**
-  happened yet is a measured experiment: attack success rates and detection
-  numbers need Person C's harness and Person B's ledger.
-* The hashing embedder and stub LLM exist for tests and the demo. No number from
-  them belongs in the report.
-* The bundled mini corpus is trivially separable; real evaluation is NQ +
-  PoisonedRAG with leave-one-attack-family-out, run by Person C.
-* Eleven defects were found and fixed across two verification passes, including
-  a leakage bug in the leave-one-attack-out split, a stale-vector bug in the
-  FAISS index and a chunk-id collision that could overwrite one document's
-  passages with another's. `docs/VERIFICATION.md` lists them all;
-  `docs/REQUIREMENTS.md` audits every requirement against its test.
-* Signals S1 and S3 come from published observations (PoisonedRAG's construction,
-  TrustRAG's clustering). The contribution here is their combination with source
-  history and the leakage-guarded, constraint-solving calibration — that framing
-  is what goes in the paper.
+* A historical Natural Questions subset was run through ingestion, Contriever,
+  FAISS, and retrieval on a laptop GPU; it exposed earlier scale defects listed
+  in `docs/VERIFICATION.md`. This does not establish full-NQ performance or the
+  current TPU path.
+* The hashing embedder and stub LLM are for offline tests and deterministic
+  plumbing checks. They are not valid evidence for answer quality or benchmark
+  accuracy.
+* The bundled mini corpus is trivially separable. Its smoke metrics are
+  regression evidence only; the generic evaluation matrix is not yet a complete,
+  validated attack × baseline × seed benchmark.
+* `docs/VERIFICATION.md` lists code-level defects and test evidence;
+  `docs/REQUIREMENTS.md` and `docs/PERSON_C_TODO.md` record research gaps.
+* Signals S1 and S3 are based on published observations (PoisonedRAG's
+  construction and TrustRAG's clustering). Attribution and benchmark claims
+  must be checked against the cited papers and evaluated protocol before use.
 
 ## Status
 
-Person A is complete and integration-ready: all seven work packages delivered,
-175 tests, 92% coverage, and the pipeline verified end to end on real BEIR
-Natural Questions data (Contriever embeddings on GPU, FAISS retrieval).
+**Research prototype — not production-ready.** The repository has unit and
+integration tests and a runnable CPU smoke. The sandbox test suite passes, with
+optional FAISS/model/plot tests skipped when their extras are unavailable. No
+live TPU/XLA run has been performed in this sandbox; the Colab TPU notebook is
+experimental and must prove actual XLA device use in the user's runtime.
 
-Person B: start with [`docs/HANDOVER.md`](docs/HANDOVER.md), then
-[`docs/INTERFACES.md`](docs/INTERFACES.md).
-Person C drives experiments through `PersonAPipeline.answer()`.
-
-Measured research results - attack success rates, detection rates, the
-security/cost trade-off - need Person B's trust ledger and Person C's attack
-harness, and are not claimed here.
+Before presenting research conclusions, run the controlled benchmark on the
+selected data with real model revisions, complete baseline parity, independent
+seeds, and confidence intervals. Before company deployment, complete the
+security, privacy, multi-tenant, scale, and reliability work in
+[`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md).
