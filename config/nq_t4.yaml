@@ -1,0 +1,90 @@
+# Full-corpus BEIR Natural Questions run for a Colab NVIDIA T4 (16 GB VRAM).
+# Contriever runs in float16 on CUDA; FAISS IVF-PQ remains CPU-resident.
+# Ollama serves a real local model (default notebook tag: qwen2.5:3b).
+seed: 20261007
+
+ingestion:
+  family_backend: exact
+
+embedding:
+  backend: huggingface
+  model_name: facebook/contriever
+  batch_size: 8
+  max_length: 512
+  device: cuda
+  dtype: float16
+  normalize: true
+
+index:
+  backend: faiss
+  faiss_kind: ivfpq
+  nlist: 4096
+  pq_m: 96
+  nbits: 8
+  nprobe: 16
+
+retrieval:
+  candidate_pool: 50
+  top_k: 5
+  trust_lambda: 1.0
+  trust_floor: 0.05
+
+signals:
+  neighbourhood_k: 10
+  source_mature_days: 180.0
+  source_mature_docs: 50
+  min_corpus_for_isolation: 10000
+
+scorer:
+  model_path: null
+  target_high_fpr: 0.02
+  escalation_budget: 1.0
+  calibration: isotonic
+
+trust:
+  enabled: true
+  w_s: 1.0
+  w_r: 2.0
+  w_max: 5.0
+  prior_weight: 5.0
+  kappa: 3.0
+  t_cap: 0.6
+  decay_gamma: 0.95
+  decay_interval: 100
+  quarantine_refutations: 2
+  reject_refutations: 3
+  hierarchical: true
+  recovery_threshold: 0.6
+  quarantine_t_eff: 0.2
+  monitored_t_eff: 0.6
+  burst_trust_discount: 0.3
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+  cold_start_influence: 0.25
+  source_age_ramp_hours: 24.0
+  cold_start_min_observations: 5
+  record_history: true
+  queue_max_size: 1000
+  verifier_max_corroboration: 3
+  verifier_support_threshold: 0.15
+  verifier_refute_threshold: 0.10
+  verifier_min_mass: 0.20
+  verifier_max_source_mass: 0.6
+  verifier_counterfactual_influence: true
+  nli_mode: nli
+
+generation:
+  backend: ollama
+  model_name: qwen2.5:3b
+  base_url: http://localhost:11434
+  temperature: 0.0
+  seed: 20261007
+  max_context_docs: 5
+  abstain_evidence_mass: 0.5
+  require_citations: true
+  check_citations: true
+  citation_nli_threshold: 0.5
+
+storage:
+  root: runs/nq_t4
+  trust_db: trust.sqlite3

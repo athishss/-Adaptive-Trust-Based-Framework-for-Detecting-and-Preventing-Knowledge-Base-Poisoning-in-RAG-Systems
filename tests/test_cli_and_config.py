@@ -23,6 +23,8 @@ def test_config_validation_rejects_bad_values():
         Config.load(None, scorer={"theta_low": 0.9, "theta_high": 0.2})
     with pytest.raises(Exception):
         Config.load(None, retrieval={"top_k": 0})
+    with pytest.raises(Exception):
+        Config.load(None, embedding={"dtype": "float64"})
     with pytest.raises(Exception, match="w_r"):
         Config.load(None, trust={"w_s": 1.0, "w_r": 1.0})
     with pytest.raises(Exception, match="reject_refutations"):
@@ -34,7 +36,7 @@ def test_config_validation_rejects_bad_values():
 
 def test_shipped_configs_parse_with_trust_settings():
     for path in ("config/default.yaml", "config/full_nq.yaml", "config/nq_gpu.yaml",
-                 "config/nq_tpu.yaml"):
+                 "config/nq_tpu.yaml", "config/nq_t4.yaml"):
         config = Config.load(path)
         assert config.storage.trust_db
         if path != "config/default.yaml":
@@ -45,6 +47,11 @@ def test_shipped_configs_parse_with_trust_settings():
     assert tpu.index.backend == "faiss" and tpu.index.faiss_kind == "ivfpq"
     assert tpu.trust.nli_mode == "nli"
     assert tpu.generation.backend == "ollama"
+    t4 = Config.load("config/nq_t4.yaml")
+    assert t4.embedding.device == "cuda" and t4.embedding.dtype == "float16"
+    assert t4.index.backend == "faiss" and t4.index.faiss_kind == "ivfpq"
+    assert t4.trust.nli_mode == "nli"
+    assert t4.generation.backend == "ollama"
 
 
 def test_config_overrides_apply():

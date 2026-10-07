@@ -39,6 +39,7 @@ class EmbeddingConfig(BaseModel):
     batch_size: int = Field(32, ge=1)
     max_length: int = Field(512, ge=8, le=4096)
     device: str = "cpu"              # cpu | auto | cuda | tpu (PyTorch/XLA)
+    dtype: Literal["float32", "float16", "bfloat16"] = "float32"
     query_prefix: str = ""          # BGE wants "Represent this sentence...: " style prefixes
     document_prefix: str = ""
     normalize: bool = True

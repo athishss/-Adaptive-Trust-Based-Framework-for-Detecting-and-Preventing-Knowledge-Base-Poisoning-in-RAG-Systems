@@ -39,13 +39,16 @@ Full CUDA walkthrough: [`docs/RUNNING_ON_GPU.md`](docs/RUNNING_ON_GPU.md).
 
 ## Running in Google Colab
 
+- **NVIDIA T4 / full BEIR NQ:** [`notebooks/trace_rag_colab_t4.ipynb`](notebooks/trace_rag_colab_t4.ipynb) and [`docs/COLAB_T4_RUNBOOK.md`](docs/COLAB_T4_RUNBOOK.md). Uses Contriever/NLI on CUDA and a real Ollama generator.
 - TPU / PyTorch-XLA: [`notebooks/trace_rag_colab_tpu.ipynb`](notebooks/trace_rag_colab_tpu.ipynb) and [`docs/COLAB_TPU_RUNBOOK.md`](docs/COLAB_TPU_RUNBOOK.md).
-- CUDA GPU: [`notebooks/trace_rag_colab.ipynb`](notebooks/trace_rag_colab.ipynb) and [`docs/COLAB_RUNBOOK.md`](docs/COLAB_RUNBOOK.md).
+- Legacy CUDA development walkthrough: [`notebooks/trace_rag_colab.ipynb`](notebooks/trace_rag_colab.ipynb) and [`docs/COLAB_RUNBOOK.md`](docs/COLAB_RUNBOOK.md).
 
-The TPU notebook now targets the full 2.68M-passage BEIR NQ corpus and a real
-Ollama model, but remains experimental until it completes on live hardware. It
-samples query traffic and uses controlled poison mutations; it is an integration
-smoke, not a complete attack/baseline/seed benchmark or real-incident study.
+The full-NQ T4 and TPU notebooks index the full 2.68M-passage BEIR NQ corpus
+and use a real Ollama model, but remain experimental until completed on live
+hardware. They sample query traffic and use controlled poison mutations; neither
+is a complete attack/baseline/seed benchmark or a real-incident study. BEIR NQ
+lacks contributor/source timestamps, so generated attack inputs and title-based
+source IDs are explicitly distinguished from authentic provenance.
 
 ## Quick start
 

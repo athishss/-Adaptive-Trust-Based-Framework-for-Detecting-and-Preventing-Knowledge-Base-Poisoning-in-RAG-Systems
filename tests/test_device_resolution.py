@@ -116,6 +116,7 @@ def test_embedder_factory_passes_the_configured_max_length(monkeypatch):
 
     monkeypatch.setattr(hf_embedder, "HFEmbedder", fake_embedder)
     build_embedder(EmbeddingConfig(backend="huggingface", model_name="small-model",
-                                  max_length=128, device="tpu"))
+                                  max_length=128, device="cuda", dtype="float16"))
     assert captured["max_length"] == 128
-    assert captured["device"] == "tpu"
+    assert captured["device"] == "cuda"
+    assert captured["dtype"] == "float16"
