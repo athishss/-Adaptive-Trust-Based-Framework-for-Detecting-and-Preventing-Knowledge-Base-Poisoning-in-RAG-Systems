@@ -82,30 +82,59 @@ def banner(title: str) -> None:
 
 
 def load_questions(path: Path) -> List[Dict[str, str]]:
-    """Accept either the mini-corpus question format or a BEIR queries file."""
+    """Load mini-corpus JSON, a JSON array/object, or BEIR JSONL queries."""
     text = path.read_text(encoding="utf-8").strip()
-    questions: List[Dict[str, str]] = []
-    if text.startswith("{"):
+    if not text:
+        return []
+
+    # The mini fixture is one JSON object containing a ``questions`` array.
+    # BEIR's sampled query file is newline-delimited JSON, so parsing the whole
+    # file as one JSON value raises ``Extra data`` after its first row.
+    try:
         payload = json.loads(text)
-        false_answers = payload.get("false_answers", {})
-        for item in payload.get("questions", []):
-            qid = str(item.get("qid") or item.get("_id"))
-            questions.append({
-                "qid": qid,
-                "question": str(item["question"]),
-                "gold_answer": str(item.get("gold_answer", "")),
-                "false_answer": str(item.get("false_answer") or false_answers.get(qid, "")),
-            })
-        return questions
-    for line in text.splitlines():
-        if line.strip():
-            row = json.loads(line)
-            questions.append({
-                "qid": str(row.get("_id") or row.get("qid")),
-                "question": str(row.get("text") or row.get("question")),
-                "gold_answer": str(row.get("gold_answer", "")),
-                "false_answer": str(row.get("false_answer", "")),
-            })
+    except json.JSONDecodeError:
+        payload = None
+
+    false_answers: Dict[str, str] = {}
+    if isinstance(payload, dict) and "questions" in payload:
+        rows = payload.get("questions", [])
+        raw_false_answers = payload.get("false_answers", {})
+        if isinstance(raw_false_answers, dict):
+            false_answers = raw_false_answers
+    elif isinstance(payload, list):
+        rows = payload
+    elif isinstance(payload, dict):
+        rows = [payload]
+    else:
+        rows = []
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Invalid JSON in query file {path} at line {line_number}: {exc.msg}"
+                ) from exc
+            rows.append(row)
+
+    questions: List[Dict[str, str]] = []
+    for row_number, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            raise ValueError(f"Query row {row_number} in {path} must be a JSON object")
+        qid_value = row.get("qid") or row.get("_id")
+        question_value = row.get("question") or row.get("text")
+        if qid_value is None or question_value is None:
+            raise ValueError(
+                f"Query row {row_number} in {path} needs a qid/_id and question/text field"
+            )
+        qid = str(qid_value)
+        questions.append({
+            "qid": qid,
+            "question": str(question_value),
+            "gold_answer": str(row.get("gold_answer") or ""),
+            "false_answer": str(row.get("false_answer") or false_answers.get(qid, "")),
+        })
     return questions
 
 

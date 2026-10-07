@@ -25,6 +25,21 @@ def test_load_questions_keeps_type_compatible_false_answers(tmp_path):
     assert question["false_answer"] == "11200 metres"
 
 
+def test_load_questions_accepts_beir_jsonl_queries(tmp_path):
+    path = tmp_path / "queries_subset.jsonl"
+    path.write_text("\n".join((
+        json.dumps({"_id": "nq-1", "text": "Who designed the tower?"}),
+        json.dumps({"qid": "nq-2", "text": "When was it built?"}),
+    )), encoding="utf-8")
+    questions = load_questions(path)
+    assert questions == [
+        {"qid": "nq-1", "question": "Who designed the tower?",
+         "gold_answer": "", "false_answer": ""},
+        {"qid": "nq-2", "question": "When was it built?",
+         "gold_answer": "", "false_answer": ""},
+    ]
+
+
 def test_numeric_poison_uses_a_numeric_false_answer():
     poison, attack = corrupt_passage(
         "Mount Everest has a summit elevation of 8849 metres.",
