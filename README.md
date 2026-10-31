@@ -270,10 +270,13 @@ pytest -q
 pytest -q --cov=trace_rag --cov-report=term-missing
 ```
 
-Result: **250 passed, 6 skipped**. Coverage: **80%** overall (5694 statements).
+Result: **266 passed, 6 skipped**. Coverage: **80%** overall (5704 statements).
 The suite runs with `ResourceWarning` visible; no unclosed SQLite connections
 remain. Skips are optional backends: `faiss-cpu` (2 tests), `torch` (1),
-`matplotlib` (3). Full logs: [`baseline_logs/`](baseline_logs/).
+`matplotlib` (3). The readiness tests now cover empty/whitespace HF, OpenAI and
+Ollama completions, HTTP timeouts, credential redaction, malformed/missing NLI
+outputs and the NLI-not-loaded path; preflight classification is also tested.
+Full logs: [`baseline_logs/`](baseline_logs/).
 
 ### Chronological smoke matrix
 
@@ -333,31 +336,78 @@ default, the UNPROTECTED baseline report and every functional readiness probe
 
 ---
 
-## Real-model Natural Questions experiment
+## Research readiness and real-model protocol
 
-Not run here. The protocol targets a **200,000-passage / 500-query subset**, not
-the full 2.68M-passage corpus, and it is not a completed experiment. The exact
-prerequisites and commands are in
-[`docs/REAL_MODEL_EVAL.md`](docs/REAL_MODEL_EVAL.md). Short version:
+**No real-model experiment has been run here.** Two deliberately separate scopes
+are defined in [`docs/REAL_MODEL_EVAL.md`](docs/REAL_MODEL_EVAL.md):
+
+* **Integration pilot** — a small real-model run (5,000 passages, 20 queries) to
+  prove the complete Contriever → FAISS → Llama → DeBERTa NLI → SQLite path.
+  Its metrics are engineering validation, not research findings.
+* **Research experiment** — the 200,000-passage / 500-query Natural Questions
+  subset, not the full 2.68M corpus. It has not been executed.
+
+### Preflight
+
+`scripts/check_research_environment.py` inspects the host, packages, CUDA,
+disk, configured endpoint, model cache, persistent ledger, dataset files and
+configuration. It never downloads weights or starts a service. Static success
+is only `DEGRADED`; `READY` requires the functional doctor to report
+`PROTECTED`:
 
 ```bash
-pip install -e ".[all,data]"
-python scripts/download_data.py --dataset nq --out data/nq --subset 200000 --queries 500
-trace-rag --config config/nq_gpu.yaml ingest-beir --corpus data/nq/corpus_subset.parquet
-trace-rag --config config/nq_gpu.yaml index
-vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
-python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
-  --corpus data/nq/corpus_subset.parquet \
-  --queries data/nq/queries_subset.jsonl \
-  --qrels data/nq/qrels.tsv --out runs/nq/trust_stream
+python scripts/check_research_environment.py --config config/nq_gpu.yaml
+python scripts/check_research_environment.py --config config/nq_gpu.yaml \
+  --functional --corpus data/nq/corpus_subset.parquet \
+  --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv
 ```
 
-The NLI verifier downloads `cross-encoder/nli-deberta-v3-base` on first use.
-A real run is only reportable when `trace-rag doctor` says `PROTECTED` after its
-functional probes pass, the verifier mode is `nli`, and the run has a persistent
-trust database. The trust-stream runner reports retrieval, exposure and citation
-of the injected documents; it does **not** compute answer-level ASR. Dataset
-licensing and citation requirements are in `docs/REAL_MODEL_EVAL.md`.
+Current host result: **BLOCKED** — `torch`, `transformers`, `faiss` and
+`pyarrow` are absent, CUDA is unavailable, Contriever is not cached, and no
+generator is served at `localhost:8000`. That is an accurate environment
+result, not a model result.
+
+### Integration pilot
+
+Prepare a small subset (the downloader first fetches the BEIR source corpus;
+do not do this on a constrained disk), start vLLM, then run with the explicit
+fail-closed flag:
+
+```bash
+python scripts/download_data.py --dataset nq --out data/nq_pilot \
+  --subset 5000 --queries 20
+vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+python scripts/check_research_environment.py --config config/pilot_gpu.yaml \
+  --functional --corpus data/nq_pilot/corpus_subset.parquet \
+  --queries data/nq_pilot/queries_subset.jsonl --qrels data/nq_pilot/qrels.tsv
+python scripts/run_trust_stream.py --config config/pilot_gpu.yaml \
+  --corpus data/nq_pilot/corpus_subset.parquet \
+  --queries data/nq_pilot/queries_subset.jsonl --qrels data/nq_pilot/qrels.tsv \
+  --steps 20 --targets 2 --out runs/pilot/trust_stream --require-protected
+```
+
+### Research experiment
+
+```bash
+python scripts/download_data.py --dataset nq --out data/nq \
+  --subset 200000 --queries 500
+vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
+python scripts/check_research_environment.py --config config/nq_gpu.yaml \
+  --functional --corpus data/nq/corpus_subset.parquet \
+  --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv
+python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
+  --corpus data/nq/corpus_subset.parquet \
+  --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv \
+  --steps 500 --targets 3 --out runs/nq/trust_stream
+```
+
+For a non-stub generation backend the runner now refuses to proceed unless the
+functional doctor is `PROTECTED`, the verifier is NLI and the trust ledger is
+persistent. `--require-protected` additionally enforces that gate for any
+backend. `run_manifest.json` records the commit, dataset hashes, resolved
+configuration, model backends, seed, hardware, ledger path, indexed passages and
+evaluated queries. The runner writes exposure/citation and document-level
+precision/recall/F1/FPR; answer-level ASR remains **NOT MEASURED**.
 
 ---
 
@@ -380,6 +430,9 @@ licensing and citation requirements are in `docs/REAL_MODEL_EVAL.md`.
 * Optional real backends (`faiss`, `torch`, `transformers`, `pyarrow`,
   `matplotlib`) are not installed in this environment; their tests are skipped
   or their code paths unexercised.
+* The research preflight is **BLOCKED** on this host. The integration pilot and
+  the 200K/500 research experiment cannot run until the documented GPU, model
+  cache, generator endpoint and Python dependencies exist.
 * The `run_trust_stream.py` mini run does not train the suspicion scorer; it
   uses the heuristic thresholds. Real runs should train and validate the scorer
   on labelled rows first.

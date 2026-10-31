@@ -1,0 +1,218 @@
+{
+  "status": "BLOCKED",
+  "status_reason": "7 blocking check(s) failed",
+  "checks": [
+    {
+      "name": "python",
+      "status": "ok",
+      "detail": "3.13.3 on Windows-11-10.0.26200-SP0",
+      "remediation": "Python 3.10+ is required; 3.11+ is recommended"
+    },
+    {
+      "name": "disk",
+      "status": "ok",
+      "detail": "88.2 GiB free at C:\\Users\\athis\\roblox-groupfinder\\RAGLedger",
+      "remediation": "free at least ~20 GiB for a 200K subset and model cache"
+    },
+    {
+      "name": "dependency:torch",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install torch  # use the CUDA build from pytorch.org"
+    },
+    {
+      "name": "dependency:transformers",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install transformers"
+    },
+    {
+      "name": "dependency:faiss",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install faiss-cpu  # or a CUDA-enabled faiss build"
+    },
+    {
+      "name": "dependency:pyarrow",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install pyarrow"
+    },
+    {
+      "name": "gpu",
+      "status": "fail",
+      "detail": "PyTorch is unavailable, so CUDA cannot be checked",
+      "remediation": "install the CUDA build of PyTorch"
+    },
+    {
+      "name": "config",
+      "status": "ok",
+      "detail": "loaded config\\nq_gpu.yaml",
+      "remediation": "fix the YAML if validation fails"
+    },
+    {
+      "name": "verifier",
+      "status": "ok",
+      "detail": "security.verifier=nli (must also pass the functional NLI probe)",
+      "remediation": "install transformers and cache cross-encoder/nli-deberta-v3-base"
+    },
+    {
+      "name": "embedding",
+      "status": "ok",
+      "detail": "embedding model facebook/contriever (cache below)",
+      "remediation": ""
+    },
+    {
+      "name": "index",
+      "status": "ok",
+      "detail": "FAISS flat",
+      "remediation": ""
+    },
+    {
+      "name": "cache:embedding",
+      "status": "fail",
+      "detail": "facebook/contriever: not found in local cache",
+      "remediation": "allow the first real run to download facebook/contriever once, or pre-populate the Hugging Face cache; the preflight itself never downloads weights"
+    },
+    {
+      "name": "cache:nli",
+      "status": "ok",
+      "detail": "cross-encoder/nli-deberta-v3-base: cached",
+      "remediation": "allow the first real run to download cross-encoder/nli-deberta-v3-base once, or pre-populate the Hugging Face cache; the preflight itself never downloads weights"
+    },
+    {
+      "name": "generation_endpoint",
+      "status": "fail",
+      "detail": "endpoint unavailable: URLError: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>",
+      "remediation": "start the configured vLLM/Ollama server and serve exactly meta-llama/Llama-3.1-8B-Instruct"
+    },
+    {
+      "name": "trust_ledger",
+      "status": "ok",
+      "detail": "path is writable; the run will create it",
+      "remediation": ""
+    },
+    {
+      "name": "dataset",
+      "status": "warn",
+      "detail": "pass --corpus/--queries/--qrels to check the prepared subset",
+      "remediation": ""
+    }
+  ],
+  "warnings": [
+    {
+      "name": "dataset",
+      "status": "warn",
+      "detail": "pass --corpus/--queries/--qrels to check the prepared subset",
+      "remediation": ""
+    }
+  ],
+  "failures": [
+    {
+      "name": "dependency:torch",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install torch  # use the CUDA build from pytorch.org"
+    },
+    {
+      "name": "dependency:transformers",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install transformers"
+    },
+    {
+      "name": "dependency:faiss",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install faiss-cpu  # or a CUDA-enabled faiss build"
+    },
+    {
+      "name": "dependency:pyarrow",
+      "status": "fail",
+      "detail": "not installed",
+      "remediation": "pip install pyarrow"
+    },
+    {
+      "name": "gpu",
+      "status": "fail",
+      "detail": "PyTorch is unavailable, so CUDA cannot be checked",
+      "remediation": "install the CUDA build of PyTorch"
+    },
+    {
+      "name": "cache:embedding",
+      "status": "fail",
+      "detail": "facebook/contriever: not found in local cache",
+      "remediation": "allow the first real run to download facebook/contriever once, or pre-populate the Hugging Face cache; the preflight itself never downloads weights"
+    },
+    {
+      "name": "generation_endpoint",
+      "status": "fail",
+      "detail": "endpoint unavailable: URLError: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>",
+      "remediation": "start the configured vLLM/Ollama server and serve exactly meta-llama/Llama-3.1-8B-Instruct"
+    }
+  ],
+  "system": {
+    "python": "3.13.3",
+    "executable": "C:\\Users\\athis\\roblox-groupfinder\\RAGLedger\\.venv\\Scripts\\python.exe",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 140 Stepping 2, GenuineIntel",
+    "cpu_count": 8,
+    "memory_bytes": 16806060032,
+    "memory_human": "15.7 GiB",
+    "disk_free_bytes": 94681726976,
+    "disk_free_human": "88.2 GiB"
+  },
+  "torch": {
+    "available": false,
+    "version": null,
+    "cuda": false,
+    "device_count": 0,
+    "devices": []
+  },
+  "config_path": "config\\nq_gpu.yaml",
+  "config": {
+    "seed": 20260921,
+    "embedding_model": "facebook/contriever",
+    "embedding_device": "auto",
+    "index": "faiss/flat",
+    "generation_backend": "openai",
+    "generation_model": "meta-llama/Llama-3.1-8B-Instruct",
+    "base_url": "http://localhost:8000/v1",
+    "verifier": "nli",
+    "trust_db": "runs\\nq\\trust.sqlite3",
+    "storage_root": "runs/nq"
+  },
+  "model_cache": [
+    {
+      "role": "embedding",
+      "model": "facebook/contriever",
+      "cached": false,
+      "source": "cache_scan_missing"
+    },
+    {
+      "role": "nli",
+      "model": "cross-encoder/nli-deberta-v3-base",
+      "cached": true,
+      "source": "cache_scan"
+    }
+  ],
+  "generation_endpoint": {
+    "status": "failed",
+    "backend": "openai",
+    "base_url": "http://localhost:8000/v1",
+    "detail": "endpoint unavailable: URLError: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>"
+  },
+  "trust_ledger": {
+    "status": "ready",
+    "path": "runs\\nq\\trust.sqlite3",
+    "initialized": false,
+    "detail": "path is writable; the run will create it",
+    "remediation": ""
+  },
+  "dataset": {
+    "status": "not_checked",
+    "detail": "pass --corpus/--queries/--qrels to check the prepared subset"
+  },
+  "functional_doctor": null
+}

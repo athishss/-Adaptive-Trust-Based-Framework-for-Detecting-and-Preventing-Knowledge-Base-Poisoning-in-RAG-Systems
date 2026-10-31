@@ -1,0 +1,173 @@
+12:42:34 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+12:42:34 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+12:42:34 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+12:42:34 INFO    trace_rag.pipeline | indexing 57 passages with hashing on cpu (this is the slow step)
+12:42:34 INFO    trace_rag.pipeline | indexed 57 chunks (index size 57)
+12:42:37 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_0 (4 docs in 60s)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_1#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.387)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_0#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.387)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_2#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.387)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_1#0000 MONITORED -> QUARANTINED (refutations=1, t_doc=0.270)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_0#0000 MONITORED -> QUARANTINED (refutations=1, t_doc=0.270)
+12:42:37 INFO    trace_rag.trust.ledger | trust: poison_eiffel_2#0000 MONITORED -> QUARANTINED (refutations=1, t_doc=0.270)
+
+==============================================================================
+1. Ingest: clean corpus first, attacker batch later
+==============================================================================
+  store: {'sources': 12, 'documents': 57, 'chunks': 57}   index: 57 passages
+
+==============================================================================
+2. Answer with untrained scorer (no Person B yet)
+   Q: Who designed the Eiffel Tower?
+==============================================================================
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   ?  POISON poison_eiffel_1#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_0#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_2#0000       suspicion=0.601 MEDIUM
+      clean  clean_eiffel_0#0000        suspicion=0.280 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.220 LOW
+
+==============================================================================
+3. Train the calibrated suspicion scorer
+==============================================================================
+  dataset: {'rows': 120, 'poison': 62, 'clean': 58, 'questions': 24, 'attack_families': ['poisonedrag_bb']}
+  thresholds: theta_low=1.000 theta_high=1.000
+
+==============================================================================
+4. Person B's trust framework (attached by the secure default)
+==============================================================================
+  DEGRADED | verifier=lexical | trust_db=runs\readiness_demo_b\trust.sqlite3
+  Policy: TrustPolicy (quarantine_refutations=1)
+
+  Q: Who designed the Eiffel Tower?
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   !  POISON poison_eiffel_1#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_0#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_2#0000       suspicion=1.000 HIGH
+      clean  clean_eiffel_0#0000        suspicion=0.000 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.000 LOW
+  excluded from answer: ['poison_eiffel_1#0000', 'poison_eiffel_0#0000', 'poison_eiffel_2#0000']
+
+==============================================================================
+5. Queued verification -> refute -> quarantine -> remediation
+==============================================================================
+  NOTE: this stage swaps in a deterministic, scripted verifier that refutes
+        passages containing 'Zog'.  It exercises the lifecycle; it is not
+        a detection result and does not stand in for the NLI verifier.
+  Query 1: excluded=3 queued=3 quarantined=['poison_eiffel_0#0000', 'poison_eiffel_1#0000', 'poison_eiffel_2#0000']
+  Query 2: excluded=0 queued=0 quarantined=none
+  Query 3: excluded=0 queued=0 quarantined=none
+
+  Trust state after repeated queries:
+    poison_eiffel_0#0000: t_eff=0.248 status=QUARANTINED (n_obs=5)
+    poison_eiffel_1#0000: t_eff=0.248 status=QUARANTINED (n_obs=5)
+    poison_eiffel_2#0000: t_eff=0.248 status=QUARANTINED (n_obs=5)
+
+  Blocked doc_ids: {'poison_eiffel_2#0000', 'poison_eiffel_0#0000', 'poison_eiffel_1#0000'}
+
+  Final answer (after trust evolution):
+  Q: Who designed the Eiffel Tower?
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+  abstained=False reason=None context=['clean_eiffel_0#0000', 'clean_eiffel_1#0000', 'late_clean_0#0000', 'clean_liberty_1#0000', 'clean_mona_0#0000'] evidence_mass=0.500
+  Poisoned passages in retrieval: none
+
+==============================================================================
+Summary
+==============================================================================
+{
+  "store": {
+    "sources": 12,
+    "documents": 57,
+    "chunks": 57
+  },
+  "index_size": 57,
+  "answers": {
+    "answers": 6,
+    "abstained": 0,
+    "flagged": 0,
+    "abstention_rate": 0.0,
+    "mean_llm_calls": 1.0,
+    "mean_latency_ms": 0.17205000525185218
+  },
+  "scorer": "lr-13f-n70-isotonic",
+  "embedder": "hashing",
+  "llm": "stub",
+  "trust_provider": "TrustLedger",
+  "verifier": "CorroborationVerifier",
+  "verifier_mode": "scripted",
+  "policy": "TrustPolicy",
+  "security_status": "DEGRADED",
+  "security": {
+    "status": "DEGRADED",
+    "status_reason": "a required backend is fallback, unavailable, or not functionally verified",
+    "configuration_valid": true,
+    "readiness_probes": {
+      "embedding": {
+        "backend": "hashing",
+        "model": null,
+        "status": "fallback",
+        "probe_shape": [
+          1,
+          256
+        ],
+        "dim": 256,
+        "finite": true,
+        "norm": 1.0,
+        "detail": "hashing/offline embedder is a test backend"
+      },
+      "generation": {
+        "backend": "stub",
+        "model": "stub",
+        "timeout_s": 10.0,
+        "status": "fallback",
+        "detail": "stub LLM is an offline test backend"
+      },
+      "nli_verifier": {
+        "requested": "lexical",
+        "mode": "scripted",
+        "nli_loaded": false,
+        "status": "unverified",
+        "detail": "custom verifier reports no NLI/lexical mode; not research-ready"
+      },
+      "trust_ledger": {
+        "persistent": true,
+        "path": "runs\\readiness_demo_b\\trust.sqlite3",
+        "status": "ready"
+      },
+      "queue": {
+        "status": "ready",
+        "max_size": 1000,
+        "pending": 0,
+        "dropped": 0
+      }
+    },
+    "readiness_ready": false,
+    "readiness_failures": [],
+    "probe_policy": "probes use already-constructed components; no model downloads and no services are started",
+    "security_enabled": true,
+    "trust_provider": "TrustLedger",
+    "trust_ledger_active": true,
+    "trust_persistent": true,
+    "trust_db": "runs\\readiness_demo_b\\trust.sqlite3",
+    "verifier": "DemoRefuteVerifier",
+    "verifier_active": true,
+    "verifier_mode": "scripted",
+    "verifier_degraded": true,
+    "policy": "TrustPolicy",
+    "policy_active": true,
+    "queue_enabled": true,
+    "queue_size": 1000,
+    "queue_pending": 0,
+    "embedder": "hashing",
+    "embedding_dim": 256,
+    "llm": "stub",
+    "smoke_test_backends": true,
+    "research_ready": false,
+    "fallbacks": [
+      "embedding: hashing/offline embedder is a test backend",
+      "generation: stub LLM is an offline test backend",
+      "nli_verifier: custom verifier reports no NLI/lexical mode; not research-ready"
+    ],
+    "warnings": []
+  }
+}

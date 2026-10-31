@@ -2,7 +2,7 @@
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-10-31
-**Code commit under test:** `49dc198cee4df80fceb423984984c17043a6684d`
+**Code commit under test:** `e84f60390f7011bf69eee1a3d42ff6a54b6a1901`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
 dependencies only (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML
 6.0.3, pytest 9.1.1, pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`,
@@ -33,8 +33,8 @@ After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite | **250 passed, 6 skipped** in 15.96 s |
-| Coverage | **80%** (5694 statements, 1161 missed) |
+| Full test suite | **266 passed, 6 skipped** in 45.38 s |
+| Coverage | **80%** (5704 statements, 1135 missed) |
 | Python compilation | `compileall` exit 0 |
 | ResourceWarnings | **0** with `-W always::ResourceWarning` |
 | Chronological matrix | **56/56 cases**, 0 failures |
@@ -49,6 +49,27 @@ benchmark result: the lexical verifier still misses several attack families,
 one clean passage is falsely quarantined in two smoke cases, and no real-model
 or full-dataset experiment has been executed.
 
+### Research-environment preflight (this pass)
+
+`scripts/check_research_environment.py` is the new non-invasive gate for a
+real-model run. It reports host/CPU/memory/disk, torch/CUDA/VRAM, the optional
+scientific packages, the configured generator endpoint and served model, the
+Hugging Face cache, the persistent SQLite ledger, dataset files and the resolved
+config. It never downloads weights or starts a service. Static checks alone can
+only produce `DEGRADED`; `READY` requires `--functional` and a `PROTECTED`
+functional doctor. Current NQ result: **BLOCKED** — torch, transformers, faiss
+and pyarrow are absent, CUDA is unavailable, `facebook/contriever` is not
+cached, and `localhost:8000` is not serving the configured Llama model. Exact
+output is in `baseline_logs/readiness_hardening_preflight.txt` and `.json`.
+
+The trust-stream runner now fails closed before ingestion for any non-stub
+generation backend (or with `--require-protected`) unless the doctor is
+`PROTECTED`, `verifier_mode == "nli"` and `trust_persistent` is true. This was
+verified with the offline config: exit 2 with the two expected blockers. A
+successful real run will also write `run_manifest.json` with the commit, dataset
+hashes, config, models, seed, hardware, ledger path and counts. The offline mini
+manifest is correct and explicitly says `run_kind: offline_smoke`.
+
 ---
 
 ## B. File-by-file change log
@@ -60,10 +81,12 @@ or full-dataset experiment has been executed.
 | `config/default.yaml` | Added `time`, `security` and `trust` sections; security enabled by default with lexical verifier, fail-closed MEDIUM handling, queue and evidence thresholds. |
 | `config/nq_gpu.yaml` | Added the same security/trust surface with `verifier: nli`, persistent ledger, queue and production quarantine thresholds. |
 | `config/full_nq.yaml` | Same real-model security configuration for the full-corpus IVF-PQ setup. |
+| `config/pilot_gpu.yaml` | **New:** explicit 5K/20-query integration-pilot configuration under `runs/pilot`; it keeps the research model identifiers and is not a results configuration. |
+| `scripts/check_research_environment.py` | **New:** READY/DEGRADED/BLOCKED preflight for Python, OS, CPU/RAM/disk, CUDA/VRAM, scientific packages, configured endpoint and served model, HF cache, persistent ledger, dataset and config. No downloads or service starts. |
 | `config.py` | Added `probe_timeout_s` (default 10 s, bounded 0–120 s) for the functional readiness probes. |
 | `scripts/demo_end_to_end.py` | Explicitly builds an **UNPROTECTED** Person A demo (`secure=False`) and prints that mode. |
 | `scripts/demo_person_b.py` | Reuses the attached security stack; scripted verifier exercises queue → refute → quarantine → remediation. |
-| `scripts/run_trust_stream.py` | Imports `zipf_queries` from its real home; reuses the attached stack; figures optional; its metrics note now states that answer-level ASR is **NOT MEASURED** and that exposure/citation are not answer success. |
+| `scripts/run_trust_stream.py` | Reuses the attached stack; figures optional; metrics state answer-level ASR is **NOT MEASURED**. **This pass:** fail-closed gate for real backends (`PROTECTED` + NLI + persistent ledger) before ingestion; `run_manifest.json` provenance; document-level precision/recall/F1/FPR and detection delay. |
 | `scripts/run_chronological_eval.py` | **New** supported matrix entry point (7 attacks × 8 baselines, deterministic fixture, machine-readable outputs). |
 
 ### Core integration and time model
@@ -142,7 +165,7 @@ or full-dataset experiment has been executed.
 | 14 | Medium | Zero-denominator rates returned fake `0.0`. | Direct division in metrics. | `_ratio` returns `None`; explicit rendering. | `test_metrics_and_zero_denominators` |
 | 15 | Medium | Scripts opened a second ledger on the same file. | Re-wiring instead of reusing the factory stack. | Reuse `pipeline.security`; stream refuses unprotected. | Scripts exit 0 (`baseline_logs/`) |
 | 16 | **High** | The smoke table reported **ASR 0.202**; the numerator was poison reaching the generation context, not a successful answer manipulation. | One metric name covered retrieval, citation and answer success; the harness inferred more than it measured. | `EvaluationResult` now carries `eligible_attack_attempts`, `poison_exposed_attempts/rate`, `poison_cited_attempts/rate` and `answer_level_asr=None` with `NOT MEASURED`. Results were regenerated; the old number is relabelled exposure. | `test_poison_rates_use_eligible_attempts_and_hand_calculated_counts`, `test_answer_level_asr_is_explicitly_not_measured`, matrix output asserts `attack_success_rate` absent and `answer_level_asr_status == "NOT MEASURED"` |
-| 17 | **High** | `doctor` trusted model names, `/models` metadata and `nli_ready` booleans; a reachable endpoint with a broken completion or an unloaded NLI model could look research-ready. | Readiness checked configuration, not operations. | Functional probes: finite embedding, two-token completion, fixed NLI inference with label/score validation; `PROTECTED` requires all to pass; `research_ready` requires `PROTECTED`. | 12 cases in `tests/test_security_wiring.py` |
+| 17 | **High** | `doctor` trusted model names, `/models` metadata and `nli_ready` booleans; a reachable endpoint with a broken completion or an unloaded NLI model could look research-ready. | Readiness checked configuration, not operations. | Functional probes: finite embedding, two-token completion, fixed NLI inference with label/score validation; `PROTECTED` requires all to pass; `research_ready` requires `PROTECTED`. **This pass:** HF empty/whitespace rejected, OpenAI/Ollama completion text validated, HTTP timeouts failed closed, credentials redacted, malformed/missing NLI outputs rejected, NLI-not-loaded is `failed`. | 20 cases in `tests/test_security_wiring.py` plus preflight tests |
 | 18 | **Medium** | Repeated `ResourceWarning: unclosed database`; abandoned ledgers/stores/logs leaked SQLite connections. | Clearance depended on every test closing its own object; failed paths never did. | Idempotent `close()` on `TrustLedger`, `ProvenanceStore`, `AnswerLog`; failed constructors close partial connections; `pipeline.close()` closes all owned resources; finalizers are a last resort; test teardown closes leftovers. | Full suite run with `-W always::ResourceWarning` reports 0 warnings |
 
 **Residual defect, not claimed fixed:** the lexical verifier still produces
@@ -272,8 +295,8 @@ pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1, pytest-cov 7.1.0. No GPU.
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **250 passed, 6 skipped** in 15.96 s |
-| Coverage | **80%** total (5694 statements, 1161 missed) |
+| `pytest -o addopts="" -q` | **266 passed, 6 skipped** in 45.38 s |
+| Coverage | **80%** total (5704 statements, 1135 missed) |
 | `-W always::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
 | `check_setup.py` | exit 1: only `pyarrow` missing; torch/transformers/ollama/vLLM warnings are expected on this host |
@@ -490,7 +513,7 @@ python scripts/run_trust_stream.py --config config/default.yaml \
   --steps 12 --targets 2 --out runs/final_trust_stream
 ```
 
-Expected: **250 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
+Expected: **266 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
 `doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning run
 is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
 statement and `answer_level_asr_status = NOT MEASURED`.

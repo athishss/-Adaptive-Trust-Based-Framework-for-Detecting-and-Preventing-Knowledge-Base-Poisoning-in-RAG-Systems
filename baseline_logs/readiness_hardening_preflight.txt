@@ -1,0 +1,38 @@
+RAGLedger research-environment preflight
+  python: 3.13.3  (Windows-11-10.0.26200-SP0)
+  cpu: 8 logical cores   memory: 15.7 GiB
+  disk free: 88.2 GiB
+
+  [OK  ] python: 3.13.3 on Windows-11-10.0.26200-SP0
+  [OK  ] disk: 88.2 GiB free at C:\Users\athis\roblox-groupfinder\RAGLedger
+  [FAIL] dependency:torch: not installed
+         fix: pip install torch  # use the CUDA build from pytorch.org
+  [FAIL] dependency:transformers: not installed
+         fix: pip install transformers
+  [FAIL] dependency:faiss: not installed
+         fix: pip install faiss-cpu  # or a CUDA-enabled faiss build
+  [FAIL] dependency:pyarrow: not installed
+         fix: pip install pyarrow
+  [FAIL] gpu: PyTorch is unavailable, so CUDA cannot be checked
+         fix: install the CUDA build of PyTorch
+  [OK  ] config: loaded config\nq_gpu.yaml
+  [OK  ] verifier: security.verifier=nli (must also pass the functional NLI probe)
+  [OK  ] embedding: embedding model facebook/contriever (cache below)
+  [OK  ] index: FAISS flat
+  [FAIL] cache:embedding: facebook/contriever: not found in local cache
+         fix: allow the first real run to download facebook/contriever once, or pre-populate the Hugging Face cache; the preflight itself never downloads weights
+  [OK  ] cache:nli: cross-encoder/nli-deberta-v3-base: cached
+  [FAIL] generation_endpoint: endpoint unavailable: URLError: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>
+         fix: start the configured vLLM/Ollama server and serve exactly meta-llama/Llama-3.1-8B-Instruct
+  [OK  ] trust_ledger: path is writable; the run will create it
+  [WARN] dataset: pass --corpus/--queries/--qrels to check the prepared subset
+
+RESULT: BLOCKED - 7 blocking check(s) failed
+Blocking checks:
+  - dependency:torch: not installed
+  - dependency:transformers: not installed
+  - dependency:faiss: not installed
+  - dependency:pyarrow: not installed
+  - gpu: PyTorch is unavailable, so CUDA cannot be checked
+  - cache:embedding: facebook/contriever: not found in local cache
+  - generation_endpoint: endpoint unavailable: URLError: <urlopen error [WinError 10061] No connection could be made because the target machine actively refused it>
