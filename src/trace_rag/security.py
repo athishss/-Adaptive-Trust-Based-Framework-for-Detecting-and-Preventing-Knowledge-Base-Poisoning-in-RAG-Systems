@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 import urllib.error
 import urllib.request
@@ -146,6 +147,11 @@ def _component_name(component: Any) -> Optional[str]:
 def _probe_embedding(pipeline) -> Dict[str, Any]:
     """Encode a tiny probe with the *already constructed* embedder.
 
+    A successful call is not enough: the vector must have the configured
+    dimensionality, contain only finite values, and not be an all-zero
+    placeholder.  The hashing embedder still passes this functional check, but
+    is reported as a fallback because it is an offline test backend.
+
     This performs no download and no service startup: if the model failed to
     load, pipeline construction has already failed and the CLI reports the
     exception.  A loaded-but-broken backend is caught here.
@@ -162,12 +168,23 @@ def _probe_embedding(pipeline) -> Dict[str, Any]:
         dim = int(getattr(embedder, "dim", 0) or 0)
         if len(shape) != 2 or shape[0] != 1:
             raise ValueError(f"probe returned shape {shape}")
+        if int(shape[1]) <= 0:
+            raise ValueError(f"probe returned an empty vector (shape {shape})")
         if dim and int(shape[1]) != dim:
             raise ValueError(f"probe returned dim {shape[1]}, expected {dim}")
-        detail.update({"status": "ready", "probe_shape": list(shape), "dim": dim})
-        if name == "hashing":
+        rows = matrix.ravel() if callable(getattr(matrix, "ravel", None)) else matrix
+        values = [float(value) for value in rows]
+        if not values or not all(math.isfinite(value) for value in values):
+            raise ValueError("probe returned non-finite values")
+        norm = sum(value * value for value in values) ** 0.5
+        if norm <= 0.0:
+            raise ValueError("probe returned an all-zero vector")
+        detail.update({"status": "ready", "probe_shape": list(shape),
+                       "dim": int(shape[1]), "finite": True,
+                       "norm": round(norm, 6)})
+        if name == "hashing" or bool(getattr(embedder, "is_offline", False)):
             detail["status"] = "fallback"
-            detail["detail"] = "hashing embedder is an offline test backend"
+            detail["detail"] = "hashing/offline embedder is a test backend"
         return detail
     except Exception as exc:  # noqa: BLE001 - readiness must report, not crash
         return {**detail, "status": "failed",
@@ -181,57 +198,103 @@ def _http_json(url: str, headers: Optional[Dict[str, str]] = None,
         return json.loads(response.read().decode("utf-8"))
 
 
-def _probe_generation(pipeline) -> Dict[str, Any]:
-    """Check the configured generator without starting it or generating text.
+def _http_post_json(url: str, payload: Dict[str, Any],
+                    headers: Optional[Dict[str, str]] = None,
+                    timeout: float = 5.0) -> Any:
+    body = json.dumps(payload).encode("utf-8")
+    merged = {"Content-Type": "application/json", **(headers or {})}
+    request = urllib.request.Request(url, data=body, headers=merged, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
-    ``stub`` is a documented offline fallback.  vLLM/OpenAI-compatible and
-    Ollama endpoints must answer a metadata request and list the configured
-    model.  An in-process transformers model must have its tokenizer and model
-    objects loaded.  No probe launches a server or downloads weights.
+
+def _probe_generation(pipeline) -> Dict[str, Any]:
+    """Exercise the configured generator with a minimal inference call.
+
+    Model metadata is necessary but not sufficient: an endpoint can list a
+    model and still fail every completion.  The probe sends one fixed, harmless
+    prompt with a two-token cap and requires a non-empty assistant response.
+    ``stub`` is a documented offline backend and is reported as a fallback.
+
+    No probe starts a service or downloads weights, and API keys are only ever
+    placed in request headers - never echoed in the report or an error.
     """
     llm = getattr(getattr(pipeline, "generator", None), "llm", None)
     name = getattr(llm, "name", None)
     backend = getattr(getattr(pipeline, "config", None), "generation", None)
     backend_name = getattr(backend, "backend", None)
-    detail: Dict[str, Any] = {"backend": backend_name, "model": name}
+    security = getattr(getattr(pipeline, "config", None), "security", None)
+    timeout = float(getattr(security, "probe_timeout_s", 10.0) or 10.0)
+    detail: Dict[str, Any] = {"backend": backend_name, "model": name,
+                              "timeout_s": timeout}
     if llm is None or not callable(getattr(llm, "generate", None)):
         return {**detail, "status": "failed", "detail": "no generation backend attached"}
     if name == "stub":
         return {**detail, "status": "fallback",
                 "detail": "stub LLM is an offline test backend"}
     try:
-        if backend_name == "openai" or hasattr(llm, "base_url") and "v1" in str(getattr(llm, "base_url", "")):
+        base_url = str(getattr(llm, "base_url", "")).rstrip("/")
+        if backend_name == "openai" or "v1" in base_url:
             headers = {"Content-Type": "application/json"}
             api_key = getattr(llm, "api_key", None)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            body = _http_json(f"{str(getattr(llm, 'base_url', '')).rstrip('/')}/models",
-                              headers=headers)
+            body = _http_json(f"{base_url}/models", headers=headers, timeout=timeout)
             ids = [str(item.get("id", "")) for item in (body.get("data") or [])
                    if isinstance(item, dict)]
             if not ids:
                 raise ValueError("endpoint returned no model ids")
             if name not in ids:
                 raise ValueError(f"configured model {name!r} not served (available: {ids[:5]})")
-            return {**detail, "status": "ready", "available_models": ids}
-        if backend_name == "ollama" or hasattr(llm, "base_url"):
-            base = str(getattr(llm, "base_url", "")).rstrip("/")
-            body = _http_json(f"{base}/api/tags")
+            generated = _http_post_json(
+                f"{base_url}/chat/completions",
+                {"model": name,
+                 "messages": [{"role": "user", "content": "Reply with OK."}],
+                 "temperature": 0.0, "max_tokens": 2,
+                 "seed": int(getattr(llm, "seed", 0) or 0)},
+                headers=headers, timeout=timeout,
+            )
+            try:
+                text = generated["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise ValueError("generation response has no assistant text") from exc
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("generation returned an empty response")
+            return {**detail, "status": "ready", "available_models": ids,
+                    "served_model": str(generated.get("model") or name),
+                    "probe_response_chars": len(text.strip())}
+        if backend_name == "ollama" or base_url:
+            body = _http_json(f"{base_url}/api/tags", timeout=timeout)
             models = [str(item.get("name", "")) for item in (body.get("models") or [])
                       if isinstance(item, dict)]
             if not any(item == name or item.split(":")[0] == str(name).split(":")[0]
                        for item in models):
                 raise ValueError(f"configured model {name!r} not present "
                                  f"(available: {models[:5]})")
-            return {**detail, "status": "ready", "available_models": models}
+            generated = _http_post_json(
+                f"{base_url}/api/generate",
+                {"model": name, "prompt": "Reply with OK.", "stream": False,
+                 "options": {"temperature": 0.0, "num_predict": 2}},
+                timeout=timeout,
+            )
+            text = generated.get("response")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("generation returned an empty response")
+            return {**detail, "status": "ready", "available_models": models,
+                    "served_model": str(generated.get("model") or name),
+                    "probe_response_chars": len(text.strip())}
         if backend_name == "huggingface":
             tokenizer = getattr(llm, "tokenizer", None)
             model = getattr(llm, "model", None)
             if tokenizer is None or model is None:
                 raise ValueError("transformers tokenizer/model is not loaded")
-            tokenizer("readiness probe", return_tensors=None)
+            response = llm.generate("Reply with OK.", max_tokens=2)
+            text = getattr(response, "text", None)
+            if text is None:
+                raise ValueError("generation returned no response object")
             return {**detail, "status": "ready",
-                    "device": getattr(llm, "device", None)}
+                    "device": getattr(llm, "device", None),
+                    "probe_response_chars": len(str(text).strip())}
         return {**detail, "status": "unverified",
                 "detail": "generation backend has no readiness probe"}
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
@@ -249,7 +312,27 @@ def _probe_nli(verifier, requested: Optional[str]) -> Dict[str, Any]:
     detail: Dict[str, Any] = {"requested": requested, "mode": mode,
                               "nli_loaded": nli_ready}
     if mode == "nli" and nli_ready:
-        return {**detail, "status": "ready"}
+        probe = getattr(verifier, "nli_probe", None)
+        if not callable(probe):
+            return {**detail, "status": "failed",
+                    "detail": "verifier exposes no functional NLI probe"}
+        try:
+            result = probe()
+            if not isinstance(result, dict) or result.get("status") != "ready":
+                message = result.get("detail") if isinstance(result, dict) else result
+                raise ValueError(f"NLI inference probe failed: {message}")
+            label = result.get("label")
+            score = float(result.get("score"))
+            if label not in {"entailment", "contradiction", "neutral"}:
+                raise ValueError(f"unexpected NLI label {label!r}")
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                raise ValueError(f"invalid NLI score {score!r}")
+            detail.update(result)
+            detail["status"] = "ready"
+            return detail
+        except Exception as exc:  # noqa: BLE001 - a broken model is not readiness
+            return {**detail, "status": "failed",
+                    "detail": f"{type(exc).__name__}: {exc}"}
     if mode == "lexical":
         error = getattr(verifier, "nli_error", None)
         message = "lexical fallback active"
@@ -259,8 +342,8 @@ def _probe_nli(verifier, requested: Optional[str]) -> Dict[str, Any]:
                 message += f" ({error})"
         return {**detail, "status": "fallback" if requested != "nli" else "failed",
                 "detail": message}
-    return {**detail, "status": "failed",
-            "detail": "verifier did not report an NLI or lexical mode"}
+    return {**detail, "status": "unverified",
+            "detail": "custom verifier reports no NLI/lexical mode; not research-ready"}
 
 
 def _probe_ledger(ledger) -> Dict[str, Any]:
@@ -367,16 +450,24 @@ def security_health(pipeline) -> Dict[str, Any]:
                           for check in checks.values())
     critical_failure = any(check.get("status") == "failed"
                            for check in (checks["trust_ledger"], checks["queue"]))
-    if not critical or critical_failure:
+    if not critical:
         status = UNPROTECTED
+        status_reason = "security-disabled or a critical control is not attached"
+    elif critical_failure:
+        status = UNPROTECTED
+        status_reason = "a critical control (persistent ledger or queue) failed its probe"
     elif readiness_ready:
         status = PROTECTED
+        status_reason = "all required functional probes passed"
     else:
         status = DEGRADED
+        status_reason = ("a required backend is fallback, unavailable, or "
+                         "not functionally verified")
 
     offline = [item for item in (embedder_name, llm_name) if item in ("hashing", "stub")]
     return {
         "status": status,
+        "status_reason": status_reason,
         "configuration_valid": enabled and ledger_active and verifier_active
                                and policy_active and queue_active,
         "readiness_probes": checks,
@@ -402,7 +493,8 @@ def security_health(pipeline) -> Dict[str, Any]:
         "embedding_dim": getattr(embedder, "dim", None),
         "llm": llm_name,
         "smoke_test_backends": bool(offline),
-        "research_ready": bool(readiness_ready and failures == []),
+        "research_ready": bool(status == PROTECTED and readiness_ready
+                               and failures == []),
         "fallbacks": fallbacks,
         "warnings": warnings,
     }

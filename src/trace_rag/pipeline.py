@@ -123,6 +123,7 @@ class PersonAPipeline:
         self.remediation = RemediationService(self.answer_log)
         self.security: Optional[Any] = None
         self._query_counter = 0
+        self._closed = False
 
     # --------------------------------------------------------------- factory
     @classmethod
@@ -135,34 +136,43 @@ class PersonAPipeline:
         the run as RAGLedger.
         """
         store = ProvenanceStore(config.path(config.storage.provenance_db))
-        embedder = build_embedder(config.embedding)
-        index_path = config.path(config.storage.index_path)
-        index = None
-        if load_existing_index:
-            for suffix in (".npz", ".faiss"):
-                if Path(str(index_path) + suffix).exists():
-                    index = load_index(config.index, str(index_path))
-                    break
-        if index is None:
-            index = build_index(config.index, embedder.dim)
-        scorer = kwargs.pop("scorer", None)
-        if scorer is None and config.scorer.model_path and Path(config.scorer.model_path).exists():
-            scorer = SuspicionScorer.load(config.scorer.model_path)
-        pipeline = cls(config=config, store=store, index=index, embedder=embedder,
-                       scorer=scorer, **kwargs)
-        want_secure = config.security.enabled if secure is None else bool(secure)
-        # Keep the effective configuration honest: a pipeline built with
-        # ``secure=False`` must report ``security_enabled: false`` from
-        # ``health_check``, not claim the defence is on while it is detached.
-        want_secure = bool(want_secure and config.security.enabled)
-        config.security.enabled = want_secure
-        if want_secure:
-            from .security import attach_security
+        pipeline: Optional["PersonAPipeline"] = None
+        try:
+            embedder = build_embedder(config.embedding)
+            index_path = config.path(config.storage.index_path)
+            index = None
+            if load_existing_index:
+                for suffix in (".npz", ".faiss"):
+                    if Path(str(index_path) + suffix).exists():
+                        index = load_index(config.index, str(index_path))
+                        break
+            if index is None:
+                index = build_index(config.index, embedder.dim)
+            scorer = kwargs.pop("scorer", None)
+            if (scorer is None and config.scorer.model_path
+                    and Path(config.scorer.model_path).exists()):
+                scorer = SuspicionScorer.load(config.scorer.model_path)
+            pipeline = cls(config=config, store=store, index=index, embedder=embedder,
+                           scorer=scorer, **kwargs)
+            want_secure = config.security.enabled if secure is None else bool(secure)
+            # Keep the effective configuration honest: a pipeline built with
+            # ``secure=False`` must report ``security_enabled: false`` from
+            # ``health_check``, not claim the defence is on while it is detached.
+            want_secure = bool(want_secure and config.security.enabled)
+            config.security.enabled = want_secure
+            if want_secure:
+                from .security import attach_security
 
-            attach_security(pipeline)
-        else:
-            logger.warning("pipeline built with secure=False: UNPROTECTED baseline")
-        return pipeline
+                attach_security(pipeline)
+            else:
+                logger.warning("pipeline built with secure=False: UNPROTECTED baseline")
+            return pipeline
+        except Exception:
+            if pipeline is not None:
+                pipeline.close()
+            else:
+                store.close()
+            raise
 
     # ------------------------------------------------------------------ core
     def retrieve(self, query: str, query_id: str = "q0") -> RetrievalOutcome:
@@ -386,10 +396,17 @@ class PersonAPipeline:
         }
 
     def close(self) -> None:
-        if self.security is not None:
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        try:
+            if self.security is not None:
+                try:
+                    self.security.close()
+                except Exception:  # noqa: BLE001 - close must be best-effort
+                    logger.warning("closing the security stack failed", exc_info=True)
+        finally:
             try:
-                self.security.close()
-            except Exception:  # noqa: BLE001 - close must be best-effort
-                logger.warning("closing the security stack failed", exc_info=True)
-        self.store.close()
-        self.answer_log.close()
+                self.store.close()
+            finally:
+                self.answer_log.close()

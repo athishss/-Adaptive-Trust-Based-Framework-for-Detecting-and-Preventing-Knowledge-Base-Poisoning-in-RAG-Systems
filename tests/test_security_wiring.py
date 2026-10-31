@@ -22,6 +22,7 @@ from trace_rag.contracts import (
 import numpy as np
 
 from trace_rag import security as security_module
+from trace_rag.generation.llm import LLMError, LLMResponse
 from trace_rag.pipeline import PersonAPipeline
 from trace_rag.security import DEGRADED, PROTECTED, UNPROTECTED, security_health
 from trace_rag.trust.ledger import TrustLedger
@@ -87,7 +88,22 @@ class _ReadyLLM:
     base_url = "http://localhost:9999/v1"
 
     def generate(self, prompt, max_tokens=256, stop=None):
-        raise AssertionError("readiness must not generate text")
+        return LLMResponse(text="OK", llm_calls=1, model=self.name)
+
+
+class _NaNEmbedder(_ReadyEmbedder):
+    def encode_queries(self, texts, batch_size=32):
+        return np.full((len(texts), self.dim), np.nan, dtype=np.float32)
+
+
+class _ZeroEmbedder(_ReadyEmbedder):
+    def encode_queries(self, texts, batch_size=32):
+        return np.zeros((len(texts), self.dim), dtype=np.float32)
+
+
+class _WrongDimEmbedder(_ReadyEmbedder):
+    def encode_queries(self, texts, batch_size=32):
+        return np.ones((len(texts), self.dim + 1), dtype=np.float32)
 
 
 class _FakeNLI:
@@ -96,10 +112,29 @@ class _FakeNLI:
         self.nli_ready = ready
         self.nli_error = None if ready else "model download failed"
 
+    def nli_probe(self):
+        if not self.nli_ready:
+            return {"status": "failed", "detail": self.nli_error}
+        return {"status": "ready", "label": "entailment", "score": 0.99,
+                "model": "fake-nli"}
+
+
+class _BrokenProbeNLI(_FakeNLI):
+    def __init__(self):
+        super().__init__(ready=True)
+
+    def nli_probe(self):
+        raise RuntimeError("NLI inference crashed")
+
 
 def _ready_pipeline(pipeline, monkeypatch, embedder=None):
     monkeypatch.setattr(security_module, "_http_json",
                         lambda *args, **kwargs: {"data": [{"id": "fake/real-llm"}]})
+    monkeypatch.setattr(security_module, "_http_post_json",
+                        lambda *args, **kwargs: {
+                            "model": "fake/real-llm",
+                            "choices": [{"message": {"content": "OK"}}],
+                        })
     pipeline.embedder = embedder or _ReadyEmbedder()
     pipeline.generator.llm = _ReadyLLM()
     pipeline.verifier = _FakeNLI(ready=True)
@@ -117,6 +152,9 @@ def test_protected_requires_working_probes_not_configured_names(config, monkeypa
         assert health["readiness_probes"]["embedding"]["status"] == "ready"
         assert health["readiness_probes"]["generation"]["status"] == "ready"
         assert health["readiness_probes"]["nli_verifier"]["status"] == "ready"
+        assert health["readiness_probes"]["generation"]["served_model"] == "fake/real-llm"
+        assert health["readiness_probes"]["nli_verifier"]["label"] == "entailment"
+        assert health["research_ready"] is True
 
         # Same configured model names, but the embedding backend fails its
         # probe: PROTECTED is withdrawn and the error is explicit.
@@ -125,6 +163,133 @@ def test_protected_requires_working_probes_not_configured_names(config, monkeypa
         assert degraded["status"] == DEGRADED
         assert any("embedding" in item for item in degraded["readiness_failures"])
         assert "CUDA model not loaded" in degraded["readiness_probes"]["embedding"]["detail"]
+    finally:
+        pipeline.close()
+
+
+def test_embedding_probe_checks_finite_values_and_dimensions(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch, embedder=_NaNEmbedder())
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["embedding"]["status"] == "failed"
+        assert "non-finite" in health["readiness_probes"]["embedding"]["detail"]
+        assert health["status"] == DEGRADED
+
+        _ready_pipeline(pipeline, monkeypatch, embedder=_ZeroEmbedder())
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["embedding"]["status"] == "failed"
+        assert "all-zero" in health["readiness_probes"]["embedding"]["detail"]
+
+        _ready_pipeline(pipeline, monkeypatch, embedder=_WrongDimEmbedder())
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["embedding"]["status"] == "failed"
+        assert "expected 4" in health["readiness_probes"]["embedding"]["detail"]
+    finally:
+        pipeline.close()
+
+
+def test_generator_metadata_alone_is_not_readiness(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        monkeypatch.setattr(security_module, "_http_post_json",
+                            lambda *args, **kwargs: (_ for _ in ()).throw(
+                                LLMError("model crashed during completion")))
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["generation"]["status"] == "failed"
+        assert "model crashed" in health["readiness_probes"]["generation"]["detail"]
+        assert health["status"] == DEGRADED
+        assert health["research_ready"] is False
+    finally:
+        pipeline.close()
+
+
+def test_generator_probe_accepts_a_valid_minimal_response(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        probe = security_health(pipeline)["readiness_probes"]["generation"]
+        assert probe["status"] == "ready"
+        assert probe["probe_response_chars"] >= 1
+        assert probe["served_model"] == "fake/real-llm"
+    finally:
+        pipeline.close()
+
+
+def test_nli_loaded_but_inference_fails_is_not_protected(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        pipeline.verifier = _BrokenProbeNLI()
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["nli_verifier"]["status"] == "failed"
+        assert "inference crashed" in health["readiness_probes"]["nli_verifier"]["detail"]
+        assert health["status"] == DEGRADED
+    finally:
+        pipeline.close()
+
+
+def test_nli_probe_validates_scores_and_contract_labels(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        probe = security_health(pipeline)["readiness_probes"]["nli_verifier"]
+        assert probe["status"] == "ready"
+        assert probe["label"] in {"entailment", "contradiction", "neutral"}
+        assert 0.0 <= probe["score"] <= 1.0
+    finally:
+        pipeline.close()
+
+
+def test_lexical_fallback_when_nli_is_required_is_degraded(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        pipeline.verifier = _FakeNLI(ready=False)
+        pipeline.config.security.verifier = "nli"
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["nli_verifier"]["status"] == "failed"
+        assert health["status"] == DEGRADED
+        assert health["research_ready"] is False
+    finally:
+        pipeline.close()
+
+
+def test_unavailable_trust_ledger_is_unprotected(config):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        pipeline.trust_provider = NullTrustProvider()
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["trust_ledger"]["status"] == "failed"
+        assert health["status"] == UNPROTECTED
+        assert health["research_ready"] is False
+    finally:
+        pipeline.close()
+
+
+def test_absent_queue_is_unprotected(config):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        pipeline.security.queue = None
+        health = security_health(pipeline)
+        assert health["queue_enabled"] is False
+        assert health["readiness_probes"]["queue"]["status"] == "failed"
+        assert health["status"] == UNPROTECTED
+    finally:
+        pipeline.close()
+
+
+def test_configured_model_names_alone_never_earn_protected(config):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        pipeline.config.embedding.model_name = "facebook/contriever"
+        pipeline.config.generation.model_name = "meta-llama/Llama-3.1-8B-Instruct"
+        pipeline.config.security.verifier = "nli"
+        health = security_health(pipeline)
+        assert health["status"] == DEGRADED
+        assert health["research_ready"] is False
+        assert health["readiness_probes"]["nli_verifier"]["status"] == "failed"
     finally:
         pipeline.close()
 

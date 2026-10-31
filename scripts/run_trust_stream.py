@@ -376,7 +376,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     metrics = {
         "smoke_test": True,
         "note": ("component smoke test; the chronological runner owns answer-level "
-                 "ASR, baselines and CIs"),
+                 "ASR and is NOT MEASURED here (no validated attack-specific "
+                 "answer criterion); this runner reports exposure and citation, "
+                 "not answer success"),
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "corpus": str(args.corpus),

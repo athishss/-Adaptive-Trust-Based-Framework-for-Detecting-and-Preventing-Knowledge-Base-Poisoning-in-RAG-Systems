@@ -44,6 +44,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
@@ -212,6 +213,8 @@ class TrustLedger:
         self._lock = threading.RLock()
         self._blocked_cache: Optional[Set[str]] = None
         self._query_count: int = 0        # for decay scheduling (per query, plan 4.6)
+        self._closed = False
+        self._conn = None
 
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -220,22 +223,27 @@ class TrustLedger:
             # harness, a dashboard) may legitimately open the ledger at once.
             self._conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10.0)
             self._conn.execute("PRAGMA busy_timeout=10000")
+            self._conn.row_factory = sqlite3.Row
+            with self._lock:
+                self._conn.executescript(_SCHEMA)
+                # Migrate: add columns that may not exist in older databases
+                for col, defn in [("is_burst_source", "INTEGER NOT NULL DEFAULT 0"),
+                                  ("burst_group", "INTEGER")]:
+                    try:
+                        self._conn.execute(
+                            f"ALTER TABLE trust_entities ADD COLUMN {col} {defn}")
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
+                self._conn.commit()
         except sqlite3.OperationalError as exc:
+            _close_quietly(self._conn)
             raise sqlite3.OperationalError(
                 f"cannot open the trust ledger at {self.path}: {exc}"
             ) from exc
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.executescript(_SCHEMA)
-            # Migrate: add columns that may not exist in older databases
-            for col, defn in [("is_burst_source", "INTEGER NOT NULL DEFAULT 0"),
-                              ("burst_group", "INTEGER")]:
-                try:
-                    self._conn.execute(
-                        f"ALTER TABLE trust_entities ADD COLUMN {col} {defn}")
-                except sqlite3.OperationalError:
-                    pass  # column already exists
-            self._conn.commit()
+        except Exception:
+            _close_quietly(self._conn)
+            raise
+        self._finalizer = weakref.finalize(self, _close_quietly, self._conn)
 
     # ------------------------------------------------------------------
     #  TrustProvider protocol
@@ -1082,10 +1090,27 @@ class TrustLedger:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if self._closed:
+                return
+            self._closed = True
+            finalizer = getattr(self, "_finalizer", None)
+            if finalizer is not None:
+                finalizer()
+            else:
+                _close_quietly(self._conn)
 
     def __enter__(self) -> "TrustLedger":
         return self
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+
+def _close_quietly(conn: Any) -> None:
+    """Best-effort close used by finalizers and failed constructors."""
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001 - cleanup must never mask the real error
+        pass

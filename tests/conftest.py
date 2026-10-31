@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+
 import numpy as np
 import pytest
 
@@ -7,6 +9,8 @@ from trace_rag.config import Config
 from trace_rag.contracts import RetrievedDocument, TrustSnapshot
 from trace_rag.ingestion import Ingestor, ProvenanceStore
 from trace_rag.pipeline import PersonAPipeline
+from trace_rag.provenance.answer_log import AnswerLog
+from trace_rag.trust.ledger import TrustLedger
 
 CLEAN_PASSAGES = [
     ("nq_1", "Gustave Eiffel was the French civil engineer whose company designed and built the "
@@ -82,3 +86,20 @@ def random_unit_vectors(n: int, dim: int, seed: int = 0) -> np.ndarray:
     rng = np.random.default_rng(seed)
     vectors = rng.normal(size=(n, dim)).astype(np.float32)
     return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+
+
+@pytest.fixture(autouse=True)
+def _close_test_resources():
+    """Close databases even when a test fails before its own cleanup.
+
+    Tests that construct a ledger/store/log directly are responsible for
+    closing it.  This teardown is a safety net for assertion failures and for
+    helper functions that return an open object; every close() is idempotent.
+    """
+    yield
+    for obj in gc.get_objects():
+        if isinstance(obj, (AnswerLog, ProvenanceStore, TrustLedger)):
+            try:
+                obj.close()
+            except Exception:  # noqa: BLE001 - teardown must not mask the test
+                pass

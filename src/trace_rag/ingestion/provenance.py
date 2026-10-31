@@ -12,6 +12,7 @@ import json
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,21 +113,28 @@ class ProvenanceStore:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._deferred = 0                      # >0 while inside batch(): commits are deferred
+        self._closed = False
+        self._conn = None
         try:
             self._conn = sqlite3.connect(self.path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            with self._lock:
+                self._conn.executescript(_SCHEMA)
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
+                    (str(SCHEMA_VERSION),),
+                )
+                self._conn.commit()
         except sqlite3.OperationalError as exc:
+            _close_quietly(self._conn)
             raise sqlite3.OperationalError(
                 f"cannot open the provenance store at {self.path}: {exc}. Check that the folder exists "
                 f"and is writable (storage.root in your config)."
             ) from exc
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.executescript(_SCHEMA)
-            self._conn.execute(
-                "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
-            self._conn.commit()
+        except Exception:
+            _close_quietly(self._conn)
+            raise
+        self._finalizer = weakref.finalize(self, _close_quietly, self._conn)
 
     def _commit(self) -> None:
         if self._deferred == 0:
@@ -323,7 +331,14 @@ class ProvenanceStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if self._closed:
+                return
+            self._closed = True
+            finalizer = getattr(self, "_finalizer", None)
+            if finalizer is not None:
+                finalizer()
+            else:
+                _close_quietly(self._conn)
 
     def __enter__(self) -> "ProvenanceStore":
         return self
@@ -362,3 +377,12 @@ def make_chunk_id(doc_id: str, ordinal: int) -> str:
         return f"{safe}#{ordinal:04d}"
     digest = sha256_text(doc_id)[:12]
     return f"{safe[:_PREFIX]}~{digest}#{ordinal:04d}"
+
+
+def _close_quietly(conn: Any) -> None:
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001 - cleanup must never mask the real error
+        pass

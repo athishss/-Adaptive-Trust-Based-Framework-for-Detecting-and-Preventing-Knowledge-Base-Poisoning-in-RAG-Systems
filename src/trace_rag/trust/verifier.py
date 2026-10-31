@@ -33,6 +33,7 @@ Called only for MEDIUM-band passages.  The algorithm:
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -145,6 +146,8 @@ class NLIScorer:
     This implements plan Section 4.5 step 3: NLI(premise=d', hypothesis=claim).
     Falls back gracefully if the model can't be loaded (no GPU, missing deps).
     """
+
+    model_name = "cross-encoder/nli-deberta-v3-base"
 
     def __init__(self) -> None:
         self._pipeline = None
@@ -336,6 +339,35 @@ class CorroborationVerifier:
     @property
     def nli_error(self) -> Optional[str]:
         return _nli_scorer.load_error
+
+    def nli_probe(self) -> Dict[str, object]:
+        """Run one minimal inference through the already-loaded NLI model.
+
+        Configuration flags are not evidence that inference works.  This uses
+        a fixed, harmless premise/hypothesis pair and validates the label and
+        confidence against the application's verification contract.  It never
+        attempts to load or download a model.
+        """
+        if not self._use_nli:
+            return {"status": "fallback", "detail": "verifier is in lexical mode"}
+        if not _nli_scorer.loaded:
+            return {"status": "failed",
+                    "detail": _nli_scorer.load_error or "NLI model is not loaded"}
+        try:
+            label, score = _nli_scorer.predict(
+                "A cat is sitting on a mat.",
+                "An animal is resting on a mat.",
+            )
+            if label not in {"entailment", "contradiction", "neutral"}:
+                raise ValueError(f"unexpected NLI label {label!r}")
+            score = float(score)
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                raise ValueError(f"invalid NLI score {score!r}")
+            return {"status": "ready", "label": label, "score": score,
+                    "model": _nli_scorer.model_name}
+        except Exception as exc:  # noqa: BLE001 - report, never claim readiness
+            return {"status": "failed",
+                    "detail": f"{type(exc).__name__}: {exc}"}
 
     # ------------------------------------------------------------------
     #  Verifier protocol

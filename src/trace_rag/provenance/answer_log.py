@@ -12,6 +12,7 @@ import json
 import sqlite3
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -96,17 +97,24 @@ class AnswerLog:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._closed = False
+        self._conn = None
         try:
             self._conn = sqlite3.connect(self.path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            with self._lock:
+                self._conn.executescript(_SCHEMA)
+                self._conn.commit()
         except sqlite3.OperationalError as exc:
+            _close_quietly(self._conn)
             raise sqlite3.OperationalError(
                 f"cannot open the answer log at {self.path}: {exc}. Check that the folder exists "
                 f"and is writable (storage.root in your config)."
             ) from exc
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.executescript(_SCHEMA)
-            self._conn.commit()
+        except Exception:
+            _close_quietly(self._conn)
+            raise
+        self._finalizer = weakref.finalize(self, _close_quietly, self._conn)
 
     def record(self, record: AnswerRecord, context_doc_ids: Sequence[str] = ()) -> int:
         payload = json.dumps(record.to_dict(), sort_keys=True)
@@ -213,7 +221,14 @@ class AnswerLog:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if self._closed:
+                return
+            self._closed = True
+            finalizer = getattr(self, "_finalizer", None)
+            if finalizer is not None:
+                finalizer()
+            else:
+                _close_quietly(self._conn)
 
     def __enter__(self) -> "AnswerLog":
         return self
@@ -236,3 +251,12 @@ class AnswerLog:
             flagged_at=float(row["flagged_at"]) if row["flagged_at"] is not None else None,
             cited_doc_ids=tuple(cited),
         )
+
+
+def _close_quietly(conn: Any) -> None:
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001 - cleanup must never mask the real error
+        pass
