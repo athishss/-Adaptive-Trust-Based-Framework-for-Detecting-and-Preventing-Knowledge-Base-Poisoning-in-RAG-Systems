@@ -1,0 +1,76 @@
+19:40:53 INFO    trace_rag.pipeline | indexing 57 passages with hashing on cpu (this is the slow step)
+19:40:53 INFO    trace_rag.pipeline | indexed 57 chunks (index size 57)
+
+==============================================================================
+1. Ingest: clean corpus first, attacker batch later
+==============================================================================
+  store: {'sources': 12, 'documents': 57, 'chunks': 57}   index: 57 passages
+  leakage guard on: benign new contributors arrive in the same late window as the attack
+
+==============================================================================
+2. Answer with the untrained heuristic scorer
+   Q: Who designed the Eiffel Tower?
+==============================================================================
+  A: Who designed the Eiffel Tower? [poison_eiffel_1#0000]
+   ?  POISON poison_eiffel_1#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_0#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_2#0000       suspicion=0.601 MEDIUM
+      clean  clean_eiffel_0#0000        suspicion=0.280 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.220 LOW
+
+==============================================================================
+3. Train the calibrated suspicion scorer (labels from the attack harness)
+==============================================================================
+  dataset: {'rows': 120, 'poison': 62, 'clean': 58, 'questions': 24, 'attack_families': ['poisonedrag_bb']}
+  thresholds: theta_low=1.000 theta_high=1.000
+  validation: HIGH-band FPR=0.0000 (cap 0.02), escalations/query=0.00 (budget 1.0)
+  held-out test: {"n": 25, "n_poison": 13, "n_clean": 12, "theta_low": 1.0, "theta_high": 1.0, "high_band_fpr": 0.0, "high_band_recall": 1.0, "medium_or_high_recall": 1.0, "escalations_per_query": 0.0, "roc_auc": 1.0, "average_precision": 1.0, "split_sizes": {"train": 70, "val": 25, "test": 25}}
+  strongest features: s5_source_immaturity=-48.96, s4_ingestion_burst=+4.65, x_source_log_age_days=-1.81, x_similarity=+1.41
+  NOTE: this toy corpus is trivially separable (one attack family, 3 near-identical
+        passages per target), so perfect scores here mean nothing. Reportable numbers
+        come from NQ + the PoisonedRAG harness with leave-one-attack-family-out.
+
+==============================================================================
+4. Answer again with the trained scorer
+==============================================================================
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   !  POISON poison_eiffel_1#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_0#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_2#0000       suspicion=1.000 HIGH
+      clean  clean_eiffel_0#0000        suspicion=0.000 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.000 LOW
+  excluded from the answer this turn: ['poison_eiffel_1#0000', 'poison_eiffel_0#0000', 'poison_eiffel_2#0000']
+
+==============================================================================
+5. Person B quarantines the injected passages -> retroactive remediation
+==============================================================================
+  quarantined: ['poison_eiffel_0#0000', 'poison_eiffel_1#0000', 'poison_eiffel_2#0000']
+  answers flagged for review: 1 (exposure window: 1 answers served before quarantine)
+  A (after quarantine): Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+  poisoned passages retrieved now: none
+
+==============================================================================
+Summary
+==============================================================================
+{
+  "store": {
+    "sources": 12,
+    "documents": 57,
+    "chunks": 57
+  },
+  "index_size": 57,
+  "answers": {
+    "answers": 3,
+    "abstained": 0,
+    "flagged": 1,
+    "abstention_rate": 0.0,
+    "mean_llm_calls": 1.0,
+    "mean_latency_ms": 0.508933289286991
+  },
+  "scorer": "lr-13f-n70-isotonic",
+  "embedder": "hashing",
+  "llm": "stub",
+  "trust_provider": "NullTrustProvider",
+  "verifier": null,
+  "policy": "DefaultPolicy"
+}

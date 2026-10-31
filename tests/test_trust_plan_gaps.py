@@ -371,6 +371,31 @@ class TestB4Queue:
         assert ledger.get_trust(["d1"])["d1"].n_doc_observations == 2
         assert len(queue) == 0
 
+    def test_queued_refutation_triggers_the_same_remediation_callback(self, tmp_path):
+        """Off-path verification must not diverge from inline remediation.
+
+        The earlier implementation updated trust while draining but never
+        called the quarantine callback, so answers that had already used a
+        later-quarantined passage were never flagged.
+        """
+        ledger = TrustLedger(tmp_path / "trust.db",
+                             config=TrustConfig(quarantine_refutations=1))
+        queue = VerificationQueue()
+        quarantined = []
+        policy = TrustPolicy(ledger=ledger, queue=queue,
+                             on_quarantine=lambda ids, reason="": quarantined.extend(ids))
+        verifier = FixedVerifier(VerificationOutcome.REFUTE)
+        docs = [_doc("d1", CLAIM, "attacker", "f1")]
+        assessments = [_assessment("d1", Band.HIGH)]
+
+        policy.decide(QUERY, "q1", docs, assessments, verifier=verifier)
+        assert quarantined == []                  # nothing verified yet
+        policy.drain_verification_queue(verifier)
+
+        assert quarantined == ["d1"]
+        assert ledger.get_status("d1") is TrustStatus.QUARANTINED
+        assert "d1" in ledger.blocked_doc_ids()
+
     def test_queue_dedupes_by_doc_id(self):
         queue = VerificationQueue()
         doc = _doc("d1")

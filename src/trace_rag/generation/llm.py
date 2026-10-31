@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
-from typing import List, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence
 
 from ..contracts import LLMResponse
 from ..utils.textnorm import normalise, sentences, tokenise
 from ..utils.timing import Stopwatch
+
+_DOC_TAG = re.compile(r'<document id="([^"]+)">')
+_SYSTEM_TAG = re.compile(r"^<system>\s*", re.IGNORECASE)
 
 
 class LLMError(RuntimeError):
@@ -41,15 +45,32 @@ class StubLLM:
         self.abstain_marker = abstain_marker
         self.calls = 0
 
+    def generate_chat(self, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                      stop: Optional[Sequence[str]] = None) -> LLMResponse:
+        """Flatten roles and answer from the user content only.
+
+        The stub never treats system text as evidence, which mirrors the role
+        separation of a real chat backend closely enough for tests.
+        """
+        user = "\n\n".join(message.get("content", "") for message in messages
+                           if str(message.get("role", "user")).lower() == "user")
+        return self.generate(user, max_tokens=max_tokens, stop=stop)
+
     def generate(self, prompt: str, max_tokens: int = 256,
                  stop: Optional[Sequence[str]] = None) -> LLMResponse:
         self.calls += 1
         with Stopwatch() as watch:
-            question, blocks = self._parse_prompt(prompt)
+            question, blocks = self._parse_prompt(_SYSTEM_TAG.sub("", prompt))
             q_tokens = set(tokenise(question))
             best_id, best_sentence, best_score = None, "", 0.0
             for doc_id, text in blocks:
                 for sentence in sentences(text) or [text]:
+                    # A question is not an answer.  Attack payloads often repeat
+                    # the target question before the injected claim; selecting
+                    # that sentence made the verifier read the question as the
+                    # document's claim and return NEUTRAL with an empty claim.
+                    if not sentence.strip() or sentence.strip().endswith("?"):
+                        continue
                     overlap = len(q_tokens & set(tokenise(sentence)))
                     score = overlap / max(1, len(q_tokens))
                     if score > best_score:
@@ -70,6 +91,18 @@ class StubLLM:
             stripped = line.strip()
             if stripped.startswith("Question:"):
                 question = stripped[len("Question:"):].strip()
+                continue
+            tagged = _DOC_TAG.match(stripped)
+            if tagged:
+                if current_id is not None:
+                    blocks.append((current_id, normalise(" ".join(buffer))))
+                current_id = tagged.group(1)
+                buffer = [stripped[tagged.end():]]
+                continue
+            if stripped == "</document>":
+                if current_id is not None:
+                    blocks.append((current_id, normalise(" ".join(buffer))))
+                    current_id, buffer = None, []
                 continue
             if stripped.startswith("[") and "]" in stripped:
                 if current_id is not None:
@@ -116,9 +149,14 @@ class OpenAICompatLLM:
 
     def generate(self, prompt: str, max_tokens: int = 256,
                  stop: Optional[Sequence[str]] = None) -> LLMResponse:
+        return self.generate_chat([{"role": "user", "content": prompt}], max_tokens, stop)
+
+    def generate_chat(self, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                      stop: Optional[Sequence[str]] = None) -> LLMResponse:
         payload = {
             "model": self.name,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": str(m["role"]), "content": str(m["content"])}
+                         for m in messages],
             "temperature": self.temperature,
             "max_tokens": int(max_tokens),
             "seed": self.seed,
@@ -159,6 +197,24 @@ class OllamaLLM:
         return LLMResponse(text=str(body.get("response", "")).strip(), llm_calls=1,
                            latency_ms=watch.elapsed_ms, model=self.name)
 
+    def generate_chat(self, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                      stop: Optional[Sequence[str]] = None) -> LLMResponse:
+        """Ollama's chat endpoint keeps the system role separate from evidence."""
+        payload = {
+            "model": self.name,
+            "messages": [{"role": str(m["role"]), "content": str(m["content"])}
+                         for m in messages],
+            "stream": False,
+            "options": {"temperature": self.temperature, "seed": self.seed,
+                        "num_predict": int(max_tokens), **({"stop": list(stop)} if stop else {})},
+        }
+        with Stopwatch() as watch:
+            body = _HTTPBackend.post(f"{self.base_url}/api/chat", payload,
+                                     {"Content-Type": "application/json"}, self.timeout_s)
+        message = body.get("message") or {}
+        return LLMResponse(text=str(message.get("content", "")).strip(), llm_calls=1,
+                           latency_ms=watch.elapsed_ms, model=self.name)
+
 
 class HFLocalLLM:
     """In-process transformers generation (greedy)."""
@@ -196,12 +252,16 @@ class HFLocalLLM:
 
     def generate(self, prompt: str, max_tokens: int = 256,
                  stop: Optional[Sequence[str]] = None) -> LLMResponse:
+        return self.generate_chat([{"role": "user", "content": prompt}], max_tokens, stop)
+
+    def generate_chat(self, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                      stop: Optional[Sequence[str]] = None) -> LLMResponse:
         torch = self._torch
-        messages = [{"role": "user", "content": prompt}]
+        chat = [{"role": str(m["role"]), "content": str(m["content"])} for m in messages]
         if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
-            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            text = self.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         else:
-            text = prompt
+            text = "\n\n".join(m["content"] for m in chat)
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
         with Stopwatch() as watch, torch.inference_mode():
             output = self.model.generate(**inputs, max_new_tokens=int(max_tokens), do_sample=False,
@@ -212,6 +272,25 @@ class HFLocalLLM:
             if marker in completion:
                 completion = completion.split(marker)[0].strip()
         return LLMResponse(text=completion, llm_calls=1, latency_ms=watch.elapsed_ms, model=self.name)
+
+
+def generate_with_messages(llm, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                           stop: Optional[Sequence[str]] = None) -> LLMResponse:
+    """Call ``generate_chat`` when the backend supports it, else flatten.
+
+    The fallback is explicit (not silent): callers can ask
+    :func:`supports_chat_roles` and record which path was used.
+    """
+    chat = getattr(llm, "generate_chat", None)
+    if callable(chat):
+        return chat(messages, max_tokens=max_tokens, stop=stop)
+    from .prompts import messages_to_prompt
+
+    return llm.generate(messages_to_prompt(messages), max_tokens=max_tokens, stop=stop)
+
+
+def supports_chat_roles(llm) -> bool:  # type: ignore[no-untyped-def]
+    return callable(getattr(llm, "generate_chat", None))
 
 
 def build_llm(config):  # type: ignore[no-untyped-def]

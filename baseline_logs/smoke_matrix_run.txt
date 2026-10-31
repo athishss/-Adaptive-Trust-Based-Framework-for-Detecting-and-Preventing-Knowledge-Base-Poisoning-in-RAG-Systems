@@ -1,0 +1,628 @@
+18:40:02 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:02 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:02 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:02 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:02 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:02 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:02 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:03 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:03 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:03 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:03 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:03 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:03 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:03 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:03 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:03 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:03 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:03 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:03 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:03 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:03 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:03 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:03 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:04 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:04 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:04 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:04 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:04 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:04 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:04 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:04 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:04 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:04 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:04 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:04 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:04 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:04 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:04 INFO    trace_rag.trust.ledger | trust: poison_liberty_3#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.357)
+18:40:04 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:04 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+18:40:04 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:04 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.293)
+18:40:04 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.228)
+18:40:04 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:04 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:04 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:05 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:05 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:05 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:05 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:05 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:05 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:05 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:05 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:05 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:05 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:05 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:05 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:05 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:05 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:05 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:05 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:05 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:06 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:06 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:06 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:06 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:06 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:06 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:06 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:06 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:06 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:06 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:06 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:06 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:06 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:06 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:06 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:06 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:06 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:06 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:07 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:07 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:07 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+18:40:07 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:07 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:07 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:07 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:07 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:07 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:07 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:07 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:07 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:07 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:07 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:07 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:07 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:07 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:07 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:08 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:08 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:08 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:08 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:08 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:08 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:08 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:08 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:08 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:08 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:08 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:08 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:08 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:08 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:08 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:09 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:09 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:09 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:09 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:09 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:09 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:09 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:09 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+18:40:09 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:09 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:09 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:09 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:09 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:09 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:09 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:09 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:09 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:09 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:09 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:09 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:09 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:09 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:09 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:10 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:10 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:10 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:10 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:10 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:10 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:10 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:10 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:10 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:10 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:10 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:10 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:10 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:10 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:11 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:11 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:11 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:11 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:11 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:11 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:11 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:11 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:11 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:11 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:11 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:11 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:11 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:11 INFO    trace_rag.pipeline | indexed 11 chunks (index size 45)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 51)
+18:40:11 INFO    trace_rag.pipeline | indexed 6 chunks (index size 57)
+18:40:11 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:11 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:11 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:12 INFO    trace_rag.trust.ledger | trust: late_clean_3#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.357)
+18:40:12 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.293)
+18:40:12 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.228)
+18:40:12 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:12 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:12 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:12 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:12 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:12 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:12 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:12 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:12 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:12 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:12 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:12 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:12 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:12 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:13 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:13 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:13 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:13 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:13 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:13 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:13 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:13 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:13 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:13 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:13 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:13 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:13 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:13 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:13 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:13 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:14 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:14 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:14 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:14 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:14 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:14 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:14 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:14 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+18:40:14 INFO    trace_rag.trust.ledger | trust: late_clean_3#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.357)
+18:40:14 INFO    trace_rag.trust.ledger | trust: late_clean_3#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.278)
+18:40:14 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:14 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.357)
+18:40:14 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.278)
+18:40:14 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:14 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:14 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:14 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:14 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:14 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:14 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:14 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:14 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:15 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:15 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:15 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:15 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:15 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:15 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:15 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:15 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:15 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:15 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:15 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:15 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:15 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:15 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:15 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:15 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:15 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:16 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:16 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:16 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:16 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:16 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:16 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:16 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:16 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:16 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:16 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:16 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:16 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:16 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+18:40:16 INFO    trace_rag.trust.ledger | trust: late_clean_3#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.357)
+18:40:16 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:16 INFO    trace_rag.trust.ledger | trust: late_clean_3#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.278)
+18:40:16 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 TRUSTED -> MONITORED (refutations=1, t_doc=0.293)
+18:40:16 INFO    trace_rag.trust.ledger | trust: poison_mona_5#0000 MONITORED -> QUARANTINED (refutations=2, t_doc=0.228)
+18:40:16 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:16 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:16 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:16 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:16 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:17 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:17 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:17 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:17 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:17 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:17 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:17 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:17 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:17 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:17 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:17 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:17 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:17 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:17 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:17 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:17 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:17 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:18 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:18 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:18 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:18 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:18 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:40:18 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:18 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:18 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:18 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:40:18 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:40:18 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+18:40:18 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+18:40:18 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+18:40:18 INFO    trace_rag.pipeline | indexed 6 chunks (index size 45)
+18:40:18 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from encyclopedia_press (4 docs in 60s)
+18:40:18 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+18:40:18 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_burst (4 docs in 60s)
+18:40:18 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+18:40:19 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+{
+  "scope": "SMOKE TEST - bundled mini corpus, hashing embedder, stub LLM",
+  "cases_completed": 56,
+  "cases_requested": 56,
+  "failures": [],
+  "output": "runs\\smoke_matrix\\results.json"
+}

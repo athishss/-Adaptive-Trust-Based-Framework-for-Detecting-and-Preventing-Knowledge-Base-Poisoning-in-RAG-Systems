@@ -1,15 +1,21 @@
-"""PersonAPipeline: the assembled Person A system, with plug points for B and C.
+"""PersonAPipeline: the assembled system, with the secure stack on by default.
 
 Flow for one query (plan Section 4.2):
 
     retrieve (trust-weighted)  ->  cheap signals  ->  suspicion scorer
         ->  [Person B policy + verifier]  ->  grounded generation
-        ->  answer-provenance log
+        ->  answer-provenance log  ->  off-path queue drain
 
-Person B plugs in by passing ``trust_provider``, ``verifier`` and ``policy``.
-Person C drives the whole thing through :meth:`answer` and reads
-``AnswerRecord`` / ``SecurityAssessment`` objects.  Nothing in this class reads
-attack labels.
+Person B plugs in by passing ``trust_provider``, ``verifier`` and ``policy``;
+:meth:`from_config` attaches the full stack (:mod:`trace_rag.security`) unless
+``config.security.enabled`` is false.  Person C drives the whole thing through
+:meth:`answer` and reads ``AnswerRecord`` / ``SecurityAssessment`` objects.
+Nothing in this class reads attack labels.
+
+Time: every query receives an explicit timestamp from the injected
+:class:`~trace_rag.utils.clock.Clock`.  Production uses the wall clock; a
+simulation uses the deterministic logical clock, so source ages, bursts and
+trust decay are reproducible.
 """
 
 from __future__ import annotations
@@ -21,7 +27,8 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .config import Config
 from .contracts import (Action, AnswerRecord, Band, DefaultPolicy, FeatureSnapshot, LLM,
-                        NullTrustProvider, Policy, PolicyDecision, SecurityAssessment, TrustProvider, Verifier)
+                        NullTrustProvider, Policy, PolicyDecision, SecurityAssessment,
+                        TrustProvider, VerificationResult, Verifier)
 from .detection.scorer import HeuristicScorer, SuspicionScorer
 from .detection.signals import SignalComputer
 from .embeddings import build_embedder
@@ -32,6 +39,7 @@ from .ingestion.provenance import ProvenanceStore
 from .provenance.answer_log import AnswerLog
 from .provenance.remediation import RemediationService
 from .retrieval.retriever import RetrievalOutcome, TrustWeightedRetriever
+from .utils.clock import Clock, build_clock
 from .utils.logging import get_logger
 from .utils.timing import Stopwatch
 
@@ -52,6 +60,8 @@ class QueryResult:
     generation: GenerationOutcome
     answer_id: Optional[int]
     timings_ms: Mapping[str, float] = field(default_factory=dict)
+    queued_verifications: Tuple[VerificationResult, ...] = ()
+    newly_quarantined: Tuple[str, ...] = ()
 
     @property
     def answer(self) -> str:
@@ -68,7 +78,8 @@ class QueryResult:
     @property
     def llm_calls(self) -> int:
         verification_calls = sum(v.llm_calls for v in self.decision.verified)
-        return int(self.generation.record.llm_calls + verification_calls)
+        queued_calls = sum(v.llm_calls for v in self.queued_verifications)
+        return int(self.generation.record.llm_calls + verification_calls + queued_calls)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -79,6 +90,8 @@ class QueryResult:
             "assessments": [a.to_dict() for a in self.assessments],
             "decision": self.decision.to_dict(),
             "answer_id": self.answer_id,
+            "queued_verifications": [v.to_dict() for v in self.queued_verifications],
+            "newly_quarantined": list(self.newly_quarantined),
             "llm_calls_total": self.llm_calls,
             "timings_ms": dict(self.timings_ms),
         }
@@ -90,11 +103,13 @@ class PersonAPipeline:
                  trust_provider: Optional[TrustProvider] = None,
                  verifier: Optional[Verifier] = None, policy: Optional[Policy] = None,
                  answer_log: Optional[AnswerLog] = None,
-                 citation_checker: Optional[Callable[[str, str], Tuple[bool, float]]] = None) -> None:
+                 citation_checker: Optional[Callable[[str, str], Tuple[bool, float]]] = None,
+                 clock: Optional[Clock] = None) -> None:
         self.config = config
         self.store = store
         self.index = index
         self.embedder = embedder
+        self.clock: Clock = clock or build_clock(config.time)
         self.trust_provider = trust_provider or NullTrustProvider()
         self.verifier = verifier
         self.policy = policy or DefaultPolicy()
@@ -106,11 +121,19 @@ class PersonAPipeline:
                                            citation_checker=citation_checker)
         self.answer_log = answer_log or AnswerLog(config.path(config.storage.answer_db))
         self.remediation = RemediationService(self.answer_log)
+        self.security: Optional[Any] = None
+        self._query_counter = 0
 
     # --------------------------------------------------------------- factory
     @classmethod
-    def from_config(cls, config: Config, load_existing_index: bool = True, **kwargs: Any
-                    ) -> "PersonAPipeline":
+    def from_config(cls, config: Config, load_existing_index: bool = True,
+                    secure: Optional[bool] = None, **kwargs: Any) -> "PersonAPipeline":
+        """Build a pipeline and, by default, its security stack.
+
+        ``secure=False`` is for deliberately unprotected research baselines; the
+        health check then reports ``UNPROTECTED`` and the CLI refuses to label
+        the run as RAGLedger.
+        """
         store = ProvenanceStore(config.path(config.storage.provenance_db))
         embedder = build_embedder(config.embedding)
         index_path = config.path(config.storage.index_path)
@@ -125,7 +148,21 @@ class PersonAPipeline:
         scorer = kwargs.pop("scorer", None)
         if scorer is None and config.scorer.model_path and Path(config.scorer.model_path).exists():
             scorer = SuspicionScorer.load(config.scorer.model_path)
-        return cls(config=config, store=store, index=index, embedder=embedder, scorer=scorer, **kwargs)
+        pipeline = cls(config=config, store=store, index=index, embedder=embedder,
+                       scorer=scorer, **kwargs)
+        want_secure = config.security.enabled if secure is None else bool(secure)
+        # Keep the effective configuration honest: a pipeline built with
+        # ``secure=False`` must report ``security_enabled: false`` from
+        # ``health_check``, not claim the defence is on while it is detached.
+        want_secure = bool(want_secure and config.security.enabled)
+        config.security.enabled = want_secure
+        if want_secure:
+            from .security import attach_security
+
+            attach_security(pipeline)
+        else:
+            logger.warning("pipeline built with secure=False: UNPROTECTED baseline")
+        return pipeline
 
     # ------------------------------------------------------------------ core
     def retrieve(self, query: str, query_id: str = "q0") -> RetrievalOutcome:
@@ -154,7 +191,11 @@ class PersonAPipeline:
     def answer(self, query: str, query_id: Optional[str] = None, step: int = 0,
                now: Optional[float] = None, log: bool = True) -> QueryResult:
         """Run the full pipeline for one query."""
-        query_id = query_id or f"q{int(time.time() * 1000)}"
+        self.clock.set_step(step)
+        if query_id is None:
+            self._query_counter += 1
+            query_id = f"q{int(step):04d}-{self._query_counter:04d}"
+        timestamp = self.clock.timestamp(step) if now is None else float(now)
         timings: Dict[str, float] = {}
 
         with Stopwatch() as watch:
@@ -162,12 +203,12 @@ class PersonAPipeline:
         timings["retrieval"] = watch.elapsed_ms
 
         with Stopwatch() as watch:
-            assessments = self.assess(retrieval, now=now)
+            assessments = self.assess(retrieval, now=timestamp)
         timings["signals_and_scoring"] = watch.elapsed_ms
 
         with Stopwatch() as watch:
             decision = self.policy.decide(query, query_id, retrieval.documents, assessments,
-                                          self.verifier, pool=retrieval.pool)
+                                          self.verifier, pool=retrieval.pool, now=timestamp)
         timings["policy"] = watch.elapsed_ms
 
         by_id = {d.doc_id: d for d in retrieval.documents}
@@ -175,25 +216,50 @@ class PersonAPipeline:
 
         with Stopwatch() as watch:
             generation = self.generator.generate(query, query_id, context,
-                                                 excluded_doc_ids=decision.excluded_doc_ids, step=step)
+                                                 excluded_doc_ids=decision.excluded_doc_ids,
+                                                 step=step, now=timestamp)
         timings["generation"] = watch.elapsed_ms
-        timings["total"] = sum(timings.values())
 
         answer_id = None
         if log:
             answer_id = self.answer_log.record(generation.record,
                                                context_doc_ids=decision.context_doc_ids)
+
+        queued: Tuple[VerificationResult, ...] = ()
+        newly_quarantined: Tuple[str, ...] = tuple(decision.notes.get("newly_quarantined", ()))
+        # Off-path verification: queued HIGH-band passages are drained after the
+        # answer is served, so they cannot affect this answer's latency.
+        if self.security is not None and self.config.security.drain_queue:
+            with Stopwatch() as watch:
+                drained = self.policy.drain_verification_queue(self.verifier, now=timestamp)
+            timings["verification_queue"] = watch.elapsed_ms
+            queued = tuple(drained)
+            last = getattr(self.policy, "last_drain", None)
+            if last is not None:
+                newly_quarantined = tuple(sorted(set(newly_quarantined) |
+                                                 set(last.newly_quarantined)))
+        timings["total"] = sum(value for key, value in timings.items() if key != "total")
+
         return QueryResult(query=query, query_id=query_id, retrieval=retrieval,
                            assessments=assessments, decision=decision, generation=generation,
-                           answer_id=answer_id, timings_ms=timings)
+                           answer_id=answer_id, timings_ms=timings,
+                           queued_verifications=queued,
+                           newly_quarantined=newly_quarantined)
 
     def answer_stream(self, queries: Sequence[Mapping[str, Any]]) -> List[QueryResult]:
-        """Run a query stream (Person C's ``stream.jsonl`` rows)."""
+        """Run a query stream, accepting canonical ``{step, query_id, query}`` rows.
+
+        Legacy ``{t, qid, text}`` rows are accepted through the single adapter
+        in ``attacks.stream``; no consumer re-implements the schema.
+        """
+        from .attacks.stream import as_query_row
+
         results: List[QueryResult] = []
         for i, row in enumerate(queries):
+            canonical = as_query_row(row, index=i)
             results.append(self.answer(
-                query=str(row["text"]), query_id=str(row.get("qid", f"q{i}")),
-                step=int(row.get("t", i)),
+                query=canonical["query"], query_id=canonical["query_id"],
+                step=canonical["step"],
             ))
         return results
 
@@ -205,10 +271,7 @@ class PersonAPipeline:
 
         Streams from SQLite in batches, so a 2.68M-passage corpus never sits in
         memory.  **Resumable**: passages already in the index are skipped, and
-        ``save_every`` checkpoints the index to disk, so a crash, a power cut or
-        a Ctrl+C costs at most that many passages instead of the whole run.
-        ``limit`` stops after that many newly indexed passages, which is how you
-        index a corpus in sittings.
+        ``save_every`` checkpoints the index to disk.
         """
         if chunk_ids is not None:
             records = sorted(self.store.get_chunks(chunk_ids).values(), key=lambda r: r.chunk_id)
@@ -264,7 +327,6 @@ class PersonAPipeline:
             total += len(buffer_ids)
             buffer_ids.clear()
             buffer_texts.clear()
-            # Report on every completed block, so a long run never looks stuck.
             if progress_every and total // progress_every > milestone:
                 milestone = total // progress_every
                 elapsed = time.perf_counter() - started
@@ -295,11 +357,19 @@ class PersonAPipeline:
         self.index.save(path)
         return path
 
-    def on_quarantine(self, doc_ids: Sequence[str], reason: str = "quarantined by trust ledger"):
+    def on_quarantine(self, doc_ids: Sequence[str], reason: str = "quarantined by trust ledger",
+                      at: Optional[float] = None):
         """Hook for Person B's state machine; returns a RemediationReport."""
-        return self.remediation.on_quarantine(doc_ids, reason)
+        return self.remediation.on_quarantine(doc_ids, reason, at=at)
+
+    def health_check(self) -> Dict[str, Any]:
+        """Which security controls are active, and which fell back."""
+        from .security import security_health
+
+        return security_health(self)
 
     def stats(self) -> Dict[str, Any]:
+        report = self.health_check()
         return {
             "store": self.store.counts(),
             "index_size": len(self.index),
@@ -309,9 +379,17 @@ class PersonAPipeline:
             "llm": getattr(self.generator.llm, "name", "unknown"),
             "trust_provider": type(self.trust_provider).__name__,
             "verifier": type(self.verifier).__name__ if self.verifier else None,
+            "verifier_mode": report.get("verifier_mode"),
             "policy": type(self.policy).__name__,
+            "security_status": report.get("status"),
+            "security": report,
         }
 
     def close(self) -> None:
+        if self.security is not None:
+            try:
+                self.security.close()
+            except Exception:  # noqa: BLE001 - close must be best-effort
+                logger.warning("closing the security stack failed", exc_info=True)
         self.store.close()
         self.answer_log.close()

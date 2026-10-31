@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from ..config import IngestionConfig
+from ..utils.clock import Clock, SystemClock
 from ..utils.hashing import build_family_assigner, sha256_text
 from ..utils.logging import get_logger
 from ..utils.textnorm import normalise
@@ -43,9 +44,11 @@ class Ingestor:
     to invent those fields.
     """
 
-    def __init__(self, store: ProvenanceStore, config: Optional[IngestionConfig] = None) -> None:
+    def __init__(self, store: ProvenanceStore, config: Optional[IngestionConfig] = None,
+                 clock: Optional[Clock] = None) -> None:
         self.store = store
         self.config = config or IngestionConfig()
+        self.clock: Clock = clock or SystemClock()
         self.families = build_family_assigner(
             self.config.family_backend,
             num_perm=self.config.minhash_perm,
@@ -62,7 +65,7 @@ class Ingestor:
         text = normalise(text)
         if not text:
             return []
-        ts = time.time() if ingested_at is None else float(ingested_at)
+        ts = self.clock.now() if ingested_at is None else float(ingested_at)
         splitter = chunk_passage if passage_mode else chunk_text
         pieces = splitter(text, self.config.chunk_words, self.config.chunk_overlap_words,
                           self.config.min_chunk_words)
@@ -126,7 +129,7 @@ class Ingestor:
         baseline instead of every clean passage sharing one timestamp.
         """
         report = IngestionReport()
-        base = time.time() if start_time is None else float(start_time)
+        base = self.clock.now() if start_time is None else float(start_time)
         with self.store.batch():
             return self._ingest_beir_rows(corpus_path, source_assigner, limit, base,
                                           seconds_per_doc, report)

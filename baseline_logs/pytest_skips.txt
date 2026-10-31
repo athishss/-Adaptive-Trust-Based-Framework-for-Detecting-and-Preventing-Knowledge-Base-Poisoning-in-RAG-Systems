@@ -1,0 +1,12 @@
+........................................................................ [ 32%]
+........................................................................ [ 64%]
+....................................................................sss. [ 96%]
+........                                                                 [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\test_index_and_retrieval.py:12: faiss-cpu not installed
+SKIPPED [1] tests\test_model_backends.py:22: torch not installed
+SKIPPED [1] tests\test_regressions.py:21: faiss-cpu not installed
+SKIPPED [1] tests\test_trust_plan_gaps.py:518: could not import 'matplotlib': No module named 'matplotlib'
+SKIPPED [1] tests\test_trust_plan_gaps.py:525: could not import 'matplotlib': No module named 'matplotlib'
+SKIPPED [1] tests\test_trust_plan_gaps.py:531: could not import 'matplotlib': No module named 'matplotlib'
+221 passed, 6 skipped in 14.97s

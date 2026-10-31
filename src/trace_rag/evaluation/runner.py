@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, List, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+
+from .metrics import ANSWER_LEVEL_ASR_NOT_MEASURED
 
 
 @dataclass(frozen=True)
@@ -22,8 +24,26 @@ class EvaluationCase:
 
 @dataclass
 class EvaluationResult:
+    """One attack/baseline/seed result.
+
+    ``poison_exposure_rate`` and ``poison_citation_rate`` are context and
+    citation measurements over *eligible attack attempts*.  They are not
+    answer-success rates.  ``answer_level_asr`` stays ``None`` with status
+    ``NOT MEASURED`` unless a harness supplies a predefined, attack-specific
+    malicious-answer criterion.
+    """
+
     case: EvaluationCase
-    attack_success_rate: Optional[float] = None
+    eligible_attack_attempts: int = 0
+    poison_exposed_attempts: int = 0
+    poison_exposure_rate: Optional[float] = None
+    poison_cited_attempts: int = 0
+    poison_citation_rate: Optional[float] = None
+    answer_level_asr: Optional[float] = None
+    answer_level_asr_status: str = ANSWER_LEVEL_ASR_NOT_MEASURED
+    answer_level_asr_numerator: Optional[int] = None
+    answer_level_asr_denominator: int = 0
+    answer_level_asr_reason: Optional[str] = None
     precision: float = 0.0
     recall: float = 0.0
     f1: float = 0.0
@@ -32,11 +52,21 @@ class EvaluationResult:
     exposure_window: int = 0
     remediation_recall: Optional[float] = None
     llm_calls: int = 0
+    details: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self):
         return {
             "case": self.case.to_dict(),
-            "attack_success_rate": self.attack_success_rate,
+            "eligible_attack_attempts": int(self.eligible_attack_attempts),
+            "poison_exposed_attempts": int(self.poison_exposed_attempts),
+            "poison_exposure_rate": self.poison_exposure_rate,
+            "poison_cited_attempts": int(self.poison_cited_attempts),
+            "poison_citation_rate": self.poison_citation_rate,
+            "answer_level_asr": self.answer_level_asr,
+            "answer_level_asr_status": self.answer_level_asr_status,
+            "answer_level_asr_numerator": self.answer_level_asr_numerator,
+            "answer_level_asr_denominator": int(self.answer_level_asr_denominator),
+            "answer_level_asr_reason": self.answer_level_asr_reason,
             "precision": float(self.precision),
             "recall": float(self.recall),
             "f1": float(self.f1),
@@ -45,6 +75,7 @@ class EvaluationResult:
             "exposure_window": int(self.exposure_window),
             "remediation_recall": self.remediation_recall,
             "llm_calls": int(self.llm_calls),
+            "details": dict(self.details),
         }
 
 

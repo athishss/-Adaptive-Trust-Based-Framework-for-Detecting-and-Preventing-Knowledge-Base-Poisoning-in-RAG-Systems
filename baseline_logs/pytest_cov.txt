@@ -1,0 +1,313 @@
+........................................................................ [ 33%]
+........................................................................ [ 67%]
+..............................................................sss....C:\Python313\Lib\collections\__init__.py:450: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6914E0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Python313\Lib\collections\__init__.py:450: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5954E0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Python313\Lib\collections\__init__.py:450: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597E20>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Python313\Lib\collections\__init__.py:450: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6913F0>
+  @classmethod
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+    [100%]
+============================== warnings summary ===============================
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5958A0>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595990>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595A80>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595B70>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595C60>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595D50>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595E40>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595030>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C596020>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C596110>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C596200>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C595F30>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestPipelineWithTrust::test_pipeline_with_trust_components
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\utils\hashing.py:213: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5963E0>
+    bucket = self._band_maps[band].setdefault(key, [])
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5971F0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5975B0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5976A0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597010>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597100>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5973D0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C5974C0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597790>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597A60>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597B50>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597C40>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB1LedgerCorrections::test_parent_trust_uses_worst_of_source_and_family
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:537: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597D30>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4C597F10>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690040>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690130>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690220>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690310>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690400>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6904F0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6905E0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6906D0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690A90>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6909A0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6907C0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690B80>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E6908B0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E690C70>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E691210>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB6TrustDynamics::test_export_history_filters
+  <frozen ntpath>:227: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x0000026B4E691030>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=============================== tests coverage ================================
+_______________ coverage: platform win32, python 3.13.3-final-0 _______________
+
+Name                                           Stmts   Miss  Cover   Missing
+----------------------------------------------------------------------------
+src\trace_rag\__init__.py                          5      0   100%
+src\trace_rag\attacks\__init__.py                  4      0   100%
+src\trace_rag\attacks\adaptive.py                 20      3    85%   54, 73, 92
+src\trace_rag\attacks\poisoned_rag.py             47     11    77%   38, 40, 42, 50, 58, 64, 87, 89, 91, 93, 95
+src\trace_rag\attacks\stream.py                   29     29     0%   3-54
+src\trace_rag\baselines\__init__.py                2      0   100%
+src\trace_rag\baselines\policies.py               82     56    32%   21, 36, 45-57, 70-79, 91-100, 114-135, 147, 161, 180-184, 195-229
+src\trace_rag\cli.py                             163     10    94%   122-130, 144, 256
+src\trace_rag\config.py                          116      0   100%
+src\trace_rag\contracts.py                       207      1    99%   436
+src\trace_rag\detection\__init__.py                4      0   100%
+src\trace_rag\detection\scorer.py                180     28    84%   91, 93, 103-109, 117, 130, 133, 136-140, 144, 167, 169, 185, 250, 252, 254, 256, 281, 290-292, 302
+src\trace_rag\detection\signals.py               169     10    94%   30, 35, 83, 112, 149, 219-220, 247, 290, 320
+src\trace_rag\detection\training.py              165     28    83%   61-62, 67, 83, 109-122, 129, 157, 184, 186, 188, 200, 211, 216, 218, 220-221, 223, 236, 263
+src\trace_rag\embeddings\__init__.py              13      5    62%   15-22
+src\trace_rag\embeddings\base.py                  24      3    88%   35, 37, 39
+src\trace_rag\embeddings\hashing_embedder.py      31      1    97%   26
+src\trace_rag\embeddings\hf_embedder.py           60     60     0%   7-114
+src\trace_rag\evaluation\__init__.py               2      0   100%
+src\trace_rag\evaluation\chronological.py         24     24     0%   3-70
+src\trace_rag\evaluation\integration.py            5      5     0%   3-14
+src\trace_rag\evaluation\metrics.py               45      4    91%   16, 32, 35, 38
+src\trace_rag\evaluation\runner.py                47      6    87%   57, 59, 61, 81, 89, 94
+src\trace_rag\evaluation\statistics.py            24      3    88%   20, 22, 24
+src\trace_rag\generation\__init__.py               5      0   100%
+src\trace_rag\generation\citations.py             58      4    93%   29, 55, 83-84
+src\trace_rag\generation\grounded.py              52      1    98%   35
+src\trace_rag\generation\llm.py                  138     68    51%   92-96, 110-115, 119-135, 143-147, 151-159, 168-195, 199-214, 222-230
+src\trace_rag\generation\prompts.py               16      0   100%
+src\trace_rag\index\__init__.py                   15      6    60%   8-13, 19-21
+src\trace_rag\index\faiss_index.py               142    142     0%   11-199
+src\trace_rag\index\numpy_index.py                80     14    82%   31, 33, 37-38, 52, 54, 56, 77-78, 91-94, 106
+src\trace_rag\ingestion\__init__.py                5      0   100%
+src\trace_rag\ingestion\chunking.py               42      7    83%   33, 38, 47-51, 65
+src\trace_rag\ingestion\parsers.py               103     35    66%   46-49, 56-70, 77, 86, 93, 107-125, 134, 150-151, 153
+src\trace_rag\ingestion\pipeline.py              109     14    87%   64, 100-104, 106-107, 138, 146-147, 166, 190, 193
+src\trace_rag\ingestion\provenance.py            173     11    94%   86, 117-118, 215-220, 241, 279, 298-302, 306
+src\trace_rag\pipeline.py                        195     29    85%   58, 127, 143, 216, 227, 230, 237-246, 260, 269-272, 275-277, 281, 285-288
+src\trace_rag\provenance\__init__.py               3      0   100%
+src\trace_rag\provenance\answer_log.py           119     11    91%   80, 101-102, 143, 159, 190-195
+src\trace_rag\provenance\remediation.py           37      0   100%
+src\trace_rag\retrieval\__init__.py                2      0   100%
+src\trace_rag\retrieval\retriever.py              63      9    86%   43, 46, 63, 67, 82, 104-107
+src\trace_rag\trust\__init__.py                    6      0   100%
+src\trace_rag\trust\ledger.py                    416     21    95%   202-203, 270-271, 284, 415, 418-419, 557, 585, 610, 658, 754, 775, 860-861, 866-867, 916, 994, 1010
+src\trace_rag\trust\plots.py                      75     54    28%   51-88, 99-120, 125-133, 138
+src\trace_rag\trust\policy.py                     64      5    92%   129, 163-164, 192, 195
+src\trace_rag\trust\queue.py                      91      9    90%   90-91, 98-99, 118, 131-135, 153
+src\trace_rag\trust\verifier.py                  218     31    86%   89-104, 116-129, 227, 363, 373, 385, 415, 424, 439, 500-506, 636, 651
+src\trace_rag\utils\__init__.py                    5      0   100%
+src\trace_rag\utils\hashing.py                   143     34    76%   30-34, 48, 60, 69, 90-91, 94-97, 100, 103, 106, 110, 117, 120-122, 125, 128, 131, 135, 147-151, 165, 219, 225
+src\trace_rag\utils\logging.py                    13      0   100%
+src\trace_rag\utils\textnorm.py                   36      3    92%   31, 41, 56
+src\trace_rag\utils\timing.py                     13      0   100%
+----------------------------------------------------------------------------
+TOTAL                                           3905    795    80%

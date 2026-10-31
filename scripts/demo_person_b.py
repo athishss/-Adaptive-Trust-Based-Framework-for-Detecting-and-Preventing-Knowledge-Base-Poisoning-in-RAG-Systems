@@ -22,14 +22,40 @@ from pathlib import Path
 from typing import List
 
 from trace_rag import Config, PersonAPipeline
-from trace_rag.contracts import TrustStatus
+from trace_rag.contracts import (TrustStatus, VerificationOutcome, VerificationResult)
 from trace_rag.detection import TrainingSet, build_rows, train_scorer
 from trace_rag.ingestion import Ingestor
-from trace_rag.trust import TrustLedger, TrustConfig, CorroborationVerifier, TrustPolicy
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
 CLEAN_START = 1_600_000_000.0
 POISON_START = 1_750_000_000.0
+
+
+class DemoRefuteVerifier:
+    """Deterministic verifier used only to exercise the state machine.
+
+    It refutes any passage that repeats the demo's wrong answer ("Zog").  This
+    is a scripted outcome, not a detection result: it exists so stage 5 can show
+    queue -> refute -> quarantine -> remediation without a GPU or an NLI model.
+    """
+
+    name = "demo-rule-verifier"
+    mode = "scripted"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def verify(self, query, query_id, target, pool):  # noqa: ARG002
+        self.calls += 1
+        refute = "zog" in target.text.lower()
+        return VerificationResult(
+            doc_id=target.doc_id, query_id=query_id, single_doc_answer="claim",
+            influential=True, support_mass=0.0 if refute else 0.0,
+            refute_mass=0.9 if refute else 0.0,
+            outcome=VerificationOutcome.REFUTE if refute else VerificationOutcome.NEUTRAL,
+            llm_calls=0, latency_ms=0.0, mode="scripted",
+            evidence_doc_ids=tuple(d.doc_id for d in pool if d.doc_id != target.doc_id),
+        )
 
 
 def load_jsonl(path: Path) -> List[dict]:
@@ -53,7 +79,10 @@ def main() -> int:
     parser.add_argument("--root", default="runs/demo_b")
     args = parser.parse_args()
 
-    config = Config.load(None, storage={"root": args.root})
+    # quarantine_refutations=1 so the lifecycle demo reaches QUARANTINED after
+    # the first refute.  Production keeps the plan default (2) in config/.
+    config = Config.load(None, storage={"root": args.root},
+                         trust={"quarantine_refutations": 1, "reject_refutations": 2})
     pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
     questions = json.loads((EXAMPLES / "mini_questions.json").read_text(encoding="utf-8"))
     target_question = next(q for q in questions["questions"] if q["qid"] == "eiffel")
@@ -99,28 +128,20 @@ def main() -> int:
     pipeline.scorer = scorer
 
     # ---------------------------------------------------------------- stage 4
-    banner("4. Wire in Person B's trust framework and answer again")
+    banner("4. Person B's trust framework (attached by the secure default)")
 
-    # Create Person B components
-    trust_config = TrustConfig(
-        quarantine_refutations=2,    # quarantine after 2 refutations
-        reject_refutations=3,
-    )
-    trust_db = Path(args.root) / "trust.sqlite3"
-    ledger = TrustLedger(trust_db, store=pipeline.store, config=trust_config)
-    verifier = CorroborationVerifier(llm=pipeline.generator.llm, max_corroboration=3)
-    policy = TrustPolicy(ledger=ledger, on_quarantine=pipeline.on_quarantine)
-
-    # Wire them in
-    pipeline.trust_provider = ledger
-    pipeline.retriever.trust = ledger
-    pipeline.verifier = verifier
-    pipeline.policy = policy
-
-    print("  Person B components wired in:")
-    print(f"    TrustLedger:  {trust_db}")
-    print(f"    Verifier:     CorroborationVerifier (max_corroboration=3)")
-    print(f"    Policy:       TrustPolicy (quarantine_refutations=2)")
+    # from_config() already attached TrustLedger + CorroborationVerifier +
+    # TrustPolicy.  Reuse that stack: opening a second ledger on the same SQLite
+    # file is what used to produce "database is locked".
+    if pipeline.security is None:
+        raise SystemExit("security stack was not attached; check security.enabled")
+    ledger = pipeline.security.ledger
+    verifier = pipeline.security.verifier
+    health = pipeline.health_check()
+    print(f"  {health['status']} | verifier={health['verifier_mode']} "
+          f"| trust_db={ledger.path}")
+    print(f"  Policy: {type(pipeline.policy).__name__} "
+          f"(quarantine_refutations={config.trust.quarantine_refutations})")
 
     after = pipeline.answer(target_question["question"], "demo_after_b")
     print(f"\n  Q: {target_question['question']}")
@@ -138,14 +159,19 @@ def main() -> int:
     print(f"  excluded from answer: {excluded or 'none'}")
 
     # ---------------------------------------------------------------- stage 5
-    banner("5. Repeated queries -> automatic quarantine via trust decay")
+    banner("5. Queued verification -> refute -> quarantine -> remediation")
+    print("  NOTE: this stage swaps in a deterministic, scripted verifier that refutes\n"
+          "        passages containing 'Zog'.  It exercises the lifecycle; it is not\n"
+          "        a detection result and does not stand in for the NLI verifier.")
+    pipeline.verifier = DemoRefuteVerifier()
 
-    # Run the same query multiple times to accumulate refutations
     for i in range(3):
         result = pipeline.answer(target_question["question"], f"demo_repeat_{i}")
-        newly_q = result.decision.notes.get("newly_quarantined", [])
-        if newly_q:
-            print(f"  Query {i+1}: quarantined {newly_q}")
+        newly_q = list(result.newly_quarantined) or \
+            list(result.decision.notes.get("newly_quarantined", []))
+        print(f"  Query {i+1}: excluded={len(result.decision.excluded_doc_ids)} "
+              f"queued={len(result.queued_verifications)} "
+              f"quarantined={newly_q or 'none'}")
 
     # Show final trust state of poison passages
     poison_ids = [f"poison_eiffel_{i}#0000" for i in range(3)]
@@ -167,6 +193,9 @@ def main() -> int:
     print(f"\n  Final answer (after trust evolution):")
     print(f"  Q: {target_question['question']}")
     print(f"  A: {final.answer}")
+    print(f"  abstained={final.record.abstained} reason={final.record.abstain_reason} "
+          f"context={list(final.decision.context_doc_ids)} "
+          f"evidence_mass={final.record.evidence_mass:.3f}")
     poison_in_final = [d.doc_id for d in final.retrieval.documents
                        if d.doc_id.startswith("poison")]
     print(f"  Poisoned passages in retrieval: {poison_in_final or 'none'}")

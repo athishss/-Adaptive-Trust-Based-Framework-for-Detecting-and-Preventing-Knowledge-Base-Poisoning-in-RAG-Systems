@@ -18,9 +18,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..config import RetrievalConfig
-from ..contracts import NullTrustProvider, RetrievedDocument, TrustProvider, TrustSnapshot
+from ..contracts import (NullTrustProvider, RetrievedDocument, TrustProvider,
+                         TrustSnapshot, TrustStatus)
 from ..ingestion.provenance import ChunkRecord, ProvenanceStore
+from ..utils.logging import get_logger
 from ..utils.timing import Stopwatch
+
+logger = get_logger(__name__)
+
+
+class RetrievalError(RuntimeError):
+    """The index and the provenance store disagree about every candidate."""
 
 
 @dataclass
@@ -38,6 +46,7 @@ class RetrievalOutcome:
     query_vector: np.ndarray
     latency_ms: float = 0.0
     n_blocked: int = 0
+    missing_ids: Tuple[str, ...] = ()   # index entries with no provenance record
 
     def doc_ids(self) -> Tuple[str, ...]:
         return tuple(d.doc_id for d in self.documents)
@@ -75,14 +84,34 @@ class TrustWeightedRetriever:
             records = self.store.get_chunks(chunk_ids)
             trust_map = self.trust.get_trust(chunk_ids)
 
+            missing = [chunk_id for chunk_id in chunk_ids if chunk_id not in records]
+            if missing:
+                logger.warning("retrieval: %d index entries have no provenance record "
+                               "(first: %s); the index is stale - rebuild it",
+                               len(missing), missing[:3])
+
             pool: List[RetrievedDocument] = []
+            blocked_by_status = 0
             for rank, (chunk_id, similarity) in enumerate(hits):
                 record = records.get(chunk_id)
                 if record is None:                     # index/store drift: skip, never crash
                     continue
                 snapshot = trust_map.get(chunk_id) or TrustSnapshot.neutral(
                     chunk_id, record.source_id, record.family_id)
+                # Defence in depth: even if a trust provider forgot to list a
+                # quarantined document in blocked_doc_ids(), its snapshot says
+                # it is blocked and it must not become evidence.
+                if snapshot.status in (TrustStatus.QUARANTINED, TrustStatus.REJECTED):
+                    blocked_by_status += 1
+                    continue
                 pool.append(self._make_document(record, similarity, rank, snapshot))
+
+            if hits and not pool:
+                raise RetrievalError(
+                    "every retrieved id is missing from the provenance store "
+                    f"({len(missing)} of {len(hits)}); rebuild the index with "
+                    "`trace-rag index --rebuild`"
+                )
 
             ranked = sorted(pool, key=lambda d: (-self._score(d), d.doc_id))
             top = tuple(
@@ -95,7 +124,8 @@ class TrustWeightedRetriever:
             )
         return RetrievalOutcome(
             query=query, query_id=query_id, documents=top, pool=tuple(pool),
-            query_vector=query_vector, latency_ms=watch.elapsed_ms, n_blocked=len(blocked),
+            query_vector=query_vector, latency_ms=watch.elapsed_ms,
+            n_blocked=len(blocked) + blocked_by_status, missing_ids=tuple(missing),
         )
 
     def retrieve_batch(self, queries: Sequence[str], query_ids: Optional[Sequence[str]] = None,

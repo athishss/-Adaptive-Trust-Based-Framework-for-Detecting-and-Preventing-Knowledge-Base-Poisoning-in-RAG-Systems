@@ -64,6 +64,80 @@ _CITATION_RE = re.compile(r"\[[^\[\]]{1,120}?\]")
 # Marker the StubLLM returns when it cannot answer
 _ABSTAIN_MARKER = "INSUFFICIENT EVIDENCE"
 
+# Capitalised name spans, including lowercase particles ("Leonardo da Vinci").
+# This is a lexical heuristic, used only by the degraded fallback to detect a
+# *rival named answer* for a "who" question.  The NLI path does not need it.
+_NAME_SPAN_RE = re.compile(
+    r"\b[A-Z][A-Za-z'\-]*(?:\s+(?:(?:de|da|van|von|del|der|la|le|of|al|the)\s+)?"
+    r"[A-Z][A-Za-z'\-]*)+"
+)
+_ARTICLES = frozenset({"the", "a", "an"})
+_WH_WORDS = frozenset({"who", "whom", "whose", "what", "which", "when", "where",
+                       "why", "how"})
+_NAME_PARTICLES = frozenset({"de", "da", "van", "von", "del", "der", "la", "le",
+                            "of", "al", "the"})
+
+
+def _name_spans(text: str, query_tokens: set) -> List[frozenset]:
+    """Return capitalised multi-word names that are not merely the query.
+
+    Used by the lexical fallback to notice that two passages name different
+    people for the same "who" question.  Single capitalised words are ignored:
+    "Paris" is not a person, and treating it as one made a location sentence
+    look like a rival answer.
+    """
+    spans: List[frozenset] = []
+    for match in _NAME_SPAN_RE.finditer(text or ""):
+        words = [word.lower().replace("'s", "") for word in match.group(0).split()]
+        if len(words) < 2 or words[0] in _ARTICLES:
+            continue
+        if all(word in query_tokens for word in words):
+            continue
+        spans.append(frozenset(word for word in words if word not in _NAME_PARTICLES))
+    return [span for span in spans if span]
+
+
+_PERSON_VERBS = frozenset({
+    "was", "is", "became", "designed", "discovered", "painted", "built", "wrote",
+    "created", "invented", "founded", "led", "developed", "proposed", "composed",
+    "directed", "produced", "served", "worked", "lived", "introduced", "established",
+})
+
+
+def _person_names(text: str, query_tokens: set) -> List[frozenset]:
+    """Capitalised names that occur in a person-like grammatical position.
+
+    A place phrase such as "on the Champ de Mars" is not a rival answer to a
+    "who" question.  A name counts when it sits in a person-like slot: followed
+    by a person verb or a possessive ("Gustave Eiffel was ..."), or introduced
+    by an agent phrase ("... designed by Gustave Eiffel", "the company of
+    Gustave Eiffel").  That keeps the lexical conflict detector from treating
+    any multi-word place as a competing person without missing the agent
+    phrase that most often names the actual answer.
+    """
+    names: List[frozenset] = []
+    for match in _NAME_SPAN_RE.finditer(text or ""):
+        raw = match.group(0)
+        words = [word.lower().replace("'s", "") for word in raw.split()]
+        if len(words) < 2 or words[0] in _ARTICLES:
+            continue
+        if all(word in query_tokens for word in words):
+            continue
+        following = (text or "")[match.end():].lstrip().split(maxsplit=1)
+        next_word = following[0].lower().strip(".,;:!?()") if following else ""
+        preceding = (text or "")[:match.start()].rsplit(maxsplit=1)
+        previous_word = preceding[-1].lower().strip(".,;:!?()") if preceding else ""
+        possessive = raw.lower().endswith("'s")
+        agent_phrase = previous_word in {"by", "of"}
+        if next_word in _PERSON_VERBS or possessive or agent_phrase:
+            names.append(frozenset(word for word in words if word not in _NAME_PARTICLES))
+    return [name for name in names if name]
+
+
+def _shares_name(a: Sequence[frozenset], b: Sequence[frozenset]) -> bool:
+    """Whether any name appears on both sides (token-set equality)."""
+    return any(left == right for left in a for right in b)
+
 
 class NLIScorer:
     """NLI-based comparison using cross-encoder/nli-deberta-v3-base.
@@ -75,6 +149,12 @@ class NLIScorer:
     def __init__(self) -> None:
         self._pipeline = None
         self._available: Optional[bool] = None
+        self.load_error: Optional[str] = None
+
+    @property
+    def loaded(self) -> bool:
+        """Whether the model is already loaded; never triggers a download."""
+        return self._available is True and self._pipeline is not None
 
     @property
     def available(self) -> bool:
@@ -104,6 +184,7 @@ class NLIScorer:
             logger.info("NLI scorer loaded: cross-encoder/nli-deberta-v3-base")
         except Exception as exc:
             self._available = False
+            self.load_error = f"{type(exc).__name__}: {exc}"
             logger.info("NLI scorer unavailable (falling back to lexical): %s", exc)
         return self._available
 
@@ -146,15 +227,29 @@ class CorroborationVerifier:
     max_corroboration : int
         Maximum number of independent passages to check per verification.
     support_threshold : float
-        Minimum claim overlap to count as support evidence (lexical mode).
+        Minimum share of the claim's answer terms a passage must contain to
+        count as support (lexical mode).  Containment, not Jaccard.
     refute_threshold : float
-        Maximum claim overlap (on a relevant passage) to count as refute (lexical mode).
+        Maximum share of the claim's answer terms a passage may contain and
+        still count as refute (lexical mode).  Reaching this alone is not
+        enough: the passage must also cover ``min_refute_topic_coverage`` of
+        the claim's topic, so partial topical overlap is neutral.
     min_mass : float
         Minimum aggregated mass required to issue a non-NEUTRAL verdict.
     min_refute_topical_overlap : int
         Minimum number of content words a passage must share with the claim
         before it is allowed to contribute *refuting* evidence.  Passages
         below this floor are irrelevant, not contradictory, and are ignored.
+    min_refute_topic_coverage : float
+        Share of the claim's content words (query words kept) a passage must
+        cover before the lexical fallback may call it a refutation.  Absence
+        of support is not refutation: a passage that only mentions part of the
+        claim's topic is ignored.  The NLI path uses the topical-overlap floor
+        above instead, because the cross-encoder can read the relation.
+    min_refute_query_coverage : float
+        Share of the question's content words a passage must contain before a
+        named-entity conflict may count as refutation.  This keeps an off-topic
+        passage that happens to name someone else from refuting the target.
     max_redundant_coverage : float
         Share of a claim's content words that other pool passages may already
         cover before the target is treated as redundant (non-influential) and
@@ -177,9 +272,11 @@ class CorroborationVerifier:
     """
 
     def __init__(self, llm=None, max_corroboration: int = 3,
-                 support_threshold: float = 0.15, refute_threshold: float = 0.10,
+                 support_threshold: float = 0.50, refute_threshold: float = 0.10,
                  min_mass: float = 0.10, use_nli: Optional[bool] = None,
                  min_refute_topical_overlap: int = 1,
+                 min_refute_topic_coverage: float = 0.50,
+                 min_refute_query_coverage: float = 0.60,
                  max_redundant_coverage: float = 0.80,
                  max_source_mass: float = 0.6,
                  counterfactual_influence: bool = True,
@@ -190,6 +287,8 @@ class CorroborationVerifier:
         self.refute_threshold = float(refute_threshold)
         self.min_mass = float(min_mass)
         self.min_refute_topical_overlap = int(min_refute_topical_overlap)
+        self.min_refute_topic_coverage = float(min_refute_topic_coverage)
+        self.min_refute_query_coverage = float(min_refute_query_coverage)
         self.max_redundant_coverage = float(max_redundant_coverage)
         self.max_source_mass = float(max_source_mass)
         self.counterfactual_influence = bool(counterfactual_influence)
@@ -225,6 +324,18 @@ class CorroborationVerifier:
         configured method is the one that produced the numbers.
         """
         return "nli" if self._use_nli else "lexical"
+
+    @property
+    def nli_ready(self) -> bool:
+        """Whether the selected NLI path has a loaded, probed model.
+
+        Reads the scorer's load state; it never attempts a download.
+        """
+        return bool(self._use_nli and _nli_scorer.loaded)
+
+    @property
+    def nli_error(self) -> Optional[str]:
+        return _nli_scorer.load_error
 
     # ------------------------------------------------------------------
     #  Verifier protocol
@@ -291,8 +402,9 @@ class CorroborationVerifier:
                 llm_calls += extra_calls
 
             # Step 4 - trust-weighted corroboration mass
-            support_mass, refute_mass, extra_calls = self._corroborate(
+            support_mass, refute_mass, evidence_ids, extra_calls = self._corroborate(
                 query, target_claim, independent, source_influence,
+                target_source_trust=float(target.trust.t_source),
             )
             llm_calls += extra_calls
 
@@ -317,6 +429,7 @@ class CorroborationVerifier:
             mode="nli" if self._use_nli else "lexical",
             llm_calls=int(llm_calls),
             latency_ms=float(watch.elapsed_ms),
+            evidence_doc_ids=tuple(sorted(evidence_ids)),
         )
 
     # ------------------------------------------------------------------
@@ -433,6 +546,16 @@ class CorroborationVerifier:
         Jaccard rather than containment, so a longer generation that merely
         quotes the same fact is not automatically scored as "unchanged".
         """
+        # Two answers that name different people are different answers, even
+        # when they share almost every other word ("Zog the Alien was the
+        # French civil engineer..." vs "Gustave Eiffel was the French civil
+        # engineer...").  Raw Jaccard scored that pair around 0.85 and the
+        # influence gate called the poison redundant, so the entity swap was
+        # never refuted.  The NLI path does not rely on this proxy.
+        names_a = _person_names(answer_a, set())
+        names_b = _person_names(answer_b, set())
+        if (names_a or names_b) and not _shares_name(names_a, names_b):
+            return 0.0
         a = set(tokenise(answer_a)) - _STOP_WORDS
         b = set(tokenise(answer_b)) - _STOP_WORDS
         if not a or not b:
@@ -467,20 +590,21 @@ class CorroborationVerifier:
     def _corroborate(self, query: str, target_claim: str,
                      independent: List[RetrievedDocument],
                      source_influence: Optional[Callable[[str], float]] = None,
-                     ) -> Tuple[float, float, int]:
+                     target_source_trust: float = 0.5,
+                     ) -> Tuple[float, float, Tuple[str, ...], int]:
         """Compare target's claim against independent sources.
 
         Uses NLI cross-encoder if available, otherwise lexical comparison.
 
-        Returns (support_mass, refute_mass, llm_calls).
+        Returns (support_mass, refute_mass, evidence_doc_ids, llm_calls).
         Mass is source-trust weighted (capped per source) and aggregated by
         source with a noisy-OR, so one source counts once.
         """
         if self._use_nli:
             return self._corroborate_nli(query, target_claim, independent,
-                                         source_influence)
+                                         source_influence, target_source_trust)
         return self._corroborate_lexical(query, target_claim, independent,
-                                         source_influence)
+                                         source_influence, target_source_trust)
 
     def _source_weight(self, doc: RetrievedDocument,
                        source_influence: Optional[Callable[[str], float]] = None,
@@ -510,7 +634,8 @@ class CorroborationVerifier:
     def _corroborate_nli(self, query: str, target_claim: str,
                          independent: List[RetrievedDocument],
                          source_influence: Optional[Callable[[str], float]] = None,
-                         ) -> Tuple[float, float, int]:
+                         target_source_trust: float = 0.5,
+                         ) -> Tuple[float, float, Tuple[str, ...], int]:
         """NLI-based corroboration (plan Section 4.5 step 3).
 
         For each independent passage d', runs:
@@ -534,6 +659,7 @@ class CorroborationVerifier:
         hypothesis = f"The answer to {query} is {target_claim}"
         best_support_per_source: Dict[str, float] = {}
         best_refute_per_source: Dict[str, float] = {}
+        contributing: List[str] = []
 
         for doc in independent:
             label, confidence = _nli_scorer.predict(doc.text, hypothesis)
@@ -545,69 +671,134 @@ class CorroborationVerifier:
                 best_support_per_source[source] = max(
                     best_support_per_source.get(source, 0.0), weight,
                 )
-            elif label == "contradiction" and self._may_refute(target_claim, doc.text):
+                if weight > 0:
+                    contributing.append(doc.doc_id)
+            elif (label == "contradiction"
+                  and self._may_refute(target_claim, doc.text)
+                  and self._may_outrank(doc, target_source_trust)):
                 weight = trust * confidence
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
                 )
+                if weight > 0:
+                    contributing.append(doc.doc_id)
 
         support_mass = self._noisy_or(best_support_per_source)
         refute_mass = self._noisy_or(best_refute_per_source)
-        return support_mass, refute_mass, 0  # NLI uses no LLM calls
+        return support_mass, refute_mass, tuple(contributing), 0  # NLI uses no LLM calls
 
     def _corroborate_lexical(self, query: str, target_claim: str,
                              independent: List[RetrievedDocument],
                              source_influence: Optional[Callable[[str], float]] = None,
-                             ) -> Tuple[float, float, int]:
+                             target_source_trust: float = 0.5,
+                             ) -> Tuple[float, float, Tuple[str, ...], int]:
         """Lexical corroboration (fallback when NLI is unavailable).
 
         The passage itself is the evidence, so each independent passage is
-        compared directly against the target's claim with stop-word-filtered
-        Jaccard overlap - no per-passage LLM call.  The old implementation
-        summarised every independent passage with its own LLM call, which blew
-        the plan's two-call verification budget (one call per passage on top of
-        claim extraction and the influence check) and replaced real evidence
-        with a second-hand summary.
+        compared directly against the target's claim - no per-passage LLM call.
+        The old implementation summarised every independent passage with its own
+        LLM call, which blew the plan's two-call verification budget and
+        replaced real evidence with a second-hand summary.
 
-        Agreement deliberately measures the terms that *answer* the question:
-        the query words are the common frame shared by every passage on the
-        topic, so a passage asserting a rival answer ("... discovered by Alan
-        Wu" against "... discovered by Maria Chen") must not look like partial
-        agreement merely because both contain "discovered" and the subject.  The
-        influence proxy and the refutation gate are different metrics and keep
-        the query words - see ``_topical_overlap``.
+        Two metrics are used because the two questions are different:
 
-        Returns (support_mass, refute_mass, llm_calls).
+        * **support**: share of the claim's *answer* terms (query words and stop
+          words removed) that the passage contains.  Containment, not Jaccard:
+          a long evidence passage must not be penalised for being long, and a
+          paraphrase that repeats the answer is still corroboration.
+        * **refute**: only a passage that covers most of the claim's *topic*
+          (query words kept) while containing almost none of its answer terms
+          is allowed to contradict it.  Low support alone is *not* refutation -
+          a passage about the same subject that simply does not state the claim
+          is neutral evidence.  Without this gate the fallback REFUTED honest
+          passages whenever a retrieved claim was only partially answerable,
+          which excluded clean content and fed the quarantine state machine.
+
+        The NLI path reads the relation directly and keeps its own topical
+        floor (``min_refute_topical_overlap``).
+
+        Returns (support_mass, refute_mass, evidence_ids, llm_calls).
         """
-        query_tokens = set(tokenise(query)) | _STOP_WORDS
-        target_content = set(tokenise(target_claim)) - query_tokens
-        if not target_content:
-            return 0.0, 0.0, 0
+        query_terms = set(tokenise(query))
+        query_tokens = query_terms | _STOP_WORDS
+        query_content = query_terms - _STOP_WORDS - _WH_WORDS
+        claim_content = set(tokenise(target_claim)) - _STOP_WORDS
+        target_content = claim_content - query_terms
+        if not target_content or not claim_content:
+            # The claim adds nothing beyond the question.  It cannot corroborate
+            # or contradict anything, so do not manufacture a verdict.
+            return 0.0, 0.0, (), 0
 
+        target_names = _person_names(target_claim, query_tokens)
         best_support_per_source: Dict[str, float] = {}
         best_refute_per_source: Dict[str, float] = {}
+        contributing: List[str] = []
 
         for doc in independent:
-            agreement = self._content_overlap(target_content, doc.text, query_tokens)
+            doc_content = set(tokenise(doc.text)) - _STOP_WORDS
+            if not doc_content:
+                continue
+            answer_coverage = len(target_content & doc_content) / len(target_content)
+            topic_coverage = len(claim_content & doc_content) / len(claim_content)
+            query_coverage = (len(query_content & doc_content) / len(query_content)
+                              if query_content else 0.0)
+            # A rival answer must be a *named person in a person-like slot*.
+            # Merely omitting the target's name is not a contradiction: an
+            # honest passage that says "the tower stands on the Champ de Mars"
+            # names no designer at all.  Treating that absence as a conflict
+            # quarantined a correct Eiffel-Tower passage in the trust-stream
+            # run; requiring a rival person keeps the entity-swap detector
+            # without reading silence as disagreement.
+            doc_names = _person_names(doc.text, query_tokens)
+            name_supported = bool(target_names) and _shares_name(
+                target_names, doc_names)
+            name_conflict = (bool(target_names) and bool(doc_names)
+                             and not name_supported
+                             and query_coverage >= self.min_refute_query_coverage)
             trust = self._source_weight(doc, source_influence)
             source = doc.source_id
 
-            if agreement >= self.support_threshold:
-                weight = trust * agreement
+            if name_supported or answer_coverage >= self.support_threshold:
+                weight = trust * max(answer_coverage, 0.5 if name_supported else 0.0)
                 best_support_per_source[source] = max(
                     best_support_per_source.get(source, 0.0), weight,
                 )
-            elif (agreement <= self.refute_threshold
-                    and self._may_refute(target_claim, doc.text)):
-                weight = trust * (1.0 - agreement)
+                if weight > 0:
+                    contributing.append(doc.doc_id)
+            elif (name_conflict
+                    or (answer_coverage <= self.refute_threshold
+                        and topic_coverage >= self.min_refute_topic_coverage)):
+                if not self._may_refute(target_claim, doc.text):
+                    continue
+                if not self._may_outrank(doc, target_source_trust):
+                    continue
+                weight = trust * (1.0 - answer_coverage)
                 best_refute_per_source[source] = max(
                     best_refute_per_source.get(source, 0.0), weight,
                 )
+                if weight > 0:
+                    contributing.append(doc.doc_id)
 
         # Noisy-OR aggregation (same rule as evidence_mass in citations.py)
         support_mass = self._noisy_or(best_support_per_source)
         refute_mass = self._noisy_or(best_refute_per_source)
-        return support_mass, refute_mass, 0  # no LLM calls: the text is the evidence
+        # no LLM calls: the text is the evidence
+        return support_mass, refute_mass, tuple(contributing), 0
+
+    @staticmethod
+    def _may_outrank(doc: RetrievedDocument, target_source_trust: float) -> bool:
+        """Whether this source is trusted enough to contradict the target.
+
+        Refutation is asymmetric: a source with less history than the target's
+        source cannot overturn it.  Without this rule one fresh attacker burst
+        (``t_source`` 0.4 under the cold-start penalty) refuted a correct
+        newcomer passage (``t_source`` 0.5) twice and quarantined it, while the
+        passage that actually supported it was excluded as a near-duplicate.
+        Equal trust may still refute; the gate only removes the strictly
+        less-trusted witness.
+        """
+        return (float(doc.trust.t_source) + 1e-9
+                >= float(target_source_trust))
 
     def _may_refute(self, claim: str, text: str) -> bool:
         """Whether a passage is allowed to contribute *refuting* evidence.
@@ -672,10 +863,17 @@ class CorroborationVerifier:
         Influence therefore gates refutation only - a passage whose removal does
         not change the answer cannot be poisoning it, but it can still be
         corroborated and earn trust.
+
+        Comparisons carry a 1e-9 tolerance.  Measured on the standard fixture,
+        one corroborating source at trust 0.5 and overlap 0.2 produced
+        ``support_mass = 0.09999999999999998`` against ``min_mass = 0.10`` and
+        was classified NEUTRAL - the SUPPORT band was unreachable by floating
+        point noise, not by policy.
         """
-        if support_mass >= self.min_mass and support_mass > refute_mass:
+        epsilon = 1e-9
+        if support_mass + epsilon >= self.min_mass and support_mass > refute_mass + epsilon:
             return VerificationOutcome.SUPPORT
-        if (influential and refute_mass >= self.min_mass
-                and refute_mass > support_mass):
+        if (influential and refute_mass + epsilon >= self.min_mass
+                and refute_mass > support_mass + epsilon):
             return VerificationOutcome.REFUTE
         return VerificationOutcome.NEUTRAL

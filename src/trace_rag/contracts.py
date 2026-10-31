@@ -28,7 +28,7 @@ __all__ = [
     "TrustSnapshot", "RetrievedDocument", "SignalVector", "FeatureSnapshot",
     "SecurityAssessment", "VerificationResult", "PolicyDecision", "Citation",
     "AnswerRecord", "LLMResponse",
-    "Embedder", "VectorIndex", "TrustProvider", "Verifier", "Policy", "LLM",
+    "Embedder", "VectorIndex", "TrustProvider", "Verifier", "Policy", "LLM", "ChatLLM",
     "NullTrustProvider", "NullVerifier", "DefaultPolicy",
     "SIGNAL_NAMES", "FEATURE_NAMES", "CONTRACT_VERSION",
 ]
@@ -121,6 +121,11 @@ class TrustSnapshot:
     def neutral(cls, doc_id: str, source_id: str = "unknown", family_id: str = "unknown") -> "TrustSnapshot":
         """Neutral snapshot used before Person B's ledger is wired in."""
         return cls(doc_id=doc_id, source_id=source_id, family_id=family_id)
+
+    @property
+    def blocked(self) -> bool:
+        """Whether this document may never be retrieved again."""
+        return self.status in (TrustStatus.QUARANTINED, TrustStatus.REJECTED)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -239,6 +244,12 @@ class VerificationResult:
     llm_calls: int = 0
     latency_ms: float = 0.0
     mode: str = "lexical"
+    # Which independent passages actually contributed support/refute mass.
+    # Recorded so an audit can answer "why did this get refuted?".
+    evidence_doc_ids: Tuple[str, ...] = ()
+    # Set when verification could not complete (exception, malformed backend
+    # output).  Such a result is NEUTRAL and must never grant trust.
+    error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -252,6 +263,8 @@ class VerificationResult:
             "llm_calls": int(self.llm_calls),
             "latency_ms": _round(self.latency_ms, 3),
             "mode": self.mode,
+            "evidence_doc_ids": list(self.evidence_doc_ids),
+            "error": self.error,
         }
 
 
@@ -406,6 +419,24 @@ class LLM(Protocol):
     name: str
 
     def generate(self, prompt: str, max_tokens: int = 256, stop: Optional[Sequence[str]] = None) -> LLMResponse: ...
+
+
+@runtime_checkable
+class ChatLLM(Protocol):
+    """Optional extension: role-separated chat completion.
+
+    ``LLM.generate`` takes a single flattened prompt, which is how system
+    instructions and retrieved passages historically ended up in the same
+    string.  Backends that support chat messages implement ``generate_chat`` so
+    the system policy stays a genuine system message and every retrieved
+    passage stays untrusted user-role data.  ``generation.llm.generate_with_messages``
+    provides the compatible fallback for backends that do not.
+    """
+
+    name: str
+
+    def generate_chat(self, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
+                      stop: Optional[Sequence[str]] = None) -> LLMResponse: ...
 
 
 # --------------------------------------------------------------------------

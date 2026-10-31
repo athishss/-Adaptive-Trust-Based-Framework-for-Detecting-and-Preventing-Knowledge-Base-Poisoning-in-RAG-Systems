@@ -1,0 +1,75 @@
+18:47:13 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+18:47:13 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+18:47:13 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+security=DEGRADED ledger=TrustLedger verifier=CorroborationVerifier(lexical) policy=TrustPolicy queue=on embedder=hashing llm=stub
+{
+  "status": "DEGRADED",
+  "configuration_valid": true,
+  "readiness_probes": {
+    "embedding": {
+      "backend": "hashing",
+      "model": null,
+      "status": "fallback",
+      "probe_shape": [
+        1,
+        256
+      ],
+      "dim": 256,
+      "detail": "hashing embedder is an offline test backend"
+    },
+    "generation": {
+      "backend": "stub",
+      "model": "stub",
+      "status": "fallback",
+      "detail": "stub LLM is an offline test backend"
+    },
+    "nli_verifier": {
+      "requested": "lexical",
+      "mode": "lexical",
+      "nli_loaded": false,
+      "status": "fallback",
+      "detail": "lexical fallback active"
+    },
+    "trust_ledger": {
+      "persistent": true,
+      "path": "runs\\doctor\\trust.sqlite3",
+      "status": "ready"
+    },
+    "queue": {
+      "status": "ready",
+      "max_size": 1000,
+      "pending": 0,
+      "dropped": 0
+    }
+  },
+  "readiness_ready": false,
+  "readiness_failures": [],
+  "probe_policy": "probes use already-constructed components; no model downloads and no services are started",
+  "security_enabled": true,
+  "trust_provider": "TrustLedger",
+  "trust_ledger_active": true,
+  "trust_persistent": true,
+  "trust_db": "runs\\doctor\\trust.sqlite3",
+  "verifier": "CorroborationVerifier",
+  "verifier_active": true,
+  "verifier_mode": "lexical",
+  "verifier_degraded": true,
+  "policy": "TrustPolicy",
+  "policy_active": true,
+  "queue_enabled": true,
+  "queue_size": 1000,
+  "queue_pending": 0,
+  "embedder": "hashing",
+  "embedding_dim": 256,
+  "llm": "stub",
+  "smoke_test_backends": true,
+  "research_ready": false,
+  "fallbacks": [
+    "embedding: hashing embedder is an offline test backend",
+    "generation: stub LLM is an offline test backend",
+    "nli_verifier: lexical fallback active"
+  ],
+  "warnings": [
+    "verification uses lexical overlap, not NLI; not comparable with NLI runs"
+  ]
+}

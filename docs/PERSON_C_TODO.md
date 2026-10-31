@@ -1,5 +1,10 @@
 # What Person C needs to fix
 
+> **Historical document.** The attack generators, baselines, chronological
+> runner and matrix are implemented. See [`../README.md`](../README.md) and
+> [`ENGINEERING_REPORT.md`](ENGINEERING_REPORT.md); the defect list below is
+> retained for provenance and may describe work that is already complete.
+
 Audit of `src/trace_rag/{attacks,baselines,evaluation}` at commit `9a2f88f`, done
 by reading the code, driving it, and measuring coverage. Every claim below is
 reproduced, not inferred. If something here disagrees with the code, the code

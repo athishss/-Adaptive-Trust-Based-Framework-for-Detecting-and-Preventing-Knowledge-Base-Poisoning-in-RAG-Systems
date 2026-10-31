@@ -115,6 +115,14 @@ def cmd_index(args: argparse.Namespace) -> int:
 
 def cmd_query(args: argparse.Namespace) -> int:
     pipeline = _pipeline(args)
+    health = pipeline.health_check()
+    if health["status"] != "PROTECTED":
+        print(f"security: {health['status']} "
+              f"(verifier={health['verifier_mode']}, queue={health['queue_enabled']})",
+              file=sys.stderr)
+        if health["status"] == "UNPROTECTED":
+            print("WARNING: this run has no active trust/verification defence; "
+                  "do not report it as RAGLedger.", file=sys.stderr)
     result = pipeline.answer(args.question, query_id=args.query_id)
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
@@ -184,6 +192,73 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Report which security controls and backends are actually active.
+
+    ``--config-only`` validates the YAML and the configuration surface without
+    constructing models or touching an endpoint.  The default mode constructs
+    the configured pipeline and probes the already-built components; that can
+    load a configured model (as any real run would), but the probes themselves
+    neither download weights nor start a service.
+    """
+    from .security import health_line
+
+    config = _config(args)
+    if getattr(args, "config_only", False):
+        report = {
+            "mode": "config-only",
+            "configuration_valid": True,
+            "security_enabled": config.security.enabled,
+            "verifier_requested": config.security.verifier,
+            "embedding_backend": config.embedding.backend,
+            "embedding_model": config.embedding.model_name,
+            "generation_backend": config.generation.backend,
+            "generation_model": config.generation.model_name,
+            "trust_db": config.trust_db_path(),
+            "readiness": "NOT PROBED - run without --config-only to probe loaded components",
+            "status": "CONFIG_VALID" if config.security.enabled else "UNPROTECTED",
+        }
+        print(json.dumps(report, indent=2))
+        return 0 if config.security.enabled else 1
+    try:
+        pipeline = _pipeline(args, load_index=False)
+    except Exception as exc:  # noqa: BLE001 - doctor must report, not crash
+        print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}, indent=2))
+        return 1
+    try:
+        health = pipeline.health_check()
+        print(health_line(health))
+        print(json.dumps(health, indent=2))
+        return 0 if health["status"] != "UNPROTECTED" else 1
+    finally:
+        pipeline.close()
+
+
+def cmd_smoke(args: argparse.Namespace) -> int:
+    """Run the deterministic chronological smoke matrix (attacks x baselines)."""
+    from pathlib import Path as _Path
+
+    from .evaluation.experiment import (SMOKE_ATTACKS, SMOKE_BASELINES, load_fixture,
+                                        run_matrix)
+
+    config = _config(args)
+    examples = _Path(args.examples) if args.examples else \
+        _Path(__file__).resolve().parent.parent.parent / "examples"
+    fixture = load_fixture(examples)
+    payload = run_matrix(
+        attacks=args.attacks.split(",") if args.attacks else list(SMOKE_ATTACKS),
+        baselines=args.baselines.split(",") if args.baselines else list(SMOKE_BASELINES),
+        seeds=[args.seed], fixture=fixture, output_root=args.out,
+        config_path=args.config, target_limit=args.targets,
+    )
+    print(json.dumps({"cases_completed": payload["cases_completed"],
+                      "cases_requested": payload["cases_requested"],
+                      "failures": payload["failures"],
+                      "results": str(_Path(args.out) / "results.json")}, indent=2))
+    _ = config  # config_path is what the matrix re-loads; kept for validation
+    return 0 if not payload["failures"] else 1
+
+
 def _common_options(parser: argparse.ArgumentParser, suppress: bool = False) -> None:
     """--config/--root/--set, accepted both before and after the subcommand.
 
@@ -246,6 +321,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_stats = sub.add_parser("stats", help="show pipeline statistics", parents=[common])
     p_stats.set_defaults(func=cmd_stats)
+
+    p_doctor = sub.add_parser("doctor", help="report active security controls and backends",
+                              parents=[common])
+    p_doctor.add_argument("--config-only", action="store_true",
+                          help="validate configuration without constructing models or endpoints")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    p_smoke = sub.add_parser("smoke", help="run the deterministic chronological smoke matrix",
+                             parents=[common])
+    p_smoke.add_argument("--out", default="runs/smoke_matrix")
+    p_smoke.add_argument("--examples", default=None)
+    p_smoke.add_argument("--attacks", default=None, help="comma-separated attack names")
+    p_smoke.add_argument("--baselines", default=None, help="comma-separated baseline names")
+    p_smoke.add_argument("--targets", type=int, default=6)
+    p_smoke.add_argument("--seed", type=int, default=20260921)
+    p_smoke.set_defaults(func=cmd_smoke)
     return parser
 
 

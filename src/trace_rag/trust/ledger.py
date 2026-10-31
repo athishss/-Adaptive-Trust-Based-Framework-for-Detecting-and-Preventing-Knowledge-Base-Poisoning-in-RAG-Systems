@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from ..contracts import TrustSnapshot, TrustStatus
+from ..utils.clock import Clock, SystemClock
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -115,6 +116,21 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_trust_status ON trust_entities(entity_type, status);
 CREATE INDEX IF NOT EXISTS idx_doc_source   ON doc_registry(source_id);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_id, entity_type);
+
+-- Evidence deduplication.  One verified observation is identified by the
+-- (doc, query, outcome) triple, so a queue retry or a duplicated verification
+-- cannot apply the same evidence twice.  A NULL evidence_key keeps the old
+-- behaviour (every call counts).
+CREATE TABLE IF NOT EXISTS trust_observations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id      TEXT NOT NULL,
+    outcome     TEXT NOT NULL,
+    evidence_key TEXT NOT NULL,
+    timestamp   REAL NOT NULL,
+    UNIQUE(doc_id, evidence_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_observations_doc ON trust_observations(doc_id);
 """
 
 
@@ -187,10 +203,12 @@ class TrustLedger:
     """
 
     def __init__(self, path: str | Path, store: Any = None,
-                 config: Optional[TrustConfig] = None) -> None:
+                 config: Optional[TrustConfig] = None,
+                 clock: Optional[Clock] = None) -> None:
         self.path = str(path)
         self.store = store           # optional ProvenanceStore for source/family lookups
         self.config = config or TrustConfig()
+        self.clock: Clock = clock or SystemClock()
         self._lock = threading.RLock()
         self._blocked_cache: Optional[Set[str]] = None
         self._query_count: int = 0        # for decay scheduling (per query, plan 4.6)
@@ -198,7 +216,10 @@ class TrustLedger:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._conn = sqlite3.connect(self.path, check_same_thread=False)
+            # timeout/busy_timeout: several components (pipeline, evaluation
+            # harness, a dashboard) may legitimately open the ledger at once.
+            self._conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10.0)
+            self._conn.execute("PRAGMA busy_timeout=10000")
         except sqlite3.OperationalError as exc:
             raise sqlite3.OperationalError(
                 f"cannot open the trust ledger at {self.path}: {exc}"
@@ -225,7 +246,7 @@ class TrustLedger:
         if not doc_ids:
             return {}
         doc_ids = list(doc_ids)
-        now = time.time()
+        now = self.clock.now()
 
         with self._lock:
             mappings = self._get_mappings(doc_ids)
@@ -295,17 +316,34 @@ class TrustLedger:
     # ------------------------------------------------------------------
 
     def record_observation(self, doc_id: str, source_id: str, family_id: str,
-                           outcome: str, timestamp: Optional[float] = None) -> None:
+                           outcome: str, timestamp: Optional[float] = None,
+                           evidence_key: Optional[str] = None) -> bool:
         """Update trust based on a verification outcome.
 
         *outcome* must be ``'SUPPORT'``, ``'REFUTE'`` or ``'NEUTRAL'``.
         NEUTRAL observations are recorded but do not change alpha/beta.
+
+        ``evidence_key`` makes the update idempotent: queued verification can
+        be retried, and the same (document, query, outcome) evidence must not
+        move the Beta distribution twice.  Returns True when the observation
+        was applied, False when it was a duplicate.
         """
         if outcome not in ("SUPPORT", "REFUTE", "NEUTRAL"):
             raise ValueError(f"outcome must be SUPPORT/REFUTE/NEUTRAL, got {outcome!r}")
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
 
         with self._lock:
+            if evidence_key is not None:
+                try:
+                    self._conn.execute(
+                        "INSERT INTO trust_observations(doc_id, outcome, evidence_key, "
+                        "timestamp) VALUES(?,?,?,?)",
+                        (doc_id, outcome, str(evidence_key), ts),
+                    )
+                except sqlite3.IntegrityError:
+                    logger.debug("trust: duplicate evidence %s for %s ignored",
+                                 evidence_key, doc_id)
+                    return False
             self._register_doc(doc_id, source_id, family_id)
             # Burst detection runs before this document's entity is created, so
             # its prior already carries the discount, and it back-applies the
@@ -356,6 +394,7 @@ class TrustLedger:
 
             self._conn.commit()
             self._blocked_cache = None  # invalidate
+        return True
 
     def record_high_band(self, doc_id: str, source_id: str, family_id: str,
                          timestamp: Optional[float] = None) -> None:
@@ -365,7 +404,7 @@ class TrustLedger:
         beta bump.  This is weaker than a full REFUTE — it only moves the
         Beta distribution slightly towards distrust.
         """
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             self._register_doc(doc_id, source_id, family_id)
             is_burst = self._detect_burst(source_id, ts)
@@ -383,7 +422,7 @@ class TrustLedger:
     def quarantine(self, doc_ids: Sequence[str], reason: str = "quarantined",
                    timestamp: Optional[float] = None) -> List[str]:
         """Directly quarantine specific doc_ids.  Returns the list actually transitioned."""
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         newly: List[str] = []
         with self._lock:
             for doc_id in doc_ids:
@@ -632,6 +671,13 @@ class TrustLedger:
             logger.info("trust: %s %s -> %s (refutations=%d, t_doc=%.3f)",
                         doc_id, status, new_status, n_ref, t_doc)
 
+    def now(self) -> float:
+        """Current time according to the injected clock (never the raw wall clock)."""
+        return self.clock.now()
+
+    def _now(self, timestamp: Optional[float] = None) -> float:
+        return self.clock.now() if timestamp is None else float(timestamp)
+
     def begin_query(self, timestamp: Optional[float] = None) -> None:
         """Mark the start of one query.
 
@@ -639,7 +685,7 @@ class TrustLedger:
         (plan Section 4.6, "forgetting per N queries"), so the caller -- the
         policy in the pipeline -- calls this once per query.
         """
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             self._query_count += 1
             if (self.config.decay_gamma < 1.0 and self.config.decay_interval > 0
@@ -700,7 +746,7 @@ class TrustLedger:
         Plan Section 4.7: REJECTED means permanently removed from the index and
         the source flagged.  Returns True when the transition happened.
         """
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             row = self._conn.execute(
                 "SELECT status FROM trust_entities "
@@ -743,7 +789,7 @@ class TrustLedger:
                                note: str = "",
                                timestamp: Optional[float] = None) -> bool:
         """Administrator declines the rejection; the document stays QUARANTINED."""
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             cursor = self._conn.execute(
                 "UPDATE admin_review SET state = 'declined' "
@@ -764,7 +810,7 @@ class TrustLedger:
         Plan Section 4.7: recovery needs administrator approval so an attacker
         cannot talk a document back into use.  Returns True if it transitioned.
         """
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             row = self._conn.execute(
                 "SELECT status FROM trust_entities "
@@ -882,7 +928,7 @@ class TrustLedger:
         detected automatically from the registration history (``_detect_burst``);
         this is the explicit override for a signal computed outside the ledger.
         """
-        ts = timestamp if timestamp is not None else time.time()
+        ts = self._now(timestamp)
         with self._lock:
             self._ensure_entity("source", source_id, ts)
             group = (int(ts // self.config.burst_window_seconds)
@@ -967,7 +1013,7 @@ class TrustLedger:
         """
         if not self.config.hierarchical:
             return 1.0
-        ts = now if now is not None else time.time()
+        ts = self._now(now)
         with self._lock:
             row = self._conn.execute(
                 "SELECT created_at, n_observations FROM trust_entities "

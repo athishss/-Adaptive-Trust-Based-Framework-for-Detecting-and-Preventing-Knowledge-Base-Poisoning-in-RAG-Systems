@@ -1,0 +1,20 @@
+17:33:01 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+17:33:01 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+17:33:01 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 5)
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 10)
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 15)
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 20)
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 25)
+17:33:01 INFO    trace_rag.pipeline | indexed 9 chunks (index size 34)
+17:33:01 INFO    trace_rag.pipeline | indexed 5 chunks (index size 39)
+17:33:01 INFO    trace_rag.pipeline | indexed 1 chunks (index size 40)
+17:33:01 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_science (4 docs in 60s)
+17:33:01 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_history (4 docs in 60s)
+17:33:01 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from wiki_geography (4 docs in 60s)
+{
+  "cases_completed": 1,
+  "cases_requested": 1,
+  "failures": [],
+  "results": "C:\\Users\\athis\\AppData\\Local\\Temp\\cli_smoke\\results.json"
+}

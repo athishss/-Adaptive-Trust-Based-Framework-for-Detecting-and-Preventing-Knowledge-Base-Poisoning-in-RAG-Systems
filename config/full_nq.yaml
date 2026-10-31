@@ -50,5 +50,19 @@ generation:
   abstain_evidence_mass: 0.5
   require_citations: true
 
+security:
+  enabled: true
+  verifier: nli
+  max_corroboration: 3
+  queue_size: 1000
+  drain_queue: true
+  fail_open_without_verifier: false
+
+trust:
+  quarantine_refutations: 2
+  reject_refutations: 3
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+
 storage:
   root: runs/nq

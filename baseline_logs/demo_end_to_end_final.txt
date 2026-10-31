@@ -1,0 +1,157 @@
+18:48:57 WARNING trace_rag.pipeline | pipeline built with secure=False: UNPROTECTED baseline
+18:48:57 INFO    trace_rag.pipeline | indexing 57 passages with hashing on cpu (this is the slow step)
+18:48:57 INFO    trace_rag.pipeline | indexed 57 chunks (index size 57)
+mode: UNPROTECTED Person A demo (security.enabled=false)
+
+==============================================================================
+1. Ingest: clean corpus first, attacker batch later
+==============================================================================
+  store: {'sources': 12, 'documents': 57, 'chunks': 57}   index: 57 passages
+  leakage guard on: benign new contributors arrive in the same late window as the attack
+
+==============================================================================
+2. Answer with the untrained heuristic scorer
+   Q: Who designed the Eiffel Tower?
+==============================================================================
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   ?  POISON poison_eiffel_1#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_0#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_2#0000       suspicion=0.601 MEDIUM
+      clean  clean_eiffel_0#0000        suspicion=0.280 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.220 LOW
+
+==============================================================================
+3. Train the calibrated suspicion scorer (labels from the attack harness)
+==============================================================================
+  dataset: {'rows': 120, 'poison': 62, 'clean': 58, 'questions': 24, 'attack_families': ['poisonedrag_bb']}
+  thresholds: theta_low=1.000 theta_high=1.000
+  validation: HIGH-band FPR=0.0000 (cap 0.02), escalations/query=0.00 (budget 1.0)
+  held-out test: {"n": 25, "n_poison": 13, "n_clean": 12, "theta_low": 1.0, "theta_high": 1.0, "high_band_fpr": 0.0, "high_band_recall": 1.0, "medium_or_high_recall": 1.0, "escalations_per_query": 0.0, "roc_auc": 1.0, "average_precision": 1.0, "split_sizes": {"train": 70, "val": 25, "test": 25}}
+  strongest features: s5_source_immaturity=-48.96, s4_ingestion_burst=+4.65, x_source_log_age_days=-1.82, x_similarity=+1.41
+  NOTE: this toy corpus is trivially separable (one attack family, 3 near-identical
+        passages per target), so perfect scores here mean nothing. Reportable numbers
+        come from NQ + the PoisonedRAG harness with leave-one-attack-family-out.
+
+==============================================================================
+4. Answer again with the trained scorer
+==============================================================================
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   !  POISON poison_eiffel_1#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_0#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_2#0000       suspicion=1.000 HIGH
+      clean  clean_eiffel_0#0000        suspicion=0.000 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.000 LOW
+  excluded from the answer this turn: ['poison_eiffel_1#0000', 'poison_eiffel_0#0000', 'poison_eiffel_2#0000']
+
+==============================================================================
+5. Person B quarantines the injected passages -> retroactive remediation
+==============================================================================
+  quarantined: ['poison_eiffel_0#0000', 'poison_eiffel_1#0000', 'poison_eiffel_2#0000']
+  answers flagged for review: 1 (exposure window: 2 answers served before quarantine)
+  A (after quarantine): Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+  poisoned passages retrieved now: none
+
+==============================================================================
+Summary
+==============================================================================
+{
+  "store": {
+    "sources": 12,
+    "documents": 57,
+    "chunks": 57
+  },
+  "index_size": 57,
+  "answers": {
+    "answers": 6,
+    "abstained": 0,
+    "flagged": 2,
+    "abstention_rate": 0.0,
+    "mean_llm_calls": 1.0,
+    "mean_latency_ms": 0.12373334417740504
+  },
+  "scorer": "lr-13f-n70-isotonic",
+  "embedder": "hashing",
+  "llm": "stub",
+  "trust_provider": "NullTrustProvider",
+  "verifier": null,
+  "verifier_mode": null,
+  "policy": "DefaultPolicy",
+  "security_status": "UNPROTECTED",
+  "security": {
+    "status": "UNPROTECTED",
+    "configuration_valid": false,
+    "readiness_probes": {
+      "embedding": {
+        "backend": "hashing",
+        "model": null,
+        "status": "fallback",
+        "probe_shape": [
+          1,
+          256
+        ],
+        "dim": 256,
+        "detail": "hashing embedder is an offline test backend"
+      },
+      "generation": {
+        "backend": "stub",
+        "model": "stub",
+        "status": "fallback",
+        "detail": "stub LLM is an offline test backend"
+      },
+      "nli_verifier": {
+        "requested": "lexical",
+        "mode": null,
+        "nli_loaded": false,
+        "status": "failed",
+        "detail": "verifier did not report an NLI or lexical mode"
+      },
+      "trust_ledger": {
+        "status": "failed",
+        "detail": "trust ledger is not a TrustLedger"
+      },
+      "queue": {
+        "status": "failed",
+        "detail": "verification queue is not configured"
+      }
+    },
+    "readiness_ready": false,
+    "readiness_failures": [
+      "nli_verifier: verifier did not report an NLI or lexical mode",
+      "trust_ledger: trust ledger is not a TrustLedger",
+      "queue: verification queue is not configured"
+    ],
+    "probe_policy": "probes use already-constructed components; no model downloads and no services are started",
+    "security_enabled": false,
+    "trust_provider": "NullTrustProvider",
+    "trust_ledger_active": false,
+    "trust_persistent": false,
+    "trust_db": null,
+    "verifier": null,
+    "verifier_active": false,
+    "verifier_mode": null,
+    "verifier_degraded": false,
+    "policy": "DefaultPolicy",
+    "policy_active": false,
+    "queue_enabled": false,
+    "queue_size": 0,
+    "queue_pending": 0,
+    "embedder": "hashing",
+    "embedding_dim": 256,
+    "llm": "stub",
+    "smoke_test_backends": true,
+    "research_ready": false,
+    "fallbacks": [
+      "embedding: hashing embedder is an offline test backend",
+      "generation: stub LLM is an offline test backend"
+    ],
+    "warnings": [
+      "security.enabled is false: no trust, verification or quarantine",
+      "trust ledger is not a TrustLedger",
+      "policy is not TrustPolicy",
+      "verification queue is not configured; HIGH-band items are dropped",
+      "nli_verifier readiness failed: verifier did not report an NLI or lexical mode",
+      "trust_ledger readiness failed: trust ledger is not a TrustLedger",
+      "queue readiness failed: verification queue is not configured"
+    ]
+  }
+}

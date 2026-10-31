@@ -1,0 +1,144 @@
+17:31:51 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+17:31:51 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+17:31:51 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+17:31:51 INFO    trace_rag.pipeline | indexing 57 passages with hashing on cpu (this is the slow step)
+17:31:51 INFO    trace_rag.pipeline | indexed 57 chunks (index size 57)
+17:31:51 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_0 (4 docs in 60s)
+17:31:51 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_1 (4 docs in 60s)
+{
+  "latency": {
+    "retrieval": {
+      "mean_ms": 1.363,
+      "p50_ms": 1.253,
+      "p95_ms": 2.084,
+      "n": 36
+    },
+    "signals_and_scoring": {
+      "mean_ms": 2.566,
+      "p50_ms": 1.989,
+      "p95_ms": 3.754,
+      "n": 36
+    },
+    "policy": {
+      "mean_ms": 4.942,
+      "p50_ms": 3.434,
+      "p95_ms": 12.19,
+      "n": 36
+    },
+    "generation": {
+      "mean_ms": 0.188,
+      "p50_ms": 0.181,
+      "p95_ms": 0.321,
+      "n": 36
+    },
+    "verification_queue": {
+      "mean_ms": 0.017,
+      "p50_ms": 0.01,
+      "p95_ms": 0.033,
+      "n": 36
+    },
+    "total": {
+      "mean_ms": 9.077,
+      "p50_ms": 7.866,
+      "p95_ms": 17.53,
+      "n": 36
+    },
+    "llm_calls_per_query": {
+      "mean": 5.417,
+      "max": 10,
+      "n": 36
+    }
+  },
+  "ablation": {
+    "all_signals": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s1_query_echo": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s2_similarity_outlier": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s3_cluster_tightness": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s4_ingestion_burst": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s5_source_immaturity": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    },
+    "without_s6_neighbourhood_density": {
+      "roc_auc": 1.0,
+      "delta": 0.0,
+      "high_band_recall": 1.0
+    }
+  },
+  "pipeline": {
+    "store": {
+      "sources": 12,
+      "documents": 57,
+      "chunks": 57
+    },
+    "index_size": 57,
+    "answers": {
+      "answers": 0,
+      "abstained": 0,
+      "flagged": 0,
+      "abstention_rate": 0.0,
+      "mean_llm_calls": 0.0,
+      "mean_latency_ms": 0.0
+    },
+    "scorer": "heuristic-v1",
+    "embedder": "hashing",
+    "llm": "stub",
+    "trust_provider": "TrustLedger",
+    "verifier": "CorroborationVerifier",
+    "verifier_mode": "lexical",
+    "policy": "TrustPolicy",
+    "security_status": "DEGRADED",
+    "security": {
+      "status": "DEGRADED",
+      "security_enabled": true,
+      "trust_provider": "TrustLedger",
+      "trust_ledger_active": true,
+      "trust_persistent": true,
+      "trust_db": "runs\\a7\\trust.sqlite3",
+      "verifier": "CorroborationVerifier",
+      "verifier_active": true,
+      "verifier_mode": "lexical",
+      "verifier_degraded": true,
+      "policy": "TrustPolicy",
+      "policy_active": true,
+      "queue_enabled": true,
+      "queue_size": 1000,
+      "queue_pending": 0,
+      "embedder": "hashing",
+      "embedding_dim": 256,
+      "llm": "stub",
+      "smoke_test_backends": true,
+      "research_ready": false,
+      "fallbacks": [
+        "verifier=lexical (NLI cross-encoder unavailable or not requested)",
+        "embedding=hashing (offline test backend)",
+        "generation=stub (offline test backend)"
+      ],
+      "warnings": [
+        "verification uses lexical overlap, not NLI; not comparable with NLI runs"
+      ]
+    }
+  },
+  "caveat": "Latency excludes real embedding and LLM time (offline backends). The bundled corpus is trivially separable, so ablation deltas here are illustrative; rerun on NQ with Person C's attacks for reportable numbers."
+}

@@ -1,0 +1,89 @@
+19:41:38 INFO    trace_rag.pipeline | indexing 57 passages with hashing on cpu (this is the slow step)
+19:41:38 INFO    trace_rag.pipeline | indexed 57 chunks (index size 57)
+19:41:50 INFO    trace_rag.trust.verifier | NLI scorer unavailable (falling back to lexical): No module named 'transformers'
+19:41:50 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+19:41:50 INFO    trace_rag.trust.ledger | trust: poison_eiffel_1#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.472)
+19:41:50 INFO    trace_rag.trust.ledger | trust: poison_eiffel_0#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.460)
+19:41:50 INFO    trace_rag.trust.ledger | trust: poison_eiffel_2#0000 TRUSTED -> MONITORED (refutations=0, t_doc=0.448)
+19:41:50 INFO    trace_rag.trust.ledger | trust: detected ingestion burst from attacker_0 (4 docs in 60s)
+
+==============================================================================
+1. Ingest: clean corpus first, attacker batch later
+==============================================================================
+  store: {'sources': 12, 'documents': 57, 'chunks': 57}   index: 57 passages
+
+==============================================================================
+2. Answer with untrained scorer (no Person B yet)
+   Q: Who designed the Eiffel Tower?
+==============================================================================
+  A: Who designed the Eiffel Tower? [poison_eiffel_1#0000]
+   ?  POISON poison_eiffel_1#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_0#0000       suspicion=0.601 MEDIUM
+   ?  POISON poison_eiffel_2#0000       suspicion=0.601 MEDIUM
+      clean  clean_eiffel_0#0000        suspicion=0.280 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.220 LOW
+
+==============================================================================
+3. Train the calibrated suspicion scorer
+==============================================================================
+  dataset: {'rows': 120, 'poison': 62, 'clean': 58, 'questions': 24, 'attack_families': ['poisonedrag_bb']}
+  thresholds: theta_low=1.000 theta_high=1.000
+
+==============================================================================
+4. Wire in Person B's trust framework and answer again
+==============================================================================
+  Person B components wired in:
+    TrustLedger:  runs\baseline_demo_b\trust.sqlite3
+    Verifier:     CorroborationVerifier (max_corroboration=3)
+    Policy:       TrustPolicy (quarantine_refutations=2)
+
+  Q: Who designed the Eiffel Tower?
+  A: Gustave Eiffel was the French civil engineer whose company designed and built the Eiffel Tower in Paris, completed in 1889 for the World's Fair [clean_eiffel_0#0000]
+   !  POISON poison_eiffel_1#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_0#0000       suspicion=1.000 HIGH
+   !  POISON poison_eiffel_2#0000       suspicion=1.000 HIGH
+      clean  clean_eiffel_0#0000        suspicion=0.000 LOW
+      clean  clean_eiffel_1#0000        suspicion=0.000 LOW
+  excluded from answer: ['poison_eiffel_1#0000', 'poison_eiffel_0#0000', 'poison_eiffel_2#0000']
+
+==============================================================================
+5. Repeated queries -> automatic quarantine via trust decay
+==============================================================================
+
+  Trust state after repeated queries:
+    poison_eiffel_0#0000: t_eff=0.325 status=MONITORED (n_obs=4)
+    poison_eiffel_1#0000: t_eff=0.331 status=MONITORED (n_obs=4)
+    poison_eiffel_2#0000: t_eff=0.332 status=MONITORED (n_obs=3)
+
+  Blocked doc_ids: none
+
+  Final answer (after trust evolution):
+  Q: Who designed the Eiffel Tower?
+  A: I don't have enough trusted evidence in the knowledge base to answer this reliably.
+  Poisoned passages in retrieval: ['poison_eiffel_1#0000', 'poison_eiffel_2#0000']
+
+==============================================================================
+Summary
+==============================================================================
+{
+  "store": {
+    "sources": 12,
+    "documents": 57,
+    "chunks": 57
+  },
+  "index_size": 57,
+  "answers": {
+    "answers": 6,
+    "abstained": 2,
+    "flagged": 0,
+    "abstention_rate": 0.3333333333333333,
+    "mean_llm_calls": 1.0,
+    "mean_latency_ms": 0.5206667119637132
+  },
+  "scorer": "lr-13f-n70-isotonic",
+  "embedder": "hashing",
+  "llm": "stub",
+  "trust_provider": "TrustLedger",
+  "verifier": "CorroborationVerifier",
+  "policy": "TrustPolicy"
+}

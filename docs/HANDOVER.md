@@ -1,5 +1,11 @@
 # Handover: Person A → Person B
 
+> **Historical document.** Person B's trust/verification/policy stack and
+> Person C's attacks, baselines and evaluation are implemented and integrated.
+> The test counts and "yours to build" statements below describe the original
+> Person A handover, not the current repository. See [`../README.md`](../README.md)
+> and [`ENGINEERING_REPORT.md`](ENGINEERING_REPORT.md) for the validated state.
+
 Written so you do not have to assume anything about what Person A built. If
 something here disagrees with the code, the code wins and this file is a bug.
 

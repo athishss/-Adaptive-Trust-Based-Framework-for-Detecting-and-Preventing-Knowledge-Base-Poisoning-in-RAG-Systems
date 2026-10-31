@@ -63,11 +63,11 @@ from trace_rag.attacks.poisoned_rag import entity_swap, make_poisoned_document, 
 from trace_rag.attacks.stream import zipf_queries
 from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
+from trace_rag.evaluation.metrics import answer_level_asr_fields
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
 from trace_rag.pipeline import PersonAPipeline
-from trace_rag.trust import CorroborationVerifier, TrustConfig, TrustLedger, TrustPolicy
+from trace_rag.trust import TrustLedger, TrustPolicy
 from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics, write_history_csv
-from trace_rag.trust.queue import VerificationQueue
 
 ATTACKER_SOURCE = "attacker_burst"
 WRONG_ANSWER = "Zog the Alien"
@@ -217,6 +217,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
+    # Configure the security stack before building the pipeline.  Building it
+    # first and then replacing its ledger opened a second SQLite connection to
+    # the same trust database, which deadlocked the first query with
+    # "database is locked".
+    config.trust.quarantine_refutations = args.quarantine_refutations
+    config.trust.hierarchical = not args.no_hierarchical
+    config.security.max_corroboration = args.max_corroboration
     pipeline = PersonAPipeline.from_config(config, load_existing_index=args.skip_index)
     questions = load_questions(Path(args.queries))
     if not questions:
@@ -290,17 +297,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # ---------------------------------------------------------------- trust
     banner("4. Wire in Person B's trust layer")
-    trust_config = TrustConfig(quarantine_refutations=args.quarantine_refutations,
-                               hierarchical=not args.no_hierarchical)
-    ledger = TrustLedger(out_dir / "trust.sqlite3", store=pipeline.store, config=trust_config)
-    verifier = CorroborationVerifier(llm=pipeline.generator.llm,
-                                     max_corroboration=args.max_corroboration)
-    queue = VerificationQueue()
-    policy = TrustPolicy(ledger=ledger, on_quarantine=pipeline.on_quarantine, queue=queue)
-    pipeline.trust_provider = ledger
-    pipeline.retriever.trust = ledger
-    pipeline.verifier = verifier
-    pipeline.policy = policy
+    # Use the stack PersonAPipeline.from_config already attached.  It is the
+    # same components the CLI and the chronological runner use; creating a
+    # second ledger here was the duplicate-connection bug.
+    ledger = pipeline.trust_provider
+    verifier = pipeline.verifier
+    policy = pipeline.policy
+    queue = pipeline.security.queue if pipeline.security is not None else None
+    if not isinstance(ledger, TrustLedger) or verifier is None or not isinstance(policy, TrustPolicy):
+        print("security stack did not attach; refusing to run an unprotected stream",
+              file=sys.stderr)
+        return 2
+    trust_config = ledger.config
     if args.force_medium:
         # Demo mode, labelled as such in the metrics: every passage escalates so
         # the verifier path is exercised even when the heuristic scorer is calm.
@@ -325,6 +333,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         drained = policy.drain_verification_queue(verifier)
         cited_poison = [d.doc_id for d in result.retrieval.documents
                         if d.doc_id in poison_ids and d.doc_id in (result.answer or "")]
+        context_poison = [doc_id for doc_id in result.decision.context_doc_ids
+                          if doc_id in poison_ids]
         retrieved_ids = [d.doc_id for d in result.retrieval.documents]
         per_step.append({
             "step": step,
@@ -337,6 +347,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "citations": [d.doc_id for d in result.retrieval.documents
                           if d.doc_id in (result.answer or "")],
             "poison_cited": bool(cited_poison),
+            "poison_in_context": context_poison,
+            "poison_exposed": bool(context_poison),
             "bands": {band: sum(1 for a in result.assessments if a.band.value == band)
                       for band in ("LOW", "MEDIUM", "HIGH")},
             "verified": [v.outcome.value for v in result.decision.verified],
@@ -351,7 +363,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     banner("6. Smoke-test metrics (not the headline evaluation)")
     target_steps = [row for row in per_step if row["is_target"]]
     poison_answers = [row for row in target_steps if row["poison_cited"]]
+    poison_exposed = [row for row in target_steps if row["poison_exposed"]]
     poison_retrieved = [row for row in target_steps if row["poison_retrieved"]]
+    eligible_attempts = len(target_steps)
 
     trust_snaps = ledger.get_trust(sorted(poison_chunk_ids))
     blocked = ledger.blocked_doc_ids()
@@ -361,7 +375,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     metrics = {
         "smoke_test": True,
-        "note": "component smoke test; Person C's runner owns ASR, baselines and CIs",
+        "note": ("component smoke test; the chronological runner owns answer-level "
+                 "ASR, baselines and CIs"),
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "corpus": str(args.corpus),
@@ -373,9 +388,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 else getattr(pipeline.generator.llm, "name", "unknown")),
         "poison_documents": len(poison_docs),
         "poison_targets": poison_info,
-        "poison_retrieved_rate": (len(poison_retrieved) / len(target_steps)) if target_steps else 0.0,
-        "poison_cited_in_answer": len(poison_answers),
-        "poison_citation_rate": (len(poison_answers) / len(target_steps)) if target_steps else 0.0,
+        "eligible_attack_attempts": eligible_attempts,
+        "poison_retrieved_attempts": len(poison_retrieved),
+        "poison_retrieved_rate": ((len(poison_retrieved) / eligible_attempts)
+                                  if eligible_attempts else None),
+        "poison_exposed_attempts": len(poison_exposed),
+        "poison_exposure_rate": ((len(poison_exposed) / eligible_attempts)
+                                 if eligible_attempts else None),
+        "poison_cited_attempts": len(poison_answers),
+        "poison_citation_rate": ((len(poison_answers) / eligible_attempts)
+                                 if eligible_attempts else None),
+        **answer_level_asr_fields(),
         "poison_quarantined": len(poisoned_blocked),
         "clean_false_quarantine": len(clean_blocked),
         "clean_false_quarantine_ids": clean_blocked,
@@ -403,9 +426,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     banner("7. Trust-dynamics figures (B6)")
     history = ledger.export_history()
     write_history_csv(history, out_dir / "trust_history.csv")
-    figures = plot_trust_dynamics(history, out_dir / "figures")
-    timeline = plot_quarantine_timeline(ledger.get_audit_log(limit=10000),
-                                        out_dir / "figures" / "quarantine_timeline.png")
+    figures: List[str] = []
+    timeline = None
+    try:
+        figures = plot_trust_dynamics(history, out_dir / "figures")
+        timeline = plot_quarantine_timeline(ledger.get_audit_log(limit=10000),
+                                            out_dir / "figures" / "quarantine_timeline.png")
+    except RuntimeError as exc:
+        # matplotlib is an optional reporting dependency; the measured run is
+        # already written and must not be lost because a figure cannot render.
+        print(f"  figures skipped: {exc}")
     print(f"  history rows: {len(history)}   figures: {len(figures)}")
     for path in figures:
         print(f"    {path}")

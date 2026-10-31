@@ -39,6 +39,13 @@ def _doc(doc_id, text="some text", source_id="s", family_id="f",
                              trust=snap, metadata={"ingested_at": 1.0})
 
 
+def _warm_sources(ledger, *sources):
+    """Register a historical document per source so its influence is mature."""
+    for source in sources:
+        ledger.record_observation(f"seed_{source}", source, f"seed_fam_{source}",
+                                  "NEUTRAL", timestamp=1.0)
+
+
 def _assessment(doc_id, band=Band.LOW, suspicion=0.1):
     return SecurityAssessment(
         doc_id=doc_id, chunk_id=doc_id, query_id="q",
@@ -69,6 +76,38 @@ class TestTrustLedger:
 
     def test_empty_input_returns_empty(self, ledger):
         assert ledger.get_trust([]) == {}
+
+    def test_duplicate_evidence_key_is_idempotent(self, ledger):
+        """A queue retry must not count the same evidence twice."""
+        first = ledger.record_observation(
+            "d1", "s1", "f1", "REFUTE", timestamp=1.0,
+            evidence_key="q1|d1|REFUTE",
+        )
+        second = ledger.record_observation(
+            "d1", "s1", "f1", "REFUTE", timestamp=1.0,
+            evidence_key="q1|d1|REFUTE",
+        )
+        assert first is True and second is False
+        assert ledger.get_trust(["d1"])["d1"].n_doc_observations == 1
+
+    def test_new_evidence_key_counts_as_a_new_observation(self, ledger):
+        assert ledger.record_observation("d1", "s1", "f1", "REFUTE",
+                                         timestamp=1.0, evidence_key="q1") is True
+        assert ledger.record_observation("d1", "s1", "f1", "REFUTE",
+                                         timestamp=1.0, evidence_key="q2") is True
+        assert ledger.get_trust(["d1"])["d1"].n_doc_observations == 2
+
+    def test_logical_clock_makes_snapshots_deterministic(self, tmp_path):
+        from trace_rag.utils.clock import LogicalClock
+
+        clock = LogicalClock(epoch=1000.0, step_seconds=60.0)
+        clock.set_step(7)
+        with TrustLedger(tmp_path / "logical.db", clock=clock) as ledger:
+            snap = ledger.get_trust(["d1"])["d1"]
+            assert snap.as_of == 1420.0
+            assert clock.timestamp(7) == 1420.0
+            assert clock.step_of(1420.0) == 7
+            assert clock.now() == 1420.0
 
     def test_blocked_starts_empty(self, ledger):
         assert ledger.blocked_doc_ids() == set()
@@ -313,14 +352,33 @@ class TestTrustPolicy:
         assert "d1" in decision.excluded_doc_ids
         assert "d1" not in decision.context_doc_ids
 
-    def test_medium_band_without_verifier_passes(self, policy):
+    def test_medium_band_without_verifier_fails_closed(self, policy):
+        # Plan Section 4.4: MEDIUM means "corroborate before use".  With no
+        # verifier the policy cannot corroborate, so it must exclude instead of
+        # silently granting trust.
         docs = [_doc("d1")]
         assessments = [_assessment("d1", Band.MEDIUM)]
         decision = policy.decide("q", "q1", docs, assessments, verifier=None)
+        assert "d1" in decision.excluded_doc_ids
+        assert "d1" not in decision.context_doc_ids
+        assert decision.notes["decisions"]["d1"]["reason"] == "medium_no_verifier_fail_closed"
+
+    def test_medium_band_can_fail_open_only_when_configured(self, policy):
+        from trace_rag.trust.policy import TrustPolicy
+
+        docs = [_doc("d1")]
+        assessments = [_assessment("d1", Band.MEDIUM)]
+        lenient = TrustPolicy(ledger=policy.ledger, fail_open_without_verifier=True)
+        decision = lenient.decide("q", "q1", docs, assessments, verifier=None)
         assert "d1" in decision.context_doc_ids
+        assert decision.notes["decisions"]["d1"]["reason"] == "medium_no_verifier_fail_open"
 
     def test_medium_band_with_verifier_support(self, policy):
         verifier = CorroborationVerifier()
+        # Give both sources history so the cold-start influence cap does not
+        # suppress their corroboration mass.  A brand-new source deliberately
+        # contributes only 0.25x; see the cold-start test below.
+        _warm_sources(policy.ledger, "s1", "s2")
         target = _doc("t1", "Gustave Eiffel designed the Eiffel Tower.", "s1", "f1")
         corr = _doc("t2", "Gustave Eiffel was the designer of the Eiffel Tower.", "s2", "f2")
         docs = [target, corr]
@@ -424,6 +482,7 @@ class TestTrustIntegration:
 
     def test_full_cycle_clean_passage(self, components):
         ledger, verifier, policy = components
+        _warm_sources(ledger, "wiki_a", "wiki_b")
         target = _doc("clean", "Gustave Eiffel designed the Eiffel Tower in 1889.",
                        "wiki_a", "f1")
         corr = _doc("corr", "Gustave Eiffel was the French civil engineer who designed the tower.",

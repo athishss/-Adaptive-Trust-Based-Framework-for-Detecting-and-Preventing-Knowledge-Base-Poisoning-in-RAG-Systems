@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "C:\Users\athis\roblox-groupfinder\RAGLedger\scripts\run_trust_stream.py", line 63, in <module>
+    from trace_rag.attacks.stream import zipf_queries
+ImportError: cannot import name 'zipf_queries' from 'trace_rag.attacks.stream' (C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\attacks\stream.py)

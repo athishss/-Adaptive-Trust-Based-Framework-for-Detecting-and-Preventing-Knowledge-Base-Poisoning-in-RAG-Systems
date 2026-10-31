@@ -21,7 +21,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 
-from ..contracts import RetrievedDocument, Verifier, VerificationResult
+from ..contracts import RetrievedDocument, Verifier, VerificationOutcome, VerificationResult
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,6 +37,7 @@ class PendingVerification:
     pool: Sequence[RetrievedDocument]
     reason: str = "HIGH band"
     enqueued_at: float = 0.0
+    attempts: int = 0
 
 
 class VerificationQueue:
@@ -54,6 +55,8 @@ class VerificationQueue:
         self._stop = threading.Event()
         self.dropped: int = 0
         self.processed: int = 0
+        self.errors: int = 0
+        self.failed_doc_ids: List[str] = []
 
     # ------------------------------------------------------------------
     #  Producer side (the policy)
@@ -125,18 +128,41 @@ class VerificationQueue:
                     break
                 item = self._items.popleft()
             processed += 1
+            item.attempts += 1
             try:
                 result = verifier.verify(item.query, item.query_id,
                                          item.doc, item.pool, **verify_kwargs)
-            except Exception:
-                # One bad case must not kill the worker; make the failure loud.
-                logger.warning("queued verification failed for %s",
-                               item.doc.doc_id, exc_info=True)
+            except Exception as exc:  # noqa: BLE001 - one bad case must not kill the worker
+                self.errors += 1
+                self.failed_doc_ids.append(item.doc.doc_id)
+                logger.warning("queued verification failed for %s: %s",
+                               item.doc.doc_id, exc, exc_info=True)
+                results.append(VerificationResult(
+                    doc_id=item.doc.doc_id, query_id=item.query_id,
+                    single_doc_answer=None, influential=False,
+                    support_mass=0.0, refute_mass=0.0,
+                    outcome=VerificationOutcome.NEUTRAL, llm_calls=0,
+                    latency_ms=0.0, error=f"{type(exc).__name__}: {exc}",
+                ))
                 continue
-            if ledger is not None:
+            if not isinstance(result, VerificationResult):
+                self.errors += 1
+                self.failed_doc_ids.append(item.doc.doc_id)
+                logger.warning("queued verifier returned %r for %s",
+                               type(result).__name__, item.doc.doc_id)
+                results.append(VerificationResult(
+                    doc_id=item.doc.doc_id, query_id=item.query_id,
+                    single_doc_answer=None, influential=False,
+                    support_mass=0.0, refute_mass=0.0,
+                    outcome=VerificationOutcome.NEUTRAL, llm_calls=0,
+                    latency_ms=0.0, error="malformed verifier result",
+                ))
+                continue
+            if ledger is not None and not result.error:
                 ledger.record_observation(
                     item.doc.doc_id, item.doc.source_id, item.doc.family_id,
                     outcome=result.outcome.value, timestamp=ts,
+                    evidence_key=f"{item.query_id}|{item.doc.doc_id}|{result.outcome.value}",
                 )
             results.append(result)
             self.processed += 1

@@ -59,6 +59,8 @@ scorer:
 
 generation:
   backend: stub               # -> openai (vLLM) / ollama / huggingface
+  # NOTE: stub + hashing embeddings are offline test backends.  Their output is
+  # a smoke test, never a real-model experiment (see docs/ENGINEERING_REPORT.md).
   model_name: meta-llama/Llama-3.1-8B-Instruct
   base_url: http://localhost:8000/v1
   api_key_env: OPENAI_API_KEY
@@ -75,5 +77,53 @@ storage:
   root: runs/default
   provenance_db: provenance.sqlite3
   answer_db: answers.sqlite3
+  trust_db: trust.sqlite3
   index_path: index
   scorer_path: scorer.joblib
+
+# Time model.  wall = production timestamps; logical = deterministic
+# epoch + step * step_seconds for simulations and tests.
+time:
+  mode: wall
+  epoch: 1700000000.0
+  step_seconds: 3600.0
+
+# Person B trust-ledger thresholds.  Every value is validated by pydantic.
+trust:
+  hierarchical: true
+  support_doc_alpha: 1.0
+  refute_doc_beta: 2.0
+  prior_weight: 5.0
+  kappa: 3.0
+  t_cap: 0.6
+  decay_gamma: 0.95
+  decay_interval: 100
+  quarantine_refutations: 2
+  reject_refutations: 3
+  quarantine_t_eff: 0.20
+  monitored_t_eff: 0.60
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+  cold_start_influence: 0.25
+  source_age_ramp_hours: 24.0
+  cold_start_min_observations: 5
+
+# Person B defence stack.  enabled: true is the protected default; the
+# health check prints its status on startup and via `trace-rag doctor`.
+security:
+  enabled: true
+  verifier: lexical         # lexical (offline) | nli (DeBERTa cross-encoder) | auto
+  max_corroboration: 3
+  queue_size: 1000
+  drain_queue: true
+  fail_open_without_verifier: false
+  min_refute_topical_overlap: 1
+  # Lexical fallback only: refute needs the passage to cover most of the
+  # claim's topic (0.60) while containing almost none of its answer terms.
+  # Low support on a partially related passage is NEUTRAL, not refutation.
+  min_refute_topic_coverage: 0.50
+  min_refute_query_coverage: 0.60
+  support_threshold: 0.50
+  refute_threshold: 0.10
+  max_source_mass: 0.6
+  counterfactual_influence: true

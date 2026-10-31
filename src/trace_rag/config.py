@@ -114,6 +114,95 @@ class StorageConfig(BaseModel):
     answer_db: str = "answers.sqlite3"
     index_path: str = "index"
     scorer_path: str = "scorer.joblib"
+    trust_db: str = "trust.sqlite3"
+
+
+class TimeConfig(BaseModel):
+    """Which clock the system uses (see ``utils.clock``).
+
+    ``wall`` is the production setting.  ``logical`` maps stream step *n* to
+    ``epoch + n * step_seconds`` so simulation is deterministic and never reads
+    the machine clock.
+    """
+
+    mode: Literal["wall", "logical"] = "wall"
+    epoch: float = Field(1_700_000_000.0, description="POSIX seconds of simulation step 0")
+    step_seconds: float = Field(3600.0, gt=0, description="simulated seconds per stream step")
+
+
+class TrustSettings(BaseModel):
+    """Configuration surface for the trust ledger (mirrors ``TrustConfig``).
+
+    Kept separate from ``trust.ledger.TrustConfig`` so the YAML stays a plain
+    data contract; ``security.build_trust_config`` maps one to the other.
+    """
+
+    hierarchical: bool = True
+    support_doc_alpha: float = Field(1.0, ge=0.0)
+    support_family_alpha: float = Field(0.5, ge=0.0)
+    support_source_alpha: float = Field(0.3, ge=0.0)
+    refute_doc_beta: float = Field(2.0, ge=0.0)
+    refute_family_beta: float = Field(1.0, ge=0.0)
+    refute_source_beta: float = Field(0.5, ge=0.0)
+    prior_weight: float = Field(5.0, gt=0)
+    kappa: float = Field(3.0, ge=0.0)
+    t_cap: float = Field(0.6, ge=0.0, le=1.0)
+    decay_gamma: float = Field(0.95, ge=0.0, le=1.0)
+    decay_interval: int = Field(100, ge=0)
+    quarantine_refutations: int = Field(2, ge=1)
+    reject_refutations: int = Field(3, ge=1)
+    recovery_threshold: float = Field(0.5, ge=0.0, le=1.0)
+    quarantine_t_eff: float = Field(0.20, ge=0.0, le=1.0)
+    monitored_t_eff: float = Field(0.60, ge=0.0, le=1.0)
+    high_band_beta_penalty: float = Field(0.3, ge=0.0)
+    burst_trust_discount: float = Field(0.3, ge=0.0, le=1.0)
+    burst_window_seconds: float = Field(60.0, gt=0)
+    burst_min_docs: int = Field(4, ge=1)
+    cold_start_influence: float = Field(0.25, ge=0.0, le=1.0)
+    source_age_ramp_hours: float = Field(24.0, ge=0.0)
+    cold_start_min_observations: int = Field(5, ge=1)
+    record_history: bool = True
+
+    @field_validator("reject_refutations")
+    @classmethod
+    def _reject_after_quarantine(cls, v: int, info):  # type: ignore[no-untyped-def]
+        quarantine = info.data.get("quarantine_refutations", 1)
+        if v < quarantine:
+            raise ValueError("reject_refutations must be >= quarantine_refutations")
+        return v
+
+    @field_validator("quarantine_t_eff")
+    @classmethod
+    def _threshold_order(cls, v: float, info):  # type: ignore[no-untyped-def]
+        monitored = info.data.get("monitored_t_eff")
+        if monitored is not None and v > monitored:
+            raise ValueError("quarantine_t_eff must be <= monitored_t_eff")
+        return v
+
+
+class SecurityConfig(BaseModel):
+    """Person B's defence stack.  Enabled by default: the protected
+    configuration must be the safe default, not an opt-in demo."""
+
+    enabled: bool = True
+    trust_db: Optional[str] = None        # None -> storage.root / storage.trust_db
+    queue_size: int = Field(1000, ge=1)
+    max_corroboration: int = Field(3, ge=1)
+    verifier: Literal["auto", "nli", "lexical"] = "lexical"
+    drain_queue: bool = True              # verify queued HIGH-band items after each answer
+    fail_open_without_verifier: bool = False
+    # MEDIUM + NEUTRAL means "corroboration did not resolve this".  The default
+    # is to withhold it from the answer (reversible) rather than treat silence
+    # as support.  Set to "use" only for an explicit research ablation.
+    medium_neutral_action: Literal["exclude", "use"] = "exclude"
+    min_refute_topical_overlap: int = Field(1, ge=1)
+    min_refute_topic_coverage: float = Field(0.50, ge=0.0, le=1.0)
+    min_refute_query_coverage: float = Field(0.60, ge=0.0, le=1.0)
+    support_threshold: float = Field(0.50, ge=0.0, le=1.0)
+    refute_threshold: float = Field(0.10, ge=0.0, le=1.0)
+    max_source_mass: float = Field(0.6, gt=0.0, le=1.0)
+    counterfactual_influence: bool = True
+    max_verifier_llm_calls: int = Field(2, ge=1, description="hard upper bound per verification")
 
 
 class Config(BaseModel):
@@ -126,6 +215,9 @@ class Config(BaseModel):
     scorer: ScorerConfig = ScorerConfig()
     generation: GenerationConfig = GenerationConfig()
     storage: StorageConfig = StorageConfig()
+    time: TimeConfig = TimeConfig()
+    trust: TrustSettings = TrustSettings()
+    security: SecurityConfig = SecurityConfig()
 
     @classmethod
     def load(cls, path: Optional[str | Path] = None, **overrides: Any) -> "Config":
@@ -146,3 +238,10 @@ class Config(BaseModel):
         p = Path(self.storage.root).joinpath(*parts)
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
+
+    def trust_db_path(self) -> str:
+        """Path of the persistent trust ledger (``:memory:`` stays in-memory)."""
+        configured = self.security.trust_db or self.storage.trust_db
+        if configured == ":memory:":
+            return ":memory:"
+        return str(self.path(configured))

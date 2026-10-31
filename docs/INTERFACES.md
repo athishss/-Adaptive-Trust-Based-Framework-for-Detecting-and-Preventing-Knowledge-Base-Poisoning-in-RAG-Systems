@@ -1,5 +1,10 @@
 # Integration guide (Person B and Person C)
 
+> **Historical document.** The protocols below are implemented and wired by
+> default; see [`../README.md`](../README.md) and
+> [`ENGINEERING_REPORT.md`](ENGINEERING_REPORT.md) for the current integrated
+> state and the verified smoke results.
+
 Everything you need is in `trace_rag.contracts`. Import from there, not from
 internal modules — that file is versioned (`CONTRACT_VERSION`) and is the only
 thing Person A promises not to break without telling you.

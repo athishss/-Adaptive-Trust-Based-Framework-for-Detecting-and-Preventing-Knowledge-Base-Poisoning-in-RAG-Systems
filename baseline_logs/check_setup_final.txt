@@ -1,0 +1,29 @@
+TRACE-RAG setup check
+python 3.13.3 on Windows AMD64
+working directory: C:\Users\athis\roblox-groupfinder\RAGLedger
+
+[OK     ] python >= 3.10 - 3.13.3
+[OK     ] trace_rag package - 0.1.0
+[OK     ] numpy - 2.5.4
+[OK     ] scikit-learn - 1.9.1
+[OK     ] pydantic - 2.14.1
+[OK     ] PyYAML - 6.0.3
+[OK     ] joblib - 1.6.0
+[MISSING] pyarrow (reads BEIR Parquet) - not installed
+          fix: pip install pyarrow
+[WARN   ] faiss (large corpora) - not installed
+          fix: conda install -c conda-forge faiss-cpu
+[WARN   ] torch (real embeddings) - not installed
+          fix: see https://pytorch.org/get-started/locally/ and match your CUDA version
+[WARN   ] transformers (real embeddings) - not installed
+          fix: pip install transformers
+[WARN   ] ollama - not found
+          fix: https://ollama.com/download (Windows-friendly alternative to vLLM)
+[WARN   ] vLLM - not supported on Windows
+          fix: use Ollama, or run vLLM inside WSL2
+[OK     ] config/default.yaml
+[OK     ] config/nq_gpu.yaml
+[OK     ] scripts/download_data.py
+[OK     ] configuration loads
+
+1 item(s) need attention: pyarrow (reads BEIR Parquet)

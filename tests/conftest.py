@@ -53,7 +53,10 @@ def config(tmp_path) -> Config:
 
 @pytest.fixture
 def populated_pipeline(config) -> PersonAPipeline:
-    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    # Person A's standalone fixture: explicitly UNPROTECTED, because these tests
+    # exercise the null trust provider / DefaultPolicy seam.  The protected
+    # default is covered by tests/test_security_wiring.py.
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False, secure=False)
     ingestor = Ingestor(pipeline.store, config.ingestion)
     for i, (doc_id, text, source) in enumerate(CLEAN_PASSAGES):
         ingestor.ingest_text(doc_id, text, source, ingested_at=CLEAN_START + i * 86400.0,

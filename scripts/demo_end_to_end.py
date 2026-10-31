@@ -77,8 +77,13 @@ def main() -> int:
     parser.add_argument("--root", default="runs/demo")
     args = parser.parse_args()
 
-    config = Config.load(None, storage={"root": args.root})
-    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    # This demo deliberately runs UNPROTECTED so the Person A layers can be
+    # observed on their own; stage 5 uses a stand-in ledger.  The protected
+    # default is exercised by scripts/demo_person_b.py.
+    config = Config.load(None, storage={"root": args.root},
+                         security={"enabled": False})
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False, secure=False)
+    print("mode: UNPROTECTED Person A demo (security.enabled=false)")
     questions = json.loads((EXAMPLES / "mini_questions.json").read_text(encoding="utf-8"))
     target_question = next(q for q in questions["questions"] if q["qid"] == "eiffel")
 
