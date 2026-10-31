@@ -1,7 +1,7 @@
 ........................................................................ [ 28%]
-........................................................................ [ 57%]
+........................................................................ [ 56%]
 ........................................................................ [ 85%]
-........................sss.........                                     [100%]
+.........................sss.........                                    [100%]
 =============================== tests coverage ================================
 _______________ coverage: platform win32, python 3.13.3-final-0 _______________
 
@@ -34,7 +34,7 @@ src\trace_rag\evaluation\runner.py                58      6    90%   88, 90, 92,
 src\trace_rag\evaluation\statistics.py            24      3    88%   20, 22, 24
 src\trace_rag\generation\__init__.py               5      0   100%
 src\trace_rag\generation\citations.py             58      4    93%   29, 55, 83-84
-src\trace_rag\generation\grounded.py              59      1    98%   37
+src\trace_rag\generation\grounded.py              65      1    98%   40
 src\trace_rag\generation\llm.py                  176     77    56%   98, 125-129, 143-148, 152, 156-173, 181-185, 189-197, 203-215, 224-251, 255, 259-274, 293, 301-309
 src\trace_rag\generation\prompts.py               31      2    94%   113-120
 src\trace_rag\index\__init__.py                   15      6    60%   8-13, 19-21
@@ -65,5 +65,5 @@ src\trace_rag\utils\logging.py                    13      0   100%
 src\trace_rag\utils\textnorm.py                   36      3    92%   31, 41, 56
 src\trace_rag\utils\timing.py                     13      0   100%
 ----------------------------------------------------------------------------
-TOTAL                                           5688   1161    80%
-249 passed, 6 skipped in 54.94s
+TOTAL                                           5694   1161    80%
+250 passed, 6 skipped in 24.10s

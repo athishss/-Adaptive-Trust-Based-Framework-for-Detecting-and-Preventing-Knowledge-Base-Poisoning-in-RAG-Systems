@@ -2,7 +2,7 @@
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-10-31
-**Code commit under test:** `90d26b6387f8ecf27753bb3ddd28cd847ddfb9fb`
+**Code commit under test:** `49dc198cee4df80fceb423984984c17043a6684d`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
 dependencies only (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML
 6.0.3, pytest 9.1.1, pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`,
@@ -33,8 +33,8 @@ After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite | **249 passed, 6 skipped** in 16.57 s |
-| Coverage | **80%** (5688 statements, 1161 missed) |
+| Full test suite | **250 passed, 6 skipped** in 15.96 s |
+| Coverage | **80%** (5694 statements, 1161 missed) |
 | Python compilation | `compileall` exit 0 |
 | ResourceWarnings | **0** with `-W always::ResourceWarning` |
 | Chronological matrix | **56/56 cases**, 0 failures |
@@ -113,9 +113,9 @@ or full-dataset experiment has been executed.
 | `tests/test_trust.py` | Evidence deduplication, logical clock, trust/policy/verifier coverage. |
 | `tests/test_trust_plan_gaps.py` | Queue drain, background worker, admin review, trust propagation and plot tests. |
 | `tests/test_verifier_nli.py` | NLI/lexical false-positive regressions. |
-| `tests/test_generation.py` | Chat-role separation, document-block escaping, blocked-passage filtering. |
+| `tests/test_generation.py` | Chat-role separation, document-block escaping, blocked-passage filtering, and generation backend failure recorded as an abstention. |
 | `tests/test_resource_lifecycle.py` | **New this pass:** repeated close is a no-op for all three SQLite components; a constructor that fails after opening SQLite closes its connection; pipeline shutdown can be repeated. |
-| `README.md` | Rewritten for the integrated system; **this pass:** 249/80 evidence, functional readiness explanation, exposure/citation table, NOT-MEASURED ASR, current limitation wording. |
+| `README.md` | Rewritten for the integrated system; **this pass:** 250/80 evidence, functional readiness explanation, exposure/citation table, NOT-MEASURED ASR, current limitation wording. |
 | `docs/REAL_MODEL_EVAL.md` | **New** NQ/GPU runbook; **this pass:** explicit status box (subset, not full corpus, not executed, answer ASR not measured). |
 | `docs/ENGINEERING_REPORT.md` | This report, regenerated from the current execution logs. |
 | `"tall pytest pytest-cov"` | Deleted tracked junk file from the original commit. |
@@ -272,8 +272,8 @@ pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1, pytest-cov 7.1.0. No GPU.
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **249 passed, 6 skipped** in 16.57 s |
-| Coverage | **80%** total (5688 statements, 1161 missed) |
+| `pytest -o addopts="" -q` | **250 passed, 6 skipped** in 15.96 s |
+| Coverage | **80%** total (5694 statements, 1161 missed) |
 | `-W always::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
 | `check_setup.py` | exit 1: only `pyarrow` missing; torch/transformers/ollama/vLLM warnings are expected on this host |
@@ -490,7 +490,7 @@ python scripts/run_trust_stream.py --config config/default.yaml \
   --steps 12 --targets 2 --out runs/final_trust_stream
 ```
 
-Expected: **249 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
+Expected: **250 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
 `doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning run
 is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
 statement and `answer_level_asr_status = NOT MEASURED`.

@@ -270,7 +270,7 @@ pytest -q
 pytest -q --cov=trace_rag --cov-report=term-missing
 ```
 
-Result: **249 passed, 6 skipped**. Coverage: **80%** overall (5688 statements).
+Result: **250 passed, 6 skipped**. Coverage: **80%** overall (5694 statements).
 The suite runs with `ResourceWarning` visible; no unclosed SQLite connections
 remain. Skips are optional backends: `faiss-cpu` (2 tests), `torch` (1),
 `matplotlib` (3). Full logs: [`baseline_logs/`](baseline_logs/).
