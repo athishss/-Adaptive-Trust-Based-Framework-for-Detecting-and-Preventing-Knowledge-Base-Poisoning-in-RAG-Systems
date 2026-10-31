@@ -208,6 +208,19 @@ def _http_post_json(url: str, payload: Dict[str, Any],
         return json.loads(response.read().decode("utf-8"))
 
 
+def _redact(text: str, *secrets: Optional[str]) -> str:
+    """Remove credentials from readiness diagnostics.
+
+    Readiness reports are logged and may be attached to bug reports.  A server
+    error can echo request headers, so never trust the exception text to be
+    secret-free.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(str(secret), "[REDACTED]")
+    return text
+
+
 def _probe_generation(pipeline) -> Dict[str, Any]:
     """Exercise the configured generator with a minimal inference call.
 
@@ -225,6 +238,7 @@ def _probe_generation(pipeline) -> Dict[str, Any]:
     backend_name = getattr(backend, "backend", None)
     security = getattr(getattr(pipeline, "config", None), "security", None)
     timeout = float(getattr(security, "probe_timeout_s", 10.0) or 10.0)
+    api_key = getattr(llm, "api_key", None)
     detail: Dict[str, Any] = {"backend": backend_name, "model": name,
                               "timeout_s": timeout}
     if llm is None or not callable(getattr(llm, "generate", None)):
@@ -236,7 +250,6 @@ def _probe_generation(pipeline) -> Dict[str, Any]:
         base_url = str(getattr(llm, "base_url", "")).rstrip("/")
         if backend_name == "openai" or "v1" in base_url:
             headers = {"Content-Type": "application/json"}
-            api_key = getattr(llm, "api_key", None)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
             body = _http_json(f"{base_url}/models", headers=headers, timeout=timeout)
@@ -290,19 +303,20 @@ def _probe_generation(pipeline) -> Dict[str, Any]:
                 raise ValueError("transformers tokenizer/model is not loaded")
             response = llm.generate("Reply with OK.", max_tokens=2)
             text = getattr(response, "text", None)
-            if text is None:
-                raise ValueError("generation returned no response object")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("generation returned an empty or missing response")
             return {**detail, "status": "ready",
                     "device": getattr(llm, "device", None),
-                    "probe_response_chars": len(str(text).strip())}
+                    "probe_response_chars": len(text.strip())}
         return {**detail, "status": "unverified",
                 "detail": "generation backend has no readiness probe"}
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
         return {**detail, "status": "failed",
-                "detail": f"endpoint unavailable: {type(exc).__name__}: {exc}"}
+                "detail": _redact(f"endpoint unavailable: {type(exc).__name__}: {exc}",
+                                   api_key)}
     except Exception as exc:  # noqa: BLE001
         return {**detail, "status": "failed",
-                "detail": f"{type(exc).__name__}: {exc}"}
+                "detail": _redact(f"{type(exc).__name__}: {exc}", api_key)}
 
 
 def _probe_nli(verifier, requested: Optional[str]) -> Dict[str, Any]:
@@ -311,7 +325,10 @@ def _probe_nli(verifier, requested: Optional[str]) -> Dict[str, Any]:
     nli_ready = bool(getattr(verifier, "nli_ready", False))
     detail: Dict[str, Any] = {"requested": requested, "mode": mode,
                               "nli_loaded": nli_ready}
-    if mode == "nli" and nli_ready:
+    if mode == "nli" and not nli_ready:
+        return {**detail, "status": "failed",
+                "detail": "configured NLI backend is not loaded"}
+    if mode == "nli":
         probe = getattr(verifier, "nli_probe", None)
         if not callable(probe):
             return {**detail, "status": "failed",
@@ -322,7 +339,10 @@ def _probe_nli(verifier, requested: Optional[str]) -> Dict[str, Any]:
                 message = result.get("detail") if isinstance(result, dict) else result
                 raise ValueError(f"NLI inference probe failed: {message}")
             label = result.get("label")
-            score = float(result.get("score"))
+            raw_score = result.get("score")
+            if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+                raise ValueError(f"missing or non-numeric NLI score {raw_score!r}")
+            score = float(raw_score)
             if label not in {"entailment", "contradiction", "neutral"}:
                 raise ValueError(f"unexpected NLI label {label!r}")
             if not math.isfinite(score) or not 0.0 <= score <= 1.0:

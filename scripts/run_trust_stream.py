@@ -53,11 +53,16 @@ shared config:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import platform
 import statistics
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from trace_rag.attacks.poisoned_rag import entity_swap, make_poisoned_document, negation
 from trace_rag.attacks.stream import zipf_queries
@@ -71,10 +76,62 @@ from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics,
 
 ATTACKER_SOURCE = "attacker_burst"
 WRONG_ANSWER = "Zog the Alien"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def banner(title: str) -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
+
+
+def _git_commit() -> Optional[str]:
+    try:
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _file_identity(path: Path) -> Dict[str, Any]:
+    """Identify a dataset file without loading it into memory."""
+    identity: Dict[str, Any] = {"path": str(path), "exists": path.exists()}
+    if not path.exists():
+        return identity
+    identity["size_bytes"] = path.stat().st_size
+    # A full SHA-256 is useful provenance, but avoid turning a multi-GB full
+    # corpus into an unexpected minutes-long pre-run step.
+    if identity["size_bytes"] <= 2 * 1024**3:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                digest.update(block)
+        identity["sha256"] = digest.hexdigest()
+    else:
+        identity["sha256"] = None
+        identity["sha256_note"] = ">2 GiB; size and mtime recorded instead"
+    identity["mtime_ns"] = path.stat().st_mtime_ns
+    return identity
+
+
+def _hardware() -> Dict[str, Any]:
+    data: Dict[str, Any] = {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "python": sys.version.split()[0],
+        "cpu_count": os.cpu_count(),
+    }
+    try:
+        import torch  # type: ignore
+        data["torch"] = getattr(torch, "__version__", None)
+        data["cuda_available"] = bool(torch.cuda.is_available())
+        data["cuda_version"] = getattr(torch.version, "cuda", None)
+        if torch.cuda.is_available():
+            data["gpus"] = [{"name": torch.cuda.get_device_properties(i).name,
+                             "total_vram_bytes": int(torch.cuda.get_device_properties(i).total_memory)}
+                            for i in range(torch.cuda.device_count())]
+    except Exception:  # noqa: BLE001 - optional provenance
+        data["torch"] = None
+        data["cuda_available"] = False
+    return data
 
 
 def load_questions(path: Path) -> List[Dict[str, str]]:
@@ -211,7 +268,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "and no inheritance")
     parser.add_argument("--max-corroboration", type=int, default=3,
                         help="independent passages the verifier will consult")
+    parser.add_argument("--require-protected", action="store_true",
+                        help="fail closed unless the functional doctor is PROTECTED with "
+                             "NLI and a persistent ledger (automatic for real backends)")
     args = parser.parse_args(argv)
+    started_at = datetime.now(timezone.utc).isoformat()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -224,10 +285,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     config.trust.quarantine_refutations = args.quarantine_refutations
     config.trust.hierarchical = not args.no_hierarchical
     config.security.max_corroboration = args.max_corroboration
+    real_model = (config.generation.backend != "stub"
+                  or config.embedding.backend != "hashing")
     pipeline = PersonAPipeline.from_config(config, load_existing_index=args.skip_index)
+    # A real-model run must never proceed on a degraded security stack.  This
+    # check runs before ingestion/indexing so a misconfigured GPU run fails in
+    # seconds instead of after hours of embedding work.
+    try:
+        health = pipeline.health_check()
+    except Exception as exc:  # noqa: BLE001 - fail closed, not open
+        print(f"security health check failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        pipeline.close()
+        return 2
+    if real_model or args.require_protected:
+        blockers: List[str] = []
+        if health.get("status") != "PROTECTED":
+            blockers.append(f"security status is {health.get('status')}, not PROTECTED "
+                            f"({health.get('status_reason')})")
+        if health.get("verifier_mode") != "nli":
+            blockers.append(f"verifier mode is {health.get('verifier_mode')}, not nli")
+        if not health.get("trust_persistent"):
+            blockers.append("trust ledger is not persistent")
+        if blockers:
+            print("refusing to run a real-model experiment on an unverified stack:",
+                  file=sys.stderr)
+            for blocker in blockers:
+                print(f"  - {blocker}", file=sys.stderr)
+            for failure in health.get("readiness_failures", []):
+                print(f"  - readiness: {failure}", file=sys.stderr)
+            pipeline.close()
+            return 2
     questions = load_questions(Path(args.queries))
     if not questions:
         print("no questions found", file=sys.stderr)
+        pipeline.close()
         return 2
     targets = questions[: max(1, args.targets)]
 
@@ -290,6 +381,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               f"-> {[c.chunk_id for c in chunks]}")
     if not poison_docs:
         print("no poison was generated - nothing to test", file=sys.stderr)
+        pipeline.close()
         return 2
     pipeline.index_chunks()
     pipeline.save_index()
@@ -307,6 +399,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not isinstance(ledger, TrustLedger) or verifier is None or not isinstance(policy, TrustPolicy):
         print("security stack did not attach; refusing to run an unprotected stream",
               file=sys.stderr)
+        pipeline.close()
         return 2
     trust_config = ledger.config
     if args.force_medium:
@@ -372,9 +465,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     poisoned_blocked = sorted(blocked & poison_ids)
     clean_blocked = sorted(blocked - poison_ids)
     first_quarantine = next((row["step"] for row in per_step if row["newly_quarantined"]), None)
+    clean_documents = max(0, int(pipeline.store.counts().get("documents", 0))
+                          - len(poison_docs))
+    true_positive = len(poisoned_blocked)
+    false_positive = len(clean_blocked)
+    precision = (true_positive / (true_positive + false_positive)
+                 if true_positive + false_positive else None)
+    recall = true_positive / len(poison_docs) if poison_docs else None
+    f1 = (2 * precision * recall / (precision + recall)
+          if precision is not None and recall is not None and precision + recall else None)
+    false_positive_rate = false_positive / clean_documents if clean_documents else None
 
     metrics = {
         "smoke_test": True,
+        "run_kind": "real_model" if real_model else "offline_smoke",
+        "git_commit": _git_commit(),
+        "seed": args.seed,
         "note": ("component smoke test; the chronological runner owns answer-level "
                  "ASR and is NOT MEASURED here (no validated attack-specific "
                  "answer criterion); this runner reports exposure and citation, "
@@ -405,8 +511,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "clean_false_quarantine": len(clean_blocked),
         "clean_false_quarantine_ids": clean_blocked,
         "first_quarantine_step": first_quarantine,
+        "document_level": {
+            "poison_documents": len(poison_docs),
+            "clean_documents": clean_documents,
+            "true_positive_quarantine": true_positive,
+            "false_positive_quarantine": false_positive,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "false_positive_rate": false_positive_rate,
+            "detection_delay_steps": first_quarantine,
+        },
         "mean_llm_calls_per_query": round(statistics.fmean(
             [row["llm_calls"] for row in per_step]) if per_step else 0.0, 3),
+        "llm_calls_total": sum(row["llm_calls"] for row in per_step),
         "mean_latency_ms": round(statistics.fmean(
             [row["latency_ms"] for row in per_step]) if per_step else 0.0, 2),
         "verifications": {
@@ -423,6 +541,54 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (out_dir / "stream.jsonl").write_text(
         "\n".join(json.dumps(row, default=str) for row in per_step), encoding="utf-8")
+    manifest = {
+        "schema": "ragledger.run_manifest.v1",
+        "run_kind": metrics["run_kind"],
+        "real_model": real_model,
+        "git_commit": metrics["git_commit"],
+        "command": sys.argv,
+        "started_at": started_at,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "config_path": str(args.config),
+        "config": config.model_dump(mode="json"),
+        "dataset": {
+            "corpus": _file_identity(Path(args.corpus)),
+            "queries": _file_identity(Path(args.queries)),
+            "qrels": _file_identity(qrels_path),
+        },
+        "models": {
+            "embedding": {
+                "backend": config.embedding.backend,
+                "model": (config.embedding.model_name
+                          if config.embedding.backend == "huggingface" else None),
+                "dim": getattr(pipeline.embedder, "dim", None),
+            },
+            "generation": {
+                "backend": config.generation.backend,
+                "model": getattr(pipeline.generator.llm, "name", None),
+            },
+            "verifier": ("cross-encoder/nli-deberta-v3-base"
+                         if verifier.mode == "nli" else verifier.mode),
+        },
+        "seed": args.seed,
+        "hardware": _hardware(),
+        "verifier_mode": verifier.mode,
+        "security": {
+            "status": health.get("status"),
+            "trust_persistent": health.get("trust_persistent"),
+            "trust_db": health.get("trust_db"),
+            "readiness_failures": health.get("readiness_failures", []),
+        },
+        "ledger_path": getattr(ledger, "path", None),
+        "indexed_passages": len(pipeline.index),
+        "evaluated_queries": len(per_step),
+        "target_queries": len(targets),
+        "poison_documents": len(poison_docs),
+        "resumed_index": bool(args.skip_index),
+        "answer_level_asr_status": "NOT MEASURED",
+    }
+    (out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2, default=str),
+                                                encoding="utf-8")
 
     # ---------------------------------------------------------------- figures
     banner("7. Trust-dynamics figures (B6)")

@@ -8,6 +8,8 @@ unprotected RAG system with a security module sitting unused next to it.
 
 from __future__ import annotations
 
+import json
+
 from trace_rag.contracts import (
     Action,
     Band,
@@ -89,6 +91,20 @@ class _ReadyLLM:
 
     def generate(self, prompt, max_tokens=256, stop=None):
         return LLMResponse(text="OK", llm_calls=1, model=self.name)
+
+
+class _HFLLM(_ReadyLLM):
+    name = "fake/hf-llm"
+    base_url = ""
+    tokenizer = object()
+    model = object()
+    device = "cpu"
+
+    def __init__(self, text):
+        self.text = text
+
+    def generate(self, prompt, max_tokens=256, stop=None):
+        return LLMResponse(text=self.text, llm_calls=1, model=self.name)
 
 
 class _NaNEmbedder(_ReadyEmbedder):
@@ -217,6 +233,91 @@ def test_generator_probe_accepts_a_valid_minimal_response(config, monkeypatch):
         pipeline.close()
 
 
+def test_huggingface_generation_rejects_empty_and_whitespace(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        pipeline.config.generation.backend = "huggingface"
+        for text in ("", "   ", "\n\t"):
+            pipeline.generator.llm = _HFLLM(text)
+            probe = security_health(pipeline)["readiness_probes"]["generation"]
+            assert probe["status"] == "failed"
+            assert "empty" in probe["detail"]
+    finally:
+        pipeline.close()
+
+
+def test_openai_probe_rejects_missing_or_empty_assistant_text(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        cases = [
+            {},
+            {"choices": []},
+            {"choices": [{"message": {}}]},
+            {"choices": [{"message": {"content": "   "}}]},
+        ]
+        for body in cases:
+            monkeypatch.setattr(security_module, "_http_post_json",
+                                lambda *args, _body=body, **kwargs: _body)
+            probe = security_health(pipeline)["readiness_probes"]["generation"]
+            assert probe["status"] == "failed"
+            assert security_health(pipeline)["status"] != PROTECTED
+    finally:
+        pipeline.close()
+
+
+def test_ollama_probe_rejects_empty_generated_response(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        pipeline.config.generation.backend = "ollama"
+        pipeline.generator.llm.base_url = "http://localhost:11434"
+        monkeypatch.setattr(security_module, "_http_json",
+                            lambda *args, **kwargs: {"models": [{"name": "fake/real-llm"}]})
+        monkeypatch.setattr(security_module, "_http_post_json",
+                            lambda *args, **kwargs: {"response": "  "})
+        probe = security_health(pipeline)["readiness_probes"]["generation"]
+        assert probe["status"] == "failed"
+        assert "empty" in probe["detail"]
+    finally:
+        pipeline.close()
+
+
+def test_http_timeout_is_a_failed_probe_not_protected(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        monkeypatch.setattr(security_module, "_http_json",
+                            lambda *args, **kwargs: (_ for _ in ()).throw(
+                                TimeoutError("timed out")))
+        health = security_health(pipeline)
+        probe = health["readiness_probes"]["generation"]
+        assert probe["status"] == "failed"
+        assert "endpoint unavailable" in probe["detail"]
+        assert health["status"] == DEGRADED
+        assert health["research_ready"] is False
+    finally:
+        pipeline.close()
+
+
+def test_api_keys_are_redacted_from_readiness_reports(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        secret = "sk-super-secret-value"
+        pipeline.generator.llm.api_key = secret
+        monkeypatch.setattr(security_module, "_http_post_json",
+                            lambda *args, **kwargs: (_ for _ in ()).throw(
+                                RuntimeError(f"Authorization: Bearer {secret} rejected")))
+        health = security_health(pipeline)
+        assert health["readiness_probes"]["generation"]["status"] == "failed"
+        assert secret not in json.dumps(health)
+        assert "[REDACTED]" in health["readiness_probes"]["generation"]["detail"]
+    finally:
+        pipeline.close()
+
+
 def test_nli_loaded_but_inference_fails_is_not_protected(config, monkeypatch):
     pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
     try:
@@ -238,6 +339,51 @@ def test_nli_probe_validates_scores_and_contract_labels(config, monkeypatch):
         assert probe["status"] == "ready"
         assert probe["label"] in {"entailment", "contradiction", "neutral"}
         assert 0.0 <= probe["score"] <= 1.0
+    finally:
+        pipeline.close()
+
+
+def test_malformed_nli_outputs_cannot_be_protected(config, monkeypatch):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        _ready_pipeline(pipeline, monkeypatch)
+        cases = [
+            ({"status": "ready", "label": "entailment"}, "non-numeric NLI score"),
+            ({"status": "ready", "score": 0.99}, "unexpected NLI label"),
+            ({"status": "ready", "label": "entailment", "score": float("nan")},
+             "invalid NLI score"),
+            ({"status": "ready", "label": "entailment", "score": 1.5},
+             "invalid NLI score"),
+            ({"status": "ready", "label": "ENTAILMENT", "score": 0.99},
+             "unexpected NLI label"),
+            ({"detail": "no output"}, "NLI inference probe failed"),
+        ]
+        for result, expected in cases:
+            pipeline.verifier.nli_probe = lambda _result=result: _result
+            health = security_health(pipeline)
+            probe = health["readiness_probes"]["nli_verifier"]
+            assert probe["status"] == "failed"
+            assert expected in probe["detail"]
+            assert health["status"] == DEGRADED
+            assert health["research_ready"] is False
+    finally:
+        pipeline.close()
+
+
+def test_nli_mode_that_is_not_loaded_is_failed_not_unverified(config):
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
+    try:
+        class _NotLoaded:
+            mode = "nli"
+            nli_ready = False
+
+        pipeline.verifier = _NotLoaded()
+        health = security_health(pipeline)
+        probe = health["readiness_probes"]["nli_verifier"]
+        assert probe["status"] == "failed"
+        assert "not loaded" in probe["detail"]
+        assert health["status"] == DEGRADED
+        assert health["research_ready"] is False
     finally:
         pipeline.close()
 
