@@ -33,6 +33,17 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 HF = "https://huggingface.co/datasets/BeIR"
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _subset_helpers():
+    root = str(ROOT / "src")
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from trace_rag.ingestion.subset import (build_exact_subset, select_query_ids,
+                                            verify_subset, write_queries_exact)
+    return build_exact_subset, select_query_ids, verify_subset, write_queries_exact
+
 DATASETS: Dict[str, Dict[str, str]] = {
     "nq": {"corpus": f"{HF}/nq/resolve/main/corpus/corpus-00000-of-00001.parquet",
            "queries": f"{HF}/nq/resolve/main/queries/queries-00000-of-00001.parquet",
@@ -124,55 +135,20 @@ def read_qrels(path: Path) -> Dict[str, Set[str]]:
 
 def build_subset(corpus_path: Path, gold_ids: Set[str], target_size: int, out_path: Path,
                  seed: int = 20260921) -> Tuple[int, int]:
-    """Write a subset containing every gold passage plus a random fill."""
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-    except ImportError as exc:
-        raise SystemExit("building a subset needs pyarrow: pip install pyarrow") from exc
-
-    rng = random.Random(seed)
-    parquet_file = pq.ParquetFile(str(corpus_path))
-    total_rows = parquet_file.metadata.num_rows
-    fill_target = max(0, target_size - len(gold_ids))
-    keep_probability = min(1.0, fill_target / max(1, total_rows - len(gold_ids)))
-
-    ids: List[str] = []
-    titles: List[str] = []
-    texts: List[str] = []
-    gold_kept = 0
-    for batch in parquet_file.iter_batches(batch_size=50_000, columns=["_id", "title", "text"]):
-        rows = batch.to_pydict()
-        for doc_id, title, text in zip(rows["_id"], rows["title"], rows["text"]):
-            is_gold = doc_id in gold_ids
-            if not is_gold and rng.random() > keep_probability:
-                continue
-            ids.append(doc_id)
-            titles.append(title or "")
-            texts.append(text or "")
-            gold_kept += int(is_gold)
-        print(f"\r  subset: {len(ids):,} passages kept ({gold_kept:,} gold)", end="", flush=True)
-    print()
-    table = pa.table({"_id": pa.array(ids), "title": pa.array(titles), "text": pa.array(texts)})
-    pq.write_table(table, out_path)
-    return len(ids), gold_kept
+    """Write exactly ``target_size`` rows, retaining every gold passage."""
+    build_exact_subset, _, _, _ = _subset_helpers()
+    return build_exact_subset(corpus_path, set(gold_ids), target_size, out_path, seed)
 
 
 def write_queries_subset(queries_path: Path, query_ids: Sequence[str], out_path: Path) -> int:
-    try:
-        import pyarrow.parquet as pq
-    except ImportError as exc:
-        raise SystemExit("needs pyarrow: pip install pyarrow") from exc
+    _, _, _, write_queries_exact = _subset_helpers()
+    return write_queries_exact(queries_path, query_ids, out_path)
 
-    wanted = set(query_ids)
-    rows = []
-    parquet_file = pq.ParquetFile(str(queries_path))
-    for batch in parquet_file.iter_batches(batch_size=50_000):
-        data = batch.to_pylist()
-        rows.extend(r for r in data if str(r.get("_id")) in wanted)
-    out_path.write_text("\n".join(
-        json.dumps({"qid": str(r["_id"]), "text": r.get("text", "")}) for r in rows), encoding="utf-8")
-    return len(rows)
+
+def verify_subset(corpus_path: Path, queries_path: Path, qrels_path: Path,
+                  expected_passages: int, expected_queries: int) -> Dict:
+    _, _, verify, _ = _subset_helpers()
+    return verify(corpus_path, queries_path, qrels_path, expected_passages, expected_queries)
 
 
 def main() -> int:
@@ -211,22 +187,23 @@ def main() -> int:
 
     corpus_for_run = corpus_path
     if args.subset:
-        rng = random.Random(args.seed)
-        chosen_queries = sorted(gold)[:]
-        rng.shuffle(chosen_queries)
-        chosen_queries = chosen_queries[: args.queries]
+        _, select_query_ids, _, _ = _subset_helpers()
+        chosen_queries = select_query_ids(gold, args.queries, args.seed)
         gold_ids: Set[str] = set()
         for query_id in chosen_queries:
             gold_ids |= gold[query_id]
-        print(f"building a {args.subset:,}-passage subset covering {len(chosen_queries)} queries "
-              f"({len(gold_ids):,} gold passages)")
+        print(f"building exactly {args.subset:,} passages covering {len(chosen_queries)} queries "
+              f"({len(gold_ids):,} required gold passages)")
         corpus_for_run = out_dir / "corpus_subset.parquet"
         kept, gold_kept = build_subset(corpus_path, gold_ids, args.subset, corpus_for_run, args.seed)
-        missing = len(gold_ids) - gold_kept
-        if missing:
-            print(f"  WARNING: {missing} gold passages were not found in the corpus file")
         written = write_queries_subset(queries_path, chosen_queries, out_dir / "queries_subset.jsonl")
-        print(f"  wrote {kept:,} passages and {written} queries")
+        contract = verify_subset(corpus_for_run, out_dir / "queries_subset.jsonl", qrels_path,
+                                 args.subset, args.queries)
+        if not contract["ok"]:
+            raise SystemExit("subset verification failed: " + "; ".join(contract["errors"]))
+        print(f"  wrote {kept:,} passages and {written} queries; gold coverage "
+              f"{contract['gold_passages_present']}/{contract['gold_passages_required']} "
+              f"({contract['gold_coverage']:.0%})")
 
     # prove the result is readable by the ingestor before claiming success
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

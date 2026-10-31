@@ -36,19 +36,32 @@ Mount Drive and create `MyDrive/RAGLedger/`:
 ```text
 MyDrive/RAGLedger/
   datasets/raw/          raw NQ BEIR files (downloaded once)
-  datasets/pilot/        5,000-passage / 20-query subset
-  datasets/research/     200,000-passage / 500-query subset
-  configs/               model pins and config snapshots
+  datasets/pilot/        exact 5,000-passage / 20-query subset
+  datasets/research/     exact 200,000-passage / 500-query subset
+  configs/               model pins, immutable digest lock, config snapshots
   preflight/             preflight JSON and logs
-  runs/<run-id>/         index, SQLite ledgers, checkpoint, manifest, metrics
+  backups/<run-id>/      atomic SQLite/checkpoint/index snapshots
   exports/               archives of completed results
   logs/                  vLLM and service logs
-```
 
-Temporary Hugging Face weights stay in `/content/hf_cache`. The SQLite trust
-ledger, FAISS index, datasets, checkpoints, manifests and exports are on Drive,
-so they survive a runtime reset. Each experiment has a distinct run directory.
-The runner refuses a non-empty result directory unless `--resume` is used.
+Active FAISS indexes, SQLite databases and `stream.jsonl` live in
+`/content/ragledger_active/runs/<run-id>/`; they are never executed from the
+Drive FUSE mount. Temporary Hugging Face weights stay in `/content/hf_cache`.
+At preparation and after every completed stream step the runner writes an
+atomic snapshot under `backups/<run-id>/`: the checkpoint, manifest, stream,
+consistent SQLite backups, and the prepared index. The checkpoint, stream row
+count and SQLite snapshot all describe the same completed step. The prepared
+index is copied once; later snapshots reference its digest without duplicating
+hundreds of megabytes at every step.
+
+Before a run, the notebook calls `restore_latest_snapshot`. It validates the
+snapshot metadata, checkpoint/stream agreement, SQLite integrity and index
+digest, then restores only if the active checkpoint is missing, older or
+in-flight. The runner itself refuses any non-empty directory with partial
+ingestion, index or poison artifacts, even when no checkpoint or manifest
+exists. Safe recovery is: preserve the partial active directory for diagnosis,
+restore the latest valid snapshot, or create a new run directory. Never delete
+an incomplete directory and reuse its name as a clean run.
 
 ## 3. Install and models
 

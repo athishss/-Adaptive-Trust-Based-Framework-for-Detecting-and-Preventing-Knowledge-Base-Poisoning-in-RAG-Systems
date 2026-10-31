@@ -105,6 +105,8 @@ class GenerationConfig(BaseModel):
         None, description="declared serving precision (for example bfloat16 or int4); recorded, not inferred")
     quantization: Optional[str] = Field(
         None, description="declared generator quantization (for example q4_K_M); recorded in the manifest")
+    serving_version: Optional[str] = Field(
+        None, description="expected runtime version of Ollama/vLLM; verified when exposed")
     base_url: str = "http://localhost:8000/v1"
     api_key_env: str = "OPENAI_API_KEY"
     temperature: float = 0.0

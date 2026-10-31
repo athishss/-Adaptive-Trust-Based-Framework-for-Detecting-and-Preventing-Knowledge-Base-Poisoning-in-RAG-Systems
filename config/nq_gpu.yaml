@@ -52,6 +52,7 @@ generation:
   revision: a09a35458c702b33eeacc393d103063234e8bc28
   precision: bfloat16
   quantization: null         # unquantised research model (server must confirm)
+  serving_version: 0.7.3     # vLLM target; OpenAI API does not expose it for verification
   base_url: http://localhost:8000/v1
   temperature: 0.0
   seed: 20260921

@@ -73,6 +73,8 @@ from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
 from trace_rag.evaluation.metrics import answer_level_asr_fields
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
+from trace_rag.ingestion.subset import verify_subset
+from trace_rag.snapshots import backup_snapshot
 from trace_rag.pipeline import PersonAPipeline
 from trace_rag.trust import TrustLedger, TrustPolicy
 from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics, write_history_csv
@@ -130,7 +132,7 @@ def validate_run_scope(purpose: str, real_model: bool, limit: Optional[int], ste
     if real_model and purpose == "smoke":
         errors.append("a real-model run must declare --run-purpose pilot or research")
     if purpose == "pilot":
-        if limit is None or limit > 5000:
+        if limit != 5000:
             errors.append("integration pilot requires --limit 5000 (or smaller)")
         if questions != 20:
             errors.append(f"integration pilot requires the prepared 20-query pool (got {questions})")
@@ -181,24 +183,29 @@ def run_signature(config: Config, purpose: str, sample_mode: str, seed: int, ste
 
 
 def check_output_state(out_dir: Path, resume: bool) -> Optional[Dict[str, Any]]:
-    """Refuse to overwrite a run; on resume require a prepared checkpoint."""
-    markers = ["metrics.json", "run_manifest.json", "checkpoint.json", "stream.jsonl"]
-    existing = [name for name in markers if (out_dir / name).exists()]
-    if not resume:
-        if existing:
-            raise ValueError(
-                f"output directory already contains {existing}; choose a new --out or "
-                "use --resume for an interrupted run")
+    """Refuse to reuse any non-empty run directory."""
+    if not out_dir.exists():
         return None
+    existing = sorted(item.name for item in out_dir.iterdir())
+    if not existing:
+        return None
+    if not resume:
+        raise ValueError(
+            f"output directory already contains partial artifacts {existing}; "
+            "this may include ingestion, index or poison preparation without a "
+            "checkpoint. Move/archive the directory and use a new --out; "
+            "do not delete and reuse it as if it were a clean run")
     if "metrics.json" in existing:
         raise ValueError("this run already has metrics.json; refusing to overwrite a completed run")
     if "checkpoint.json" not in existing or "run_manifest.json" not in existing:
-        raise ValueError("resume requires both checkpoint.json and run_manifest.json")
+        raise ValueError("resume requires both checkpoint.json and run_manifest.json; "
+                         "partial artifacts have no resumable boundary")
     checkpoint = _read_json(out_dir / "checkpoint.json")
     if checkpoint.get("in_flight_step") is not None:
         raise ValueError(
             "the previous attempt was interrupted inside a stream step; its ledger may "
-            "contain partial effects. Start a new run directory instead of mixing states")
+            "contain partial effects. Restore the latest Drive snapshot or start a new "
+            "run directory instead of mixing states")
     return checkpoint
 
 
@@ -213,39 +220,48 @@ def _http_json(url: str, payload: Optional[Dict[str, Any]] = None,
 
 
 def _ollama_provenance(config: Config) -> Dict[str, Any]:
-    """Read the exact pulled digest, quantisation and GPU residency."""
     if config.generation.backend != "ollama":
         return {}
-    base = config.generation.base_url.rstrip("/")
-    model = config.generation.model_name
-    result: Dict[str, Any] = {}
+    base, model = config.generation.base_url.rstrip("/"), config.generation.model_name
+    r: Dict[str, Any] = {"tag": model, "requested_revision": config.generation.revision}
+    def call(path,payload=None): return _http_json(f"{base}{path}", payload)
     try:
-        tags = _http_json(f"{base}/api/tags")
-        for item in tags.get("models", []):
-            if item.get("name") == model or str(item.get("name", "")).split(":")[0] == model.split(":")[0]:
-                result.update({"digest": item.get("digest"),
-                               "size_bytes": item.get("size"),
-                               "modified_at": item.get("modified_at")})
-                break
-    except Exception as exc:  # noqa: BLE001 - provenance must not break a run
-        result["tags_error"] = f"{type(exc).__name__}: {exc}"
+        hit = next((x for x in call("/api/tags").get("models", []) if x.get("name") == model), None)
+        if hit: r.update({"tag_digest": hit.get("digest"), "tag_modified_at": hit.get("modified_at")})
+        else: r["tags_error"] = f"exact tag not found: {model}"
+    except Exception as exc: r["tags_error"] = f"{type(exc).__name__}: {exc}"
     try:
-        shown = _http_json(f"{base}/api/show", {"name": model})
-        result["details"] = shown.get("details") or {}
-        result["format"] = shown.get("format")
-        result["capabilities"] = shown.get("capabilities") or []
-    except Exception as exc:  # noqa: BLE001
-        result["show_error"] = f"{type(exc).__name__}: {exc}"
+        shown = call("/api/show", {"name": model})
+        r.update({"details": shown.get("details") or {}, "format": shown.get("format"),
+                  "capabilities": shown.get("capabilities") or [], "model_info": shown.get("model_info") or {}})
+    except Exception as exc: r["show_error"] = f"{type(exc).__name__}: {exc}"
+    try: r["runtime_version"] = call("/api/version").get("version")
+    except Exception as exc: r["version_error"] = f"{type(exc).__name__}: {exc}"
     try:
-        running = _http_json(f"{base}/api/ps")
-        for item in running.get("models", []):
-            if item.get("name") == model:
-                result["size_vram_bytes"] = int(item.get("size_vram") or 0)
-                result["gpu_resident"] = int(item.get("size_vram") or 0) > 0
-                break
-    except Exception as exc:  # noqa: BLE001
-        result["ps_error"] = f"{type(exc).__name__}: {exc}"
-    return result
+        hit = next((x for x in call("/api/ps").get("models", []) if x.get("name") == model), None)
+        if hit:
+            r.update({"served_name": hit.get("name"), "served_digest": hit.get("digest"),
+                      "size_vram_bytes": int(hit.get("size_vram") or 0),
+                      "gpu_resident": int(hit.get("size_vram") or 0) > 0, "expires_at": hit.get("expires_at")})
+        else: r["ps_error"] = f"exact running model not found: {model}"
+    except Exception as exc: r["ps_error"] = f"{type(exc).__name__}: {exc}"
+    r["digest_matches_config"] = bool(r.get("served_digest") and r["served_digest"] == config.generation.revision)
+    r["tag_matches_served"] = bool(r.get("tag_digest") and r.get("served_digest") and r["tag_digest"] == r["served_digest"])
+    r["version_matches_config"] = bool(not config.generation.serving_version or r.get("runtime_version") == config.generation.serving_version)
+    return r
+
+
+def verify_ollama_runtime(config: Config) -> Dict[str, Any]:
+    """Fail closed unless the pulled and currently served digests match the pin."""
+    r = _ollama_provenance(config); rev = config.generation.revision or ""; bad = []
+    if not rev.startswith("sha256:") or len(rev) < 71: bad.append("revision must be an exact sha256 digest")
+    if not r.get("served_digest"): bad.append("cannot read the served digest")
+    if not r.get("digest_matches_config"): bad.append("served digest != configured revision")
+    if not r.get("tag_matches_served"): bad.append("pulled tag digest != served digest")
+    if config.generation.serving_version and not r.get("runtime_version"): bad.append("runtime version unavailable")
+    if not r.get("version_matches_config"): bad.append("runtime version != pinned version")
+    if bad: raise RuntimeError("Ollama model provenance failed: " + "; ".join(bad))
+    return r
 
 
 def _model_provenance(config: Config, pipeline, verifier) -> Dict[str, Any]:
@@ -267,9 +283,13 @@ def _model_provenance(config: Config, pipeline, verifier) -> Dict[str, Any]:
         },
         "generation": {
             "backend": config.generation.backend,
-            "model_id": getattr(llm, "name", config.generation.model_name),
-            "revision": (config.generation.revision or ollama.get("digest")
-                         or "UNSPECIFIED"),
+            "model_id": ollama.get("served_name") or getattr(llm, "name", config.generation.model_name),
+            "revision": config.generation.revision or "UNSPECIFIED",
+            "immutable_revision": bool((config.generation.revision or "").startswith("sha256:") or (config.generation.backend != "ollama" and len(config.generation.revision or "") >= 40)),
+            "digest_matches_config": ollama.get("digest_matches_config"),
+            "serving_version": config.generation.serving_version,
+            "runtime_version": ollama.get("runtime_version"),
+            "version_matches_config": ollama.get("version_matches_config"),
             "precision": config.generation.precision or "UNSPECIFIED",
             "quantization": quantisation,
             "device": ("GPU-resident" if ollama.get("gpu_resident") else
@@ -450,6 +470,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="BEIR qrels.tsv giving each query's gold passages "
                              "(default: qrels.tsv sitting next to --queries)")
     parser.add_argument("--out", default="runs/trust_stream")
+    parser.add_argument("--backup-dir", default=None,
+                        help="Drive backup root; writes atomic snapshots at prepared/step boundaries")
     parser.add_argument("--set", action="append", metavar="KEY=VALUE", default=None,
                         help="override any config value, e.g. "
                              "--set generation.backend=ollama --set retrieval.top_k=5 "
@@ -486,7 +508,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     started_at = datetime.now(timezone.utc).isoformat()
 
     out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
     if args.skip_index and not args.resume:
         print("--skip-index is no longer sufficient; use --resume for a prepared run",
               file=sys.stderr)
@@ -496,6 +517,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except ValueError as exc:
         print(f"refusing to mix run outputs: {exc}", file=sys.stderr)
         return 2
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
     # Configure the security stack before building the pipeline.  Building it
@@ -507,14 +529,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     config.security.max_corroboration = args.max_corroboration
     real_model = (config.generation.backend != "stub"
                   or config.embedding.backend != "hashing")
+    ollama_runtime: Dict[str, Any] = {}
+    if config.generation.backend == "ollama":
+        try:
+            ollama_runtime = verify_ollama_runtime(config)
+        except RuntimeError as exc:
+            print(f"refusing unverifiable pilot model: {exc}", file=sys.stderr)
+            return 2
+    sqlite_paths = [config.path(config.storage.provenance_db),
+                    config.path(config.storage.answer_db)]
+    trust_path = config.trust_db_path()
+    if trust_path != ":memory:": sqlite_paths.append(Path(trust_path))
+    index_base = str(config.path(config.storage.index_path))
     questions = load_questions(Path(args.queries))
     if not questions:
         print("no questions found", file=sys.stderr)
         return 2
     targets = questions[: max(1, args.targets)]
     qrels_path = Path(args.qrels) if args.qrels else Path(args.queries).with_name("qrels.tsv")
-    if args.run_purpose in {"research", "research_lifecycle"} and not qrels_path.exists():
-        print("research runs require --qrels; targets cannot fall back to the retrieved pool",
+    if args.run_purpose in {"pilot", "research", "research_lifecycle"} and not qrels_path.exists():
+        print("pilot/research runs require --qrels; target gold coverage cannot be verified",
               file=sys.stderr)
         return 2
     scope_errors = validate_run_scope(
@@ -525,7 +559,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for error in scope_errors:
             print(f"  - {error}", file=sys.stderr)
         return 2
+    dataset_contract: Dict[str, Any] = {}
+    expected = {"pilot": (5000, 20), "research": (200000, 500),
+                "research_lifecycle": (200000, 500)}
+    if args.run_purpose in expected:
+        passages, queries = expected[args.run_purpose]
+        dataset_contract = verify_subset(Path(args.corpus), Path(args.queries), qrels_path,
+                                         passages, queries)
+        if not dataset_contract.get("ok"):
+            print("dataset contract failed; refusing to start:", file=sys.stderr)
+            for error in dataset_contract.get("errors", []): print(f"  - {error}", file=sys.stderr)
+            return 2
+        print(f"dataset verified: {dataset_contract['corpus_rows']:,} passages, "
+              f"{dataset_contract['query_rows']} queries, gold "
+              f"{dataset_contract['gold_passages_present']}/{dataset_contract['gold_passages_required']}")
     dataset_identity = _dataset_signature(Path(args.corpus), Path(args.queries), qrels_path)
+    dataset_identity["subset_contract"] = dataset_contract
     signature = run_signature(config, args.run_purpose, args.sample_mode, args.seed,
                               args.steps, args.targets, args.limit, args.n_sources,
                               dataset_identity, [target["qid"] for target in targets])
@@ -669,6 +718,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }
         _atomic_write(out_dir / "run_manifest.json",
                       json.dumps(preliminary, indent=2, default=str))
+        if args.backup_dir:
+            try:
+                backup_snapshot(out_dir, Path(args.backup_dir), 0, sqlite_paths,
+                                index_base, copy_index=True)
+            except Exception as exc:
+                print(f"prepared snapshot failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+                pipeline.close()
+                return 2
     else:
         banner("3. Reuse the checkpointed poison documents")
         poison_info = list(previous_checkpoint.get("poison_info") or [])
@@ -776,6 +833,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         checkpoint["in_flight_step"] = None
         checkpoint["updated_at"] = datetime.now(timezone.utc).isoformat()
         _atomic_write(out_dir / "checkpoint.json", json.dumps(checkpoint, indent=2))
+        if args.backup_dir:
+            try:
+                backup_snapshot(out_dir, Path(args.backup_dir), step + 1,
+                                sqlite_paths, index_base)
+            except Exception as exc:
+                print(f"step snapshot failed at {step + 1}: {type(exc).__name__}: {exc}",
+                      file=sys.stderr)
+                pipeline.close()
+                return 2
 
     # ---------------------------------------------------------------- metrics
     banner("6. Smoke-test metrics (not the headline evaluation)")
@@ -814,6 +880,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                  "answer success, and does not implement the full attack x baseline matrix"),
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
+        "dataset_contract": dataset_contract,
         "corpus": str(args.corpus),
         "steps": len(per_step),
         "query_pool_size": len(questions),
@@ -894,6 +961,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "config_path": str(args.config),
         "config": config.model_dump(mode="json"),
         "dataset": dataset_identity,
+        "dataset_contract": dataset_contract,
+        "backup_dir": args.backup_dir,
         "models": _model_provenance(config, pipeline, verifier),
         "seed": args.seed,
         "hardware": _hardware(),
@@ -947,6 +1016,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"    {path}")
     if timeline:
         print(f"    {timeline}")
+
+    if args.backup_dir:
+        try:
+            backup_snapshot(out_dir, Path(args.backup_dir), len(per_step),
+                            sqlite_paths, index_base)
+        except Exception as exc:
+            print(f"final snapshot failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            ledger.close(); pipeline.close()
+            return 2
 
     ledger.close()
     pipeline.close()

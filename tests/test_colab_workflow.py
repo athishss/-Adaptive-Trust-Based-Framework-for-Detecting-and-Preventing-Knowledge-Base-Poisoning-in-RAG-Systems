@@ -172,3 +172,124 @@ def test_runbook_documents_the_fork_drive_preflight_and_both_scopes():
     assert "5,000" in text and "200,000" in text and "500" in text
     assert "NOT MEASURED" in text
     assert "faiss-cpu" in text
+
+
+def test_exact_query_selection_is_deterministic_and_exact():
+    from trace_rag.ingestion.subset import select_query_ids
+
+    gold = {str(i): {f"d{i}"} for i in range(25)}
+    first = select_query_ids(gold, 20, seed=7)
+    second = select_query_ids(gold, 20, seed=7)
+    assert first == second and len(first) == 20 and len(set(first)) == 20
+    assert set(first) <= set(gold)
+
+
+def test_partial_ingestion_without_markers_is_rejected(tmp_path):
+    import pytest
+
+    (tmp_path / "provenance.sqlite3").write_bytes(b"partial")
+    with pytest.raises(ValueError, match="partial artifacts"):
+        stream.check_output_state(tmp_path, resume=False)
+    with pytest.raises(ValueError, match="partial artifacts"):
+        stream.check_output_state(tmp_path, resume=True)
+
+
+def test_snapshot_restore_preserves_checkpoint_and_sqlite_state(tmp_path):
+    import sqlite3
+    from trace_rag.snapshots import backup_snapshot, restore_latest_snapshot
+
+    run, backup = tmp_path / "active", tmp_path / "drive"
+    run.mkdir()
+    db = run / "trust.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE state (value INTEGER)")
+    conn.execute("INSERT INTO state VALUES (1)")
+    conn.commit(); conn.close()
+    (run / "index.npz").write_bytes(b"index")
+    (run / "run_manifest.json").write_text(json.dumps({"signature": "sig"}))
+    (run / "stream.jsonl").write_text(json.dumps({"step": 0}) + "\n")
+    checkpoint = {"completed_steps": 1, "in_flight_step": None, "signature": "sig"}
+    (run / "checkpoint.json").write_text(json.dumps(checkpoint))
+    meta = backup_snapshot(run, backup, 1, [db], str(run / "index"), copy_index=True)
+    assert meta["completed_steps"] == 1
+
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE state SET value = 2")
+    conn.commit(); conn.close()
+    (run / "checkpoint.json").write_text(json.dumps(
+        {"completed_steps": 0, "in_flight_step": 0, "signature": "sig"}))
+    restored = restore_latest_snapshot(run, backup)
+    assert restored and restored["completed_steps"] == 1
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT value FROM state").fetchone()[0] == 1
+    conn.close()
+    assert json.loads((run / "checkpoint.json").read_text())["completed_steps"] == 1
+
+
+def test_ollama_served_digest_must_match_pinned_revision(monkeypatch):
+    import pytest
+    from trace_rag.snapshots import snapshot_summary  # noqa: F401
+
+    config = Config.load(ROOT / "config" / "colab_pilot_qwen.yaml")
+    config.generation.revision = "sha256:" + "a" * 64
+    config.generation.serving_version = "0.5.7"
+
+    def fake(url, payload=None, timeout=5.0):
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "qwen2.5:7b", "digest": "sha256:" + "a" * 64}]}
+        if url.endswith("/api/show"):
+            return {"details": {"quantization_level": "Q4_K_M"}, "capabilities": ["completion"]}
+        if url.endswith("/api/version"):
+            return {"version": "0.5.7"}
+        if url.endswith("/api/ps"):
+            return {"models": [{"name": "qwen2.5:7b", "digest": "sha256:" + "a" * 64,
+                                "size_vram": 1024}]}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(stream, "_http_json", fake)
+    runtime = stream.verify_ollama_runtime(config)
+    assert runtime["digest_matches_config"] is True
+    assert runtime["gpu_resident"] is True
+
+    def wrong(url, payload=None, timeout=5.0):
+        result = fake(url, payload, timeout)
+        if url.endswith("/api/ps"):
+            result = {"models": [{"name": "qwen2.5:7b", "digest": "sha256:" + "b" * 64,
+                                  "size_vram": 1024}]}
+        return result
+
+    monkeypatch.setattr(stream, "_http_json", wrong)
+    with pytest.raises(RuntimeError, match="provenance"):
+        stream.verify_ollama_runtime(config)
+
+
+def test_snapshot_summary_is_read_only(tmp_path):
+    from trace_rag.snapshots import snapshot_summary
+
+    assert snapshot_summary(tmp_path / "missing") == {}
+    assert snapshot_summary(tmp_path) == {}
+
+
+def test_notebook_preserves_layout_and_uses_content_for_active_runs():
+    notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(encoding="utf-8"))
+    assert len(notebook["cells"]) == 30
+    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) == 15
+    headings = [line for cell in notebook["cells"] for line in cell["source"]
+                if line.startswith("## ") and line[3:4].isdigit()]
+    assert len(headings) == 13
+    text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+    assert "/content/ragledger_active" in text
+    assert "backup-dir" in text and "restore_latest_snapshot" in text
+    assert "constraints/colab.txt" in text
+    assert "5,000" in text and "200,000" in text
+
+
+def test_colab_dependency_pins_are_explicit_and_marked_unverified():
+    constraints = (ROOT / "constraints" / "colab.txt").read_text(encoding="utf-8")
+    doc = (ROOT / "docs" / "COLAB_DEPENDENCIES.md").read_text(encoding="utf-8")
+    for required in ("torch==2.5.1", "transformers==4.48.3", "faiss-cpu==1.9.0",
+                     "pyarrow==17.0.0", "vllm==0.7.3"):
+        assert required in constraints
+    assert "not verified" in doc.lower() and "0.5.7" in doc
+    runbook = (ROOT / "docs" / "COLAB_RUNBOOK.md").read_text(encoding="utf-8")
+    assert "backups" in runbook

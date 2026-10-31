@@ -53,6 +53,7 @@ generation:
   revision: null              # replaced with the pulled Ollama digest by the notebook
   precision: int4
   quantization: q4_K_M
+  serving_version: 0.5.7
   base_url: http://127.0.0.1:11434
   temperature: 0.0
   seed: 20260921
