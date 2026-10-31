@@ -14,10 +14,13 @@ from typing import Callable, Dict, Optional, Sequence, Tuple
 
 from ..config import GenerationConfig
 from ..contracts import AnswerRecord, Citation, LLMResponse, RetrievedDocument, TrustStatus
+from ..utils.logging import get_logger
 from ..utils.timing import Stopwatch
 from .citations import check_citations, citation_precision, evidence_mass, parse_citations
 from .llm import generate_with_messages
 from .prompts import build_answer_messages, messages_to_prompt
+
+logger = get_logger(__name__)
 
 ABSTAIN_TEXT = "INSUFFICIENT EVIDENCE"
 ABSTAIN_MESSAGE = (
@@ -67,8 +70,20 @@ class GroundedGenerator:
         messages = build_answer_messages(query, documents)
         prompt = messages_to_prompt(messages)
         with Stopwatch() as watch:
-            response = generate_with_messages(self.llm, messages,
-                                              max_tokens=self.config.max_tokens)
+            try:
+                response = generate_with_messages(self.llm, messages,
+                                                  max_tokens=self.config.max_tokens)
+            except Exception as exc:  # noqa: BLE001 - fail closed, keep the attempt
+                # A generation outage is a result, not a reason to abort the
+                # whole stream: the query remains an eligible attempt and is
+                # recorded as an abstention rather than silently disappearing
+                # from the denominator.
+                logger.warning("generation backend failed for %s: %s: %s",
+                               query_id, type(exc).__name__, exc)
+                return self._abstain(query, query_id, "generation_error", documents,
+                                     excluded, trust_snapshots, step, prompt,
+                                     response=None, latency_ms=watch.elapsed_ms,
+                                     timestamp=timestamp)
 
         text = (response.text or "").strip()
         if not text or ABSTAIN_TEXT.lower() in text.lower():

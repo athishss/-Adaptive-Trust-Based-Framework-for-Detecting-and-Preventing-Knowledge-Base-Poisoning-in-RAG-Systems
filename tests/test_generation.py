@@ -25,6 +25,13 @@ class ScriptedLLM:
         return LLMResponse(text=self.text, llm_calls=1, latency_ms=1.0, model=self.name)
 
 
+class FailingLLM:
+    name = "failing"
+
+    def generate(self, prompt: str, max_tokens: int = 256, stop=None) -> LLMResponse:
+        raise RuntimeError("generation backend unavailable")
+
+
 def test_prompt_contains_ids_and_question():
     docs = [make_doc("d1", "Alpha text"), make_doc("d2", "Beta text")]
     prompt = build_answer_prompt("What is alpha?", docs)
@@ -123,6 +130,15 @@ def test_generator_abstains_when_model_says_so():
     outcome = GroundedGenerator(ScriptedLLM("INSUFFICIENT EVIDENCE"), GenerationConfig()).generate(
         "Who designed the Eiffel Tower?", "q1", docs)
     assert outcome.record.abstained and outcome.record.abstain_reason == "model_abstained"
+
+
+def test_generation_backend_failure_is_an_abstention_not_a_lost_attempt():
+    docs = [make_doc("d1", "Gustave Eiffel designed the tower.", trust=0.9)]
+    outcome = GroundedGenerator(FailingLLM(), GenerationConfig()).generate(
+        "Who designed the tower?", "q1", docs)
+    assert outcome.record.abstained
+    assert outcome.record.abstain_reason == "generation_error"
+    assert outcome.record.llm_calls == 0
 
 
 def test_generator_abstains_on_hallucinated_citations():
