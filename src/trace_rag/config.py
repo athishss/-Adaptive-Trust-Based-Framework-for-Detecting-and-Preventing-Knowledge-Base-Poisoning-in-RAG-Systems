@@ -252,14 +252,28 @@ class Config(BaseModel):
         with open(path, "w", encoding="utf-8") as handle:
             yaml.safe_dump(self.model_dump(mode="json"), handle, sort_keys=False)
 
+    def resolve_path(self, *parts: str) -> Path:
+        """Return the effective path without creating anything on disk.
+
+        ``path`` is the runtime helper and creates the parent directory.  Read-only
+        diagnostics must use this method so a preflight cannot leave an empty
+        storage tree behind in an experiment directory.
+        """
+        return Path(self.storage.root).joinpath(*parts)
+
     def path(self, *parts: str) -> Path:
-        p = Path(self.storage.root).joinpath(*parts)
+        p = self.resolve_path(*parts)
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
-    def trust_db_path(self) -> str:
-        """Path of the persistent trust ledger (``:memory:`` stays in-memory)."""
+    def trust_db_path(self, create_parent: bool = True) -> str:
+        """Path of the persistent trust ledger (``:memory:`` stays in-memory).
+
+        ``create_parent=False`` is for read-only checks such as the preflight.
+        """
         configured = self.security.trust_db or self.storage.trust_db
         if configured == ":memory:":
             return ":memory:"
-        return str(self.path(configured))
+        if create_parent:
+            return str(self.path(configured))
+        return str(self.resolve_path(configured))

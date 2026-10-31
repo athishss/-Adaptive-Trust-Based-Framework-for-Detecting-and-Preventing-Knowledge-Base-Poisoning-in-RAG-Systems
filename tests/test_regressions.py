@@ -334,7 +334,7 @@ def test_subset_always_keeps_gold_passages(tmp_path):
     kept, gold_kept = download_data.build_subset(tmp_path / "corpus.parquet", gold_ids, 300,
                                                  tmp_path / "subset.parquet")
     assert gold_kept == len(gold_ids)                        # never drop a gold passage
-    assert 0.5 * 300 <= kept <= 1.6 * 300                    # roughly the requested size
+    assert kept == 300                                       # exact, not "roughly"
 
     from trace_rag.ingestion import iter_beir_corpus
 

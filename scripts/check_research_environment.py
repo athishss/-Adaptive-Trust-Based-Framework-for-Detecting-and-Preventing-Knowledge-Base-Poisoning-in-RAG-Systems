@@ -32,7 +32,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -49,6 +49,81 @@ REQUIRED_MODULES = {
     "faiss": ("faiss-cpu", "pip install faiss-cpu  # or a CUDA-enabled faiss build"),
     "pyarrow": ("pyarrow", "pip install pyarrow"),
 }
+
+PREFLIGHT_STORAGE_SCHEMA = "ragledger.preflight.storage.v1"
+STORAGE_PATH_FIELDS = ("provenance_db", "answer_db", "index_path",
+                       "scorer_path", "trust_db")
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_storage_name(value: str) -> str:
+    name = Path(value).name
+    if not name or name in {".", ".."}:
+        raise ValueError(f"cannot derive a safe preflight filename from {value!r}")
+    return name
+
+
+def isolate_storage_config(config: Config, root: Path) -> Tuple[Config, List[str]]:
+    """Copy *config* with every storage path confined to ``root``.
+
+    The functional doctor is a real pipeline construction and therefore writes
+    SQLite files, and (when it loads an index) index files.  It must never write
+    those into the experiment's storage root: the runner deliberately refuses a
+    non-empty output directory that has no checkpoint.  Model, security and
+    generation settings are copied unchanged; only storage locations move.
+
+    Absolute paths and relative paths containing ``..`` cannot be confined by
+    changing ``storage.root`` alone, so they are rebased to their basename under
+    the probe root.  The returned list names those fields for the report.
+    """
+    probe = config.model_copy(deep=True)
+    probe.storage.root = str(root)
+    rebased: List[str] = []
+
+    for field in STORAGE_PATH_FIELDS:
+        value = getattr(probe.storage, field)
+        if value == ":memory:":
+            continue
+        candidate = Path(value)
+        if candidate.is_absolute() or not _is_within(root / candidate, root):
+            setattr(probe.storage, field, _safe_storage_name(value))
+            rebased.append(f"storage.{field}")
+
+    configured_trust = probe.security.trust_db
+    if configured_trust and configured_trust != ":memory:":
+        candidate = Path(configured_trust)
+        if candidate.is_absolute() or not _is_within(root / candidate, root):
+            probe.security.trust_db = _safe_storage_name(configured_trust)
+            rebased.append("security.trust_db")
+
+    effective = {
+        "storage.root": Path(probe.storage.root),
+        **{f"storage.{field}": probe.resolve_path(getattr(probe.storage, field))
+           for field in STORAGE_PATH_FIELDS},
+        "trust_ledger": Path(probe.trust_db_path(create_parent=False))
+        if probe.trust_db_path(create_parent=False) != ":memory:" else None,
+    }
+    escaped = [name for name, path in effective.items()
+               if path is not None and not _is_within(path, root)]
+    if escaped:
+        raise ValueError("preflight storage isolation failed for: " + ", ".join(escaped))
+    return probe, rebased
+
+
+def _probe_storage_root(parent: Optional[Path]) -> Tuple[Path, Optional[Path]]:
+    """Create a unique probe directory and return (root, explicit parent)."""
+    if parent is None:
+        return Path(tempfile.mkdtemp(prefix="ragledger-preflight-storage-")), None
+    parent = Path(parent).expanduser()
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="probe-", dir=parent)), parent
 
 
 def _module_available(name: str) -> bool:
@@ -251,14 +326,19 @@ def endpoint_status(config: Config) -> Dict[str, Any]:
 
 
 def ledger_status(config: Config) -> Dict[str, Any]:
-    path = config.trust_db_path()
+    # Never use Config.path here: it creates the parent directory, and a read-only
+    # preflight must not leave an empty experiment tree behind.
+    path = config.trust_db_path(create_parent=False)
     if path == ":memory:":
         return {"status": "failed", "path": path,
                 "detail": "trust ledger is in-memory; research runs require persistence",
                 "remediation": "set storage.trust_db (or security.trust_db) to a file path"}
     ledger = Path(path)
     if not ledger.exists():
-        parent_writable = os.access(ledger.parent, os.W_OK)
+        parent = ledger.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        parent_writable = parent.exists() and os.access(parent, os.W_OK)
         return {"status": "ready" if parent_writable else "failed",
                 "path": str(ledger), "initialized": False,
                 "detail": ("path is writable; the run will create it" if parent_writable
@@ -296,50 +376,81 @@ def dataset_status(corpus: Optional[str], queries: Optional[str],
     return {"status": "ready", "sizes": sizes, "detail": "dataset files exist"}
 
 
-def functional_doctor(config: Config, timeout: float) -> Dict[str, Any]:
+def functional_doctor(config: Config, timeout: float,
+                      preflight_storage_root: Optional[Path] = None) -> Dict[str, Any]:
     """Run the existing doctor probes with offline HF env vars.
 
     The offline flags prevent an attempted model download.  If weights are not
     cached, the doctor fails fast and that failure is reported honestly.
+
+    The doctor constructs a real :class:`PersonAPipeline`, which creates SQLite
+    files.  It therefore always runs with a storage root isolated from the
+    experiment, and that temporary tree is removed afterwards.  ``config`` is
+    not mutated, so the report can still show the intended experiment paths.
     """
-    # Doctor must receive the already-resolved config, including every --set
-    # override.  Checking a YAML file and running a different command was the
-    # exact mismatch this preflight is meant to prevent.
-    env = os.environ.copy()
-    env.update({
-        "HF_HUB_OFFLINE": "1",
-        "TRANSFORMERS_OFFLINE": "1",
-        "HF_DATASETS_OFFLINE": "1",
-        "PYTHONPATH": str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", ""),
-    })
-    with tempfile.TemporaryDirectory(prefix="ragledger-preflight-") as directory:
-        resolved_path = Path(directory) / "resolved.yaml"
-        config.dump(resolved_path)
-        command = [sys.executable, "-m", "trace_rag.cli",
-                   "--config", str(resolved_path), "doctor"]
-        try:
-            result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
-                                    text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return {"status": "failed", "detail": f"doctor timed out after {timeout:.0f}s"}
-    output = result.stdout.strip()
-    payload: Optional[Dict[str, Any]] = None
-    start = output.find("{")
-    if start >= 0:
-        try:
-            payload = json.loads(output[start:])
-        except json.JSONDecodeError:
-            payload = None
-    if payload is None:
-        detail = (result.stderr or output or "doctor returned no JSON").strip()
-        return {"status": "failed", "exit_code": result.returncode,
-                "detail": detail[-1000:]}
-    return {
-        "status": payload.get("status", "UNKNOWN"),
-        "exit_code": result.returncode,
-        "security": payload,
-        "detail": payload.get("status_reason", ""),
+    probe_root, explicit_parent = _probe_storage_root(preflight_storage_root)
+    isolation: Dict[str, Any] = {
+        "schema": PREFLIGHT_STORAGE_SCHEMA,
+        "intended_root": str(config.storage.root),
+        "probe_root": str(probe_root),
+        "explicit_parent": str(explicit_parent) if explicit_parent else None,
+        "rebased_paths": [],
+        "cleaned": False,
     }
+    result: Dict[str, Any]
+    try:
+        probe_config, rebased = isolate_storage_config(config, probe_root)
+        isolation["rebased_paths"] = rebased
+        # Doctor must receive the already-resolved config, including every --set
+        # override.  Checking a YAML file and running a different command was the
+        # exact mismatch this preflight is meant to prevent.
+        env = os.environ.copy()
+        env.update({
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "HF_DATASETS_OFFLINE": "1",
+            "PYTHONPATH": str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", ""),
+        })
+        with tempfile.TemporaryDirectory(prefix="ragledger-preflight-") as directory:
+            resolved_path = Path(directory) / "resolved.yaml"
+            probe_config.dump(resolved_path)
+            command = [sys.executable, "-m", "trace_rag.cli",
+                       "--config", str(resolved_path), "doctor"]
+            try:
+                completed = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+                                           text=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                result = {"status": "failed",
+                          "detail": f"doctor timed out after {timeout:.0f}s"}
+            else:
+                output = completed.stdout.strip()
+                payload: Optional[Dict[str, Any]] = None
+                start = output.find("{")
+                if start >= 0:
+                    try:
+                        payload = json.loads(output[start:])
+                    except json.JSONDecodeError:
+                        payload = None
+                if payload is None:
+                    detail = (completed.stderr or output or "doctor returned no JSON").strip()
+                    result = {"status": "failed", "exit_code": completed.returncode,
+                              "detail": detail[-1000:]}
+                else:
+                    result = {
+                        "status": payload.get("status", "UNKNOWN"),
+                        "exit_code": completed.returncode,
+                        "security": payload,
+                        "detail": payload.get("status_reason", ""),
+                    }
+    finally:
+        shutil.rmtree(probe_root, ignore_errors=True)
+        isolation["cleaned"] = not probe_root.exists()
+        if explicit_parent is not None:
+            # Do not remove a caller-owned preflight parent; only assert that the
+            # unique child tree is gone.  An empty parent is intentional.
+            isolation["parent_empty"] = not any(explicit_parent.iterdir())
+    result["storage_isolation"] = isolation
+    return result
 
 
 def classify_status(checks: List[Dict[str, str]],
@@ -367,7 +478,8 @@ def resolve_config(config_path: Path, overrides: Optional[List[str]] = None) -> 
 
 def build_report(config_path: Path, functional: bool, functional_timeout: float,
                  corpus: Optional[str], queries: Optional[str],
-                 qrels: Optional[str], overrides: Optional[List[str]] = None) -> Dict[str, Any]:
+                 qrels: Optional[str], overrides: Optional[List[str]] = None,
+                 preflight_storage_root: Optional[Path] = None) -> Dict[str, Any]:
     checks: List[Dict[str, str]] = []
     info = system_info()
     checks.append(_check("python", "ok" if sys.version_info >= (3, 10) else "fail",
@@ -464,7 +576,10 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
 
     doctor: Optional[Dict[str, Any]] = None
     if functional:
-        doctor = functional_doctor(config, functional_timeout)
+        # Even when the caller points storage.root at the experiment, the
+        # functional doctor runs against a disposable tree.  This prevents a
+        # successful preflight from making the experiment directory non-empty.
+        doctor = functional_doctor(config, functional_timeout, preflight_storage_root)
         checks.append(_check(
             "functional_doctor",
             "ok" if doctor.get("status") == "PROTECTED" else "fail",
@@ -509,7 +624,7 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
             "verifier": config.security.verifier,
             "nli_model": config.security.nli_model,
             "nli_revision": config.security.nli_revision,
-            "trust_db": config.trust_db_path(),
+            "trust_db": config.trust_db_path(create_parent=False),
             "storage_root": config.storage.root,
         },
         "model_cache": cache_checks,
@@ -548,6 +663,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="run the doctor's real inference probes with HF offline flags; "
                              "only this mode can report READY")
     parser.add_argument("--functional-timeout", type=float, default=900.0)
+    parser.add_argument("--preflight-storage-root", default=None,
+                        help="parent directory for the disposable functional-doctor storage; "
+                             "the doctor never writes into the experiment's storage.root")
     parser.add_argument("--corpus", default=None)
     parser.add_argument("--queries", default=None)
     parser.add_argument("--qrels", default=None)
@@ -558,7 +676,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = parser.parse_args(argv)
 
     report = build_report(Path(args.config), args.functional, args.functional_timeout,
-                          args.corpus, args.queries, args.qrels, args.set)
+                          args.corpus, args.queries, args.qrels, args.set,
+                          Path(args.preflight_storage_root)
+                          if args.preflight_storage_root else None)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:

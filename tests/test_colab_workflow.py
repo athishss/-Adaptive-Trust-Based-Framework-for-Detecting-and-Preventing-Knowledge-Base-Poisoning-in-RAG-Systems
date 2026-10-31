@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import json
 import re
+import subprocess
 from pathlib import Path
 
 from trace_rag.config import Config
@@ -48,6 +49,59 @@ def test_notebook_uses_the_fork_and_an_explicit_commit():
     match = re.search(r"PINNED_COMMIT = \"([0-9a-f]{40})\"", source)
     assert match, "notebook must expose a full 40-character pinned SHA"
     assert '"rev-parse", "HEAD"' in source and "checked-out SHA" in source
+
+
+def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(ROOT), *args], check=check,
+                          capture_output=True, text=True)
+
+
+def test_notebook_pin_contains_the_test_suite_implementation():
+    """The pin must be an ancestor that already contains the tested code.
+
+    Commit B only updates the pin and documentation, so every implementation,
+    test and configuration file must be byte-identical between the pin and
+    HEAD.  A stale pin would make Colab run different code from the suite.
+    """
+    import pytest
+
+    if not (ROOT / ".git").exists():
+        pytest.skip("git checkout required to prove the notebook pin")
+    notebook = json.loads((ROOT / "notebooks/trace_rag_colab.ipynb").read_text(encoding="utf-8"))
+    source = "".join("".join(cell["source"]) for cell in notebook["cells"])
+    pin = re.search(r"PINNED_COMMIT = \"([0-9a-f]{40})\"", source).group(1)
+    head = _git("rev-parse", "HEAD").stdout.strip()
+    assert pin != head, "the pin must point at the implementation commit, not the pin commit"
+    ancestor = _git("merge-base", "--is-ancestor", pin, head, check=False)
+    assert ancestor.returncode == 0, f"notebook pin {pin} is not an ancestor of HEAD {head}"
+
+    changed = _git("diff", "--name-only", pin, head).stdout.splitlines()
+    implementation = [path for path in changed
+                      if path.startswith(("src/", "scripts/", "tests/", "config/", "constraints/"))
+                      or path == "pyproject.toml"]
+    assert implementation == [], (
+        "notebook pin is stale; implementation/test files differ from HEAD: "
+        + ", ".join(implementation))
+
+    preflight_at_pin = _git("show", f"{pin}:scripts/check_research_environment.py").stdout
+    assert "PREFLIGHT_STORAGE_SCHEMA" in preflight_at_pin
+    assert "isolate_storage_config" in preflight_at_pin
+    assert "--preflight-storage-root" in preflight_at_pin
+    subset_at_pin = _git("show", f"{pin}:src/trace_rag/ingestion/subset.py").stdout
+    assert "_atomic_write" in subset_at_pin
+    snapshots_at_pin = _git("show", f"{pin}:src/trace_rag/snapshots.py").stdout
+    assert "expected_signature" in snapshots_at_pin
+
+
+def test_notebook_isolates_preflight_storage_and_requires_data_opt_in():
+    notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(encoding="utf-8"))
+    text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+    assert "RUN_DATASET_DOWNLOAD = False" in text
+    assert "Run dataset download" in text or "Set RUN_DATASET_DOWNLOAD=True" in text
+    assert "--preflight-storage-root" in text
+    assert "expected_storage_root" in text
+    assert "PREFLIGHT_PARENT" in text
+    assert "contaminated a fresh experiment directory" in text
 
 
 def test_notebook_has_the_required_linear_sections_and_persistence():

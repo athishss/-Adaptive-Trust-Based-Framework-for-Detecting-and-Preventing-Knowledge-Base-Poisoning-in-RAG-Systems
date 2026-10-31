@@ -12,6 +12,12 @@ assert SPEC is not None and SPEC.loader is not None
 preflight = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(preflight)
 
+STREAM_SPEC = importlib.util.spec_from_file_location(
+    "run_trust_stream_for_preflight", ROOT / "scripts" / "run_trust_stream.py")
+assert STREAM_SPEC is not None and STREAM_SPEC.loader is not None
+stream = importlib.util.module_from_spec(STREAM_SPEC)
+STREAM_SPEC.loader.exec_module(stream)
+
 
 def _check(status: str) -> dict:
     return {"name": "x", "status": status, "detail": "", "remediation": ""}
@@ -79,3 +85,71 @@ def test_stub_generation_does_not_require_an_http_service(tmp_path):
     config = Config(storage={"root": str(tmp_path)})
     result = preflight.endpoint_status(config)
     assert result["status"] == "not_applicable"
+
+
+def test_ledger_status_does_not_create_the_storage_root(tmp_path):
+    root = tmp_path / "fresh" / "run"
+    config = Config(storage={"root": str(root)})
+    result = preflight.ledger_status(config)
+    assert result["status"] == "ready"
+    assert result["initialized"] is False
+    assert not root.exists()
+
+
+def test_storage_isolation_confines_absolute_and_escaping_paths(tmp_path):
+    outside = tmp_path / "outside"
+    config = Config(
+        storage={
+            "root": str(tmp_path / "run"),
+            "provenance_db": str(outside / "provenance.sqlite3"),
+            "answer_db": "state/answers.sqlite3",
+            "index_path": "../escaped-index",
+            "scorer_path": "scorer.joblib",
+        },
+        security={"trust_db": str(outside / "trust.sqlite3")},
+    )
+    probe_root = tmp_path / "probe"
+    probe_root.mkdir()
+    probe, rebased = preflight.isolate_storage_config(config, probe_root)
+
+    assert config.storage.root == str(tmp_path / "run"), "isolation must not mutate the source"
+    assert probe.storage.root == str(probe_root)
+    assert set(rebased) == {"storage.provenance_db", "storage.index_path",
+                            "security.trust_db"}
+    effective = [
+        probe.resolve_path(probe.storage.provenance_db),
+        probe.resolve_path(probe.storage.answer_db),
+        probe.resolve_path(probe.storage.index_path),
+        probe.resolve_path(probe.storage.scorer_path),
+        Path(probe.trust_db_path(create_parent=False)),
+    ]
+    for path in effective:
+        assert preflight._is_within(path, probe_root), path
+    assert not outside.exists()
+
+
+def test_functional_doctor_cannot_contaminate_a_fresh_experiment_directory(tmp_path):
+    """Regression: a real doctor writes SQLite files; preflight must isolate them."""
+    run_dir = tmp_path / "active" / "pilot"
+    config = Config(
+        storage={"root": str(run_dir)},
+        embedding={"backend": "hashing", "device": "cpu"},
+        index={"backend": "numpy"},
+        generation={"backend": "stub"},
+        security={"enabled": True, "verifier": "lexical"},
+    )
+
+    result = preflight.functional_doctor(config, timeout=120.0,
+                                         preflight_storage_root=tmp_path / "preflight")
+    isolation = result["storage_isolation"]
+
+    assert isolation["schema"] == preflight.PREFLIGHT_STORAGE_SCHEMA
+    assert isolation["intended_root"] == str(run_dir)
+    assert Path(isolation["probe_root"]).resolve() != run_dir.resolve()
+    assert isolation["cleaned"] is True
+    assert not Path(isolation["probe_root"]).exists()
+    assert not run_dir.exists(), "preflight must not create the experiment directory"
+    assert list((tmp_path / "preflight").iterdir()) == []
+    # A fresh experiment directory that a preflight has not touched is a valid
+    # starting point for the runner's output-state guard.
+    assert stream.check_output_state(run_dir, resume=False) is None
