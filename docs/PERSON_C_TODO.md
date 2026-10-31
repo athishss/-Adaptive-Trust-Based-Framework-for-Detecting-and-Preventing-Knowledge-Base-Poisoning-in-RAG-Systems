@@ -129,6 +129,13 @@ rows are named but unimplemented.
 
 ## P2 - the metrics quietly report the optimistic answer
 
+> **Historical note (2026-10-31).** The current implementation does **not**
+> expose `attack_success_rate`. It reports `poison_exposure_rate` and
+> `poison_citation_rate` over explicit eligible-attempt denominators, and
+> emits `answer_level_asr = null` with status `NOT MEASURED` because no
+> validated attack-specific answer criterion exists. The code below documents
+> the older defect, not the current API.
+
 `evaluation/metrics.py` returns `0.0` when the denominator is zero:
 
 ```python

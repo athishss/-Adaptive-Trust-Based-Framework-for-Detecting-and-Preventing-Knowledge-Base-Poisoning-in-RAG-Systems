@@ -10,6 +10,18 @@ The deterministic offline smoke test (`scripts/run_chronological_eval.py`) and
 the mini trust stream (`scripts/run_trust_stream.py --config
 config/default.yaml ...`) are separate, clearly labelled scopes.
 
+> **Status: NOT EXECUTED.** This document is a runbook, not a report of results.
+>
+> * The configured scope is a **200,000-passage / 500-query subset**, not the
+>   full 2.68M-passage Natural Questions corpus.
+> * No real-model run has been completed in this repository; there are no
+>   real-model results to report.
+> * Answer-level ASR is **not measured** by the trust-stream runner. It reports
+>   retrieval, poison exposure and poison citation only; those are not answer
+>   success.
+> * A real attack × baseline evaluation matrix on Natural Questions remains
+>   future work; only the fixture-smoke matrix exists here.
+
 ---
 
 ## 1. What the run establishes
@@ -26,7 +38,7 @@ With the commands below you can measure, on real passages:
 * the cost side: LLM calls per query, verifier latency and queue behaviour.
 
 It does **not** by itself produce a full attack × baseline ASR matrix on NQ.
-The fixture matrix (`runs/smoke_matrix`) is the only matrix runner in this
+The fixture matrix (`runs/final_smoke`) is the only matrix runner in this
 repository. A real-NQ matrix would need a labelled-row generator and a
 real-data runner; that remains a limitation (see §8).
 
@@ -240,7 +252,8 @@ Read `metrics.json` before making any claim. In particular:
 * `verifier_mode` and `llm` must say what actually ran.
 
 The script does **not** compute an attack-success rate; it reports exposure and
-citation of the injected documents. Do not call `poison_citation_rate` ASR.
+citation of the injected documents. Answer-level ASR is **NOT MEASURED** by
+this runner. Do not call `poison_citation_rate` ASR.
 For a real ASR matrix, build a runner that scores generated answers against the
 gold answer and compares all eight baselines on the same queries.
 

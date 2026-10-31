@@ -25,7 +25,7 @@ attacks/baselines/evaluation) now run through one pipeline.
 
 ## Quick start (offline, no model downloads)
 
-Requires Python 3.10+ (validated here on CPython 3.13.3, Windows). The core
+Requires Python 3.10+ (validated here on CPython 3.13.3, Windows 11). The core
 install has no GPU, network or model dependency.
 
 ```bash
@@ -49,15 +49,20 @@ trace-rag doctor
 
 `DEGRADED` is deliberate: the trust ledger, verifier, policy and queue are
 active, but the offline embedder/LLM and lexical verifier are documented
-fallbacks. It becomes `PROTECTED` only with the NLI verifier, persistent ledger,
-queue and real backends. `UNPROTECTED` means no defence is active and the run
-must not be labelled RAGLedger.
+fallbacks. `doctor` does not merely read the YAML: it encodes a probe vector
+(checking dimensions, finite values and a non-zero norm), asks the generator for
+a two-token completion, runs one NLI inference on a fixed premise, queries the
+persistent ledger and reads the queue. `PROTECTED` requires every one of those
+probes to pass; a configured model name alone can never earn it.
+`probe_timeout_s` bounds the network probes (default 10 s), and no probe starts a
+service or downloads weights. `UNPROTECTED` means no defence is active and the
+run must not be labelled RAGLedger.
 
 Run the deterministic end-to-end smoke matrix (7 attacks × 8 baselines × 1 seed,
 56 cases):
 
 ```bash
-python scripts/run_chronological_eval.py --out runs/smoke_matrix
+python scripts/run_chronological_eval.py --out runs/final_smoke
 ```
 
 Run the component demos:
@@ -79,7 +84,7 @@ python scripts/run_trust_stream.py \
   --config config/default.yaml \
   --corpus examples/mini_corpus.jsonl \
   --queries examples/mini_questions.json \
-  --steps 12 --targets 2 --out runs/trust_stream_mini
+  --steps 12 --targets 2 --out runs/final_trust_stream
 ```
 
 ### What the smoke matrix covers
@@ -224,6 +229,7 @@ security:
   refute_threshold: 0.10
   max_source_mass: 0.6
   counterfactual_influence: true
+  probe_timeout_s: 10
 
 trust:
   quarantine_refutations: 2
@@ -252,7 +258,7 @@ trace-rag --config config/default.yaml query "Who designed the Eiffel Tower?" \
 
 ## Verified results (smoke scope only)
 
-Environment: Windows, CPython 3.13.3, no GPU, no `faiss-cpu`, `torch`,
+Environment: Windows 11, CPython 3.13.3, no GPU, no `faiss-cpu`, `torch`,
 `transformers`, `pyarrow` or `matplotlib`. Configuration
 `config/default.yaml` (hashing embeddings, numpy index, stub LLM, lexical
 verifier, heuristic scorer).
@@ -264,46 +270,56 @@ pytest -q
 pytest -q --cov=trace_rag --cov-report=term-missing
 ```
 
-Result: **235 passed, 6 skipped**. Coverage: **80%** overall. Skips are optional backends:
-`faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3). Full logs:
-[`baseline_logs/`](baseline_logs/).
+Result: **244 passed, 6 skipped**. Coverage: **79%** overall (5688 statements).
+The suite runs with `ResourceWarning` visible; no unclosed SQLite connections
+remain. Skips are optional backends: `faiss-cpu` (2 tests), `torch` (1),
+`matplotlib` (3). Full logs: [`baseline_logs/`](baseline_logs/).
 
 ### Chronological smoke matrix
 
-56/56 cases completed, no failures. RAGLedger results by attack (ASR lower is
-better; precision/recall are document-level detection):
+56/56 cases completed, no failures. RAGLedger results by attack. *Poison
+exposure* is the share of eligible target attempts whose targeted poison reached
+the generation context; *poison citation* is the share cited by the answer.
+Neither is answer success. **Answer-level ASR is NOT MEASURED** because this
+harness has no validated, attack-specific criterion for the attacker's intended
+answer.
 
-| Attack | ASR | Precision | Recall | Clean FPR | LLM calls |
-|---|---:|---:|---:|---:|---:|
-| entity_swap | 0.000 | 1.000 | 0.333 | 0.000 | 123 |
-| negation | 0.333 | 0.000 | 0.000 | 0.000 | 123 |
-| instruction_injection | 0.417 | 0.000 | 0.000 | 0.000 | 129 |
-| slow_burn | 0.000 | 0.500 | 0.167 | 0.020 | 131 |
-| hit_and_run | 0.167 | 0.500 | 0.167 | 0.026 | 115 |
-| signal_evasion | 0.167 | 0.500 | 0.167 | 0.026 | 137 |
-| framing | 0.333 | 0.000 | 0.000 | 0.000 | 123 |
+| Attack | Eligible attempts | Exposed (rate) | Cited (rate) | Precision | Recall | Clean FPR | LLM calls |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| entity_swap | 12 | 0 (0.000) | 0 (0.000) | 1.000 | 0.333 | 0.000 | 123 |
+| negation | 12 | 4 (0.333) | 4 (0.333) | 0.000 | 0.000 | 0.000 | 123 |
+| instruction_injection | 12 | 5 (0.417) | 3 (0.250) | 0.000 | 0.000 | 0.000 | 129 |
+| slow_burn | 12 | 0 (0.000) | 0 (0.000) | 0.500 | 0.167 | 0.020 | 131 |
+| hit_and_run | 12 | 2 (0.167) | 2 (0.167) | 0.500 | 0.167 | 0.026 | 115 |
+| signal_evasion | 12 | 2 (0.167) | 2 (0.167) | 0.500 | 0.167 | 0.026 | 137 |
+| framing | 12 | 4 (0.333) | 4 (0.333) | 0.000 | 0.000 | 0.000 | 123 |
 
-Mean ASR across the seven attacks: RAGLedger **0.202**, no-defence **0.929**.
-Mean clean FPR: RAGLedger **0.010**. These numbers show the harness and the
-lifecycle work; they do **not** establish that RAGLedger detects most attacks.
-`negation`, `instruction_injection` and `framing` are still largely missed with
-the lexical verifier, and one correct `newcomer` passage was quarantined in two
-cases. Treat this as a regression baseline, not a result.
+Mean poison exposure across the seven attacks: RAGLedger **0.202**, no-defence
+**0.929**; mean poison citation: RAGLedger **0.179**, no-defence **0.643**.
+Mean clean FPR: RAGLedger **0.010**. The previously published "ASR 0.202" was
+this exposure rate, not an answer-success rate; it is relabelled here. These
+numbers show the harness and the lifecycle work; they do **not** establish that
+RAGLedger detects most attacks. `negation`, `instruction_injection` and
+`framing` still reach the context with the lexical verifier, and one correct
+`newcomer` passage was quarantined in two cases. Treat this as a regression
+baseline, not a result.
 
 The full table, per-case metrics and streams are in
-[`runs/smoke_matrix/`](runs/smoke_matrix/) (`results.json`, `results.csv`,
+[`runs/final_smoke/`](runs/final_smoke/) (`results.json`, `results.csv`,
 `summary.md`, `cases/`).
 
 ### Trust-stream smoke
 
-On the bundled mini corpus (`--steps 12 --targets 2`), the lexical run had
-`poison_retrieved_rate=1.0`, `poison_citation_rate=0.0`,
+On the bundled mini corpus (`--steps 12 --targets 2`), the lexical run had 6
+eligible attack attempts, `poison_retrieved_rate=1.0`,
+`poison_exposure_rate=0.0`, `poison_citation_rate=0.0`,
 `clean_false_quarantine=0`, `poison_quarantined=0`, and 22 NEUTRAL
-verifications. The poison was never cited, but it was not quarantined: with the
+verifications. The poison was retrieved but withheld from the generation
+context and never cited; it was **not** detected or quarantined. With the
 lexical fallback the only contradicting copy of the claim was a near-duplicate
 from the same family, so independence rules excluded it. This is an honest
-limitation, not a success. See
-[`runs/trust_stream_check/metrics.json`](runs/trust_stream_check/metrics.json).
+limitation, not a success, and `answer_level_asr` is `NOT MEASURED`. See
+[`runs/final_trust_stream/metrics.json`](runs/final_trust_stream/metrics.json).
 
 ### Demonstration of the full lifecycle
 
@@ -312,13 +328,16 @@ pipeline: poison ingestion → MEDIUM/HIGH escalation → verification → trust
 update → quarantine → later retrieval exclusion. `tests/test_trust_plan_gaps.py`
 covers queue drain, background worker, administrator review, source/family
 propagation and remediation. `tests/test_security_wiring.py` asserts the secure
-default and the UNPROTECTED baseline report.
+default, the UNPROTECTED baseline report and every functional readiness probe
+(embedding, generation, NLI, ledger, queue).
 
 ---
 
 ## Real-model Natural Questions experiment
 
-Not run here. The exact prerequisites and commands are in
+Not run here. The protocol targets a **200,000-passage / 500-query subset**, not
+the full 2.68M-passage corpus, and it is not a completed experiment. The exact
+prerequisites and commands are in
 [`docs/REAL_MODEL_EVAL.md`](docs/REAL_MODEL_EVAL.md). Short version:
 
 ```bash
@@ -334,23 +353,28 @@ python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
 ```
 
 The NLI verifier downloads `cross-encoder/nli-deberta-v3-base` on first use.
-A real run is only reportable when `trace-rag doctor` says `PROTECTED`, the
-verifier mode is `nli`, and the run has a persistent trust database. Dataset
+A real run is only reportable when `trace-rag doctor` says `PROTECTED` after its
+functional probes pass, the verifier mode is `nli`, and the run has a persistent
+trust database. The trust-stream runner reports retrieval, exposure and citation
+of the injected documents; it does **not** compute answer-level ASR. Dataset
 licensing and citation requirements are in `docs/REAL_MODEL_EVAL.md`.
 
 ---
 
 ## Known limitations
 
-* **No real-model or full-dataset run has been performed here.** No ASR,
-  detection or cost claim in this repository comes from Contriever, an 8B LLM,
-  DeBERTa NLI or full Natural Questions.
+* **No real-model or full-dataset run has been performed here.** No poison
+  exposure, citation, answer-level ASR, detection or cost claim in this
+  repository comes from Contriever, an 8B LLM, DeBERTa NLI or full Natural
+  Questions.
 * The lexical verifier cannot adjudicate a one-against-one contradiction
   between equally trusted sources. It withholds both rather than choosing, but
   repeated conflict can still quarantine a correct passage; 1–2.6% clean FPR
   was observed in three smoke cases.
 * `negation`, `instruction_injection` and `framing` evade the cheap signals and
-  the lexical verifier often enough to leave ASR above zero (0.33–0.42).
+  the lexical verifier often enough to leave poison exposure at 0.33–0.42.
+  Answer-level ASR is not measured, so this is not evidence that answers were
+  successfully manipulated.
 * The smoke corpus is trivially separable; all signals can separate the toy
   poison. It is unsuitable for measuring detection quality.
 * Optional real backends (`faiss`, `torch`, `transformers`, `pyarrow`,
@@ -361,7 +385,8 @@ licensing and citation requirements are in `docs/REAL_MODEL_EVAL.md`.
   on labelled rows first.
 * There is no real-NQ attack/baseline matrix runner yet. The chronological
   matrix is fixture-only; `run_trust_stream.py` is the available real-data
-  end-to-end path.
+  end-to-end path, and it reports exposure/citation rather than answer-level
+  ASR.
 * The repository still contains historical Person A/B handover documents whose
   statements may predate the integration. Code, README and the engineering
   report are authoritative.

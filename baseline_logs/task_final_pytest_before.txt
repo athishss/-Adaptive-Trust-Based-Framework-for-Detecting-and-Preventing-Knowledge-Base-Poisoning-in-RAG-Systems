@@ -1,0 +1,280 @@
+........................................................................ [ 30%]
+........................................................................ [ 60%]
+........................................................................ [ 90%]
+..........sss.........                                                   [100%]
+============================== warnings summary ===============================
+tests/test_cli_and_config.py::test_cli_train_scorer
+  C:\Python313\Lib\inspect.py:3063: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168C3893A60>
+    params = OrderedDict((param.name, param) for param in parameters)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8ED40>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E4D0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8EE30>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8EF20>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F010>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F100>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestTrustPolicy::test_high_band_applies_passive_penalty
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:666: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F1F0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F2E0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168C277DC60>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E5C0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E3E0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E020>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E2F0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E6B0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8EB60>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E200>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D210>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DE40>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8CF40>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E7A0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DC60>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D990>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DD50>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8C8B0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D6C0>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D300>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust.py::TestLOOInfluence::test_max_redundant_coverage_is_configurable
+  C:\Python313\Lib\logging\__init__.py:197: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8CE50>
+    def _is_internal_frame(frame):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168C3893100>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168C3892F20>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168C3893010>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DF30>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E110>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D120>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DA80>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D5D0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D030>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_outC:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8EA70>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F3D0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F4C0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F5B0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F6A0>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8F790>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Lib\site-packages\_pytest\unraisableexception.py:33: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8E980>
+  gc.collect()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8DB70>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D8A0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D3F0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8D7B0>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_trust_plan_gaps.py::TestB4AdminReview::test_administrator_recovery_is_the_only_way_out
+  C:\Users\athis\roblox-groupfinder\RAGLedger\src\trace_rag\trust\ledger.py:598: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x00000168D4B8CD60>
+    self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+235 passed, 6 skipped, 42 warnings in 7.11s

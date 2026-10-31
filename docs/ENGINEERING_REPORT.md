@@ -1,52 +1,52 @@
 # RAGLedger engineering report
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
-**Audit date:** 2026-10-23
-**Environment:** Windows 10, CPython 3.13.3, no GPU; core dependencies only
-(numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML). Optional backends
-`faiss-cpu`, `torch`, `transformers`, `pyarrow` and `matplotlib` are **not
-installed**.
-**Scope:** integration audit, repairs, deterministic offline verification, and a
-runbook for the real-model experiment. No real-model run was performed.
+**Audit date:** 2026-10-31
+**Code commit under test:** `9b8c54173b9d40847b7e6ac1b1b03ada1869e4c6`
+**Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
+dependencies only (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML
+6.0.3, pytest 9.1.1, pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`,
+`transformers`, `pyarrow` and `matplotlib` are **not installed**.
+**Scope:** measurement correctness, functional model-readiness checks, SQLite
+lifecycle reliability, documentation reconciliation, and regeneration of the
+offline evidence. No security-policy thresholds were changed.
 
 ---
 
 ## A. Executive summary
 
-The repository began as three partially integrated workstreams. Person A's
-pipeline was functional and its tests passed, but the documented end-to-end
-entry points did not all execute:
+The integrated system was already runnable at smoke scale, but four claims were
+not trustworthy enough to hand over:
 
-* `scripts/run_trust_stream.py` failed on import because it imported
-  `zipf_queries` from a module that did not define it;
-* `evaluation/integration.py` emitted `{text, qid, t}` while the chronological
-  runner read `{query, query_id, step}`, so the documented stream entry point
-  failed with `KeyError: 'step'`;
-* the trust/robust baselines read `doc.trust.trust`, a field that does not
-  exist on `TrustSnapshot` (the contract exposes `t_eff`);
-* `PersonAPipeline.from_config()` did not attach the trust ledger, verifier or
-  policy, so the normal CLI/library path was an unprotected RAG system;
-* Person C's attacks, baselines and evaluation had no executable end-to-end
-  path (test coverage of those modules was 0%), and the default demo could not
-  demonstrate queueing, quarantine and remediation together.
+* the smoke matrix published a mean **"ASR" of 0.202**; the underlying numerator
+  was *poison reaching the generation context*, not a manipulated answer. It is
+  now labelled **poison exposure rate**, with citation reported separately and
+  **answer-level ASR explicitly `NOT MEASURED`**;
+* `doctor` could report `PROTECTED` from configuration and metadata checks
+  without proving that the generator or NLI model could perform inference;
+* abandoned SQLite connections emitted `ResourceWarning: unclosed database`
+  during the test suite;
+* the README and report described the earlier 235-test run and the old ASR
+  label, so they no longer matched the code.
 
-After the repairs:
+After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite | **235 passed, 6 skipped** |
-| Coverage | **80%** overall |
+| Full test suite | **244 passed, 6 skipped** in 31.83 s |
+| Coverage | **79%** (5688 statements, 1171 missed) |
 | Python compilation | `compileall` exit 0 |
+| ResourceWarnings | **0** with `-W always::ResourceWarning` |
 | Chronological matrix | **56/56 cases**, 0 failures |
-| `demo_end_to_end.py` | exit 0 |
-| `demo_person_b.py` | exit 0, 3 poison passages quarantined, later retrieval clean |
-| `run_trust_stream.py` (mini, lexical) | exit 0, no false quarantine, **no poison quarantine** (honest limitation) |
-| `trace-rag doctor` | `DEGRADED` (controls active; offline models) |
+| `demo_person_b.py` | exit 0; 3 poison passages quarantined; later context clean |
+| `run_trust_stream.py` (mini, lexical) | exit 0; 6 eligible attempts; retrieved 1.0; **exposure 0.0**, citation 0.0; no quarantine |
+| `trace-rag doctor` | `DEGRADED`; embedding/generation/NLI fallbacks, ledger and queue ready |
+| Answer-level ASR | **NOT MEASURED** (no validated attack-specific answer criterion) |
 | Real-model NQ run | **not run** |
 
-The system is now integrated and reproducible at smoke scale. It is **not** a
-validated benchmark result: the lexical verifier misses several attack families,
-one clean passage was falsely quarantined in two smoke cases, and no real-model
+The system remains reproducible at smoke scale. It is **not** a validated
+benchmark result: the lexical verifier still misses several attack families,
+one clean passage is falsely quarantined in two smoke cases, and no real-model
 or full-dataset experiment has been executed.
 
 ---
@@ -60,64 +60,64 @@ or full-dataset experiment has been executed.
 | `config/default.yaml` | Added `time`, `security` and `trust` sections; security enabled by default with lexical verifier, fail-closed MEDIUM handling, queue and evidence thresholds. |
 | `config/nq_gpu.yaml` | Added the same security/trust surface with `verifier: nli`, persistent ledger, queue and production quarantine thresholds. |
 | `config/full_nq.yaml` | Same real-model security configuration for the full-corpus IVF-PQ setup. |
-| `scripts/demo_end_to_end.py` | Now explicitly builds an **UNPROTECTED** Person A demo (`secure=False`) and prints that mode, so it cannot be mistaken for the protected system. |
-| `scripts/demo_person_b.py` | Reuses the security stack attached by `from_config` instead of opening a second ledger; adds a clearly labelled scripted verifier solely to exercise queue → refute → quarantine → remediation. |
-| `scripts/run_trust_stream.py` | Imports `zipf_queries` from its real home; configures trust via `config` rather than replacing the attached ledger; refuses to run if the stack did not attach; makes figures optional so a missing matplotlib cannot lose a completed run. |
+| `config.py` | Added `probe_timeout_s` (default 10 s, bounded 0–120 s) for the functional readiness probes. |
+| `scripts/demo_end_to_end.py` | Explicitly builds an **UNPROTECTED** Person A demo (`secure=False`) and prints that mode. |
+| `scripts/demo_person_b.py` | Reuses the attached security stack; scripted verifier exercises queue → refute → quarantine → remediation. |
+| `scripts/run_trust_stream.py` | Imports `zipf_queries` from its real home; reuses the attached stack; figures optional; its metrics note now states that answer-level ASR is **NOT MEASURED** and that exposure/citation are not answer success. |
 | `scripts/run_chronological_eval.py` | **New** supported matrix entry point (7 attacks × 8 baselines, deterministic fixture, machine-readable outputs). |
 
 ### Core integration and time model
 
 | File | Change |
 |---|---|
-| `src/trace_rag/config.py` | Added `TimeConfig`, `TrustSettings` and `SecurityConfig`; added `Config.trust_db_path()`; validation for quarantine/reject and threshold ordering. |
-| `src/trace_rag/utils/clock.py` | **New** `Clock` protocol, `SystemClock`, deterministic `LogicalClock`, `build_clock`. All simulation timestamps now come from one place. |
-| `src/trace_rag/contracts.py` | Added `TrustSnapshot.blocked`, `VerificationResult.evidence_doc_ids`/`error`, and the optional `ChatLLM` protocol. |
-| `src/trace_rag/security.py` | **New** `attach_security()` plus the `PROTECTED`/`DEGRADED`/`UNPROTECTED` health report; installs ledger, verifier, policy and queue. |
-| `src/trace_rag/pipeline.py` | Secure by default; maps `secure=False` to an honest UNPROTECTED health report; passes explicit timestamps; drains the queue after each answer and merges newly quarantined ids. |
-| `src/trace_rag/cli.py` | Added `doctor` (control/backend report) and `smoke` (matrix) subcommands; query warns when the run is not protected. |
-| `src/trace_rag/ingestion/pipeline.py` | Ingestor accepts the shared clock and uses it for default timestamps. |
-| `src/trace_rag/retrieval/retriever.py` | Defence in depth: drops documents whose snapshot is QUARANTINED/REJECTED even if the provider's blocked list is stale; reports stale-index ids and raises when every candidate is missing. |
-| `src/trace_rag/generation/prompts.py` | Role-separated `build_answer_messages`/`build_single_doc_messages`, XML-delimited evidence, escaping of `</document`, explicit untrusted-data policy. |
-| `src/trace_rag/generation/llm.py` | `generate_chat` for stub/OpenAI-compatible/Ollama/HF backends; flattened fallback via `generate_with_messages`; stub ignores question-only sentences when extracting claims. |
-| `src/trace_rag/generation/grounded.py` | Drops blocked passages before generation; records excluded ids and timestamps; uses chat roles when available. |
-| `src/trace_rag/trust/ledger.py` | Injected clock; SQLite busy timeout; `trust_observations` evidence deduplication; `record_observation` returns whether the evidence was new. |
-| `src/trace_rag/trust/policy.py` | Full state machine: blocked-status guard, fail-closed MEDIUM, deduplicated trust updates, inline/queued shared `_apply_outcome`, unified quarantine remediation, per-document decision reasons. |
-| `src/trace_rag/trust/queue.py` | Bounded FIFO dedupes by doc; records errors and malformed results as NEUTRAL with `error`; evidence-keyed ledger updates. |
-| `src/trace_rag/trust/verifier.py` | Evidence recording, error handling, counterfactual influence, independent-source filtering, topical refutation gate, person-name conflict detection, trust-aware refutation, lexical/NLI aggregation. |
+| `utils/clock.py` | **New** `Clock` protocol, `SystemClock`, deterministic `LogicalClock`, `build_clock`. |
+| `contracts.py` | Added `TrustSnapshot.blocked`, `VerificationResult.evidence_doc_ids`/`error`, and the optional `ChatLLM` protocol. |
+| `security.py` | **New** `attach_security()` plus the `PROTECTED`/`DEGRADED`/`UNPROTECTED` health report. **This pass:** embedding probe checks shape, configured dimensionality, finite values and non-zero norm; generation probe performs a two-token completion (OpenAI-compatible `/chat/completions`, Ollama `/api/generate`, or in-process HF `generate`) after metadata checks; NLI probe runs one fixed inference and validates label/score; `research_ready` requires earned `PROTECTED`; custom verifiers report `unverified`, not false success. |
+| `pipeline.py` | Secure by default; `secure=False` maps to an honest UNPROTECTED report. **This pass:** construction closes the store if any builder step fails; `close()` is idempotent and always closes the security stack, store and answer log. |
+| `cli.py` | Added `doctor` (control/backend report) and `smoke` (matrix) subcommands; query warns when not protected. |
+| `ingestion/pipeline.py` | Ingestor accepts the shared clock and uses it for default timestamps. |
+| `retrieval/retriever.py` | Defence in depth: drops QUARANTINED/REJECTED documents even if the blocked cache is stale; reports stale-index ids and raises when every candidate is missing. |
+| `generation/prompts.py` | Role-separated `build_answer_messages`/`build_single_doc_messages`, XML-delimited evidence, escaping of `</document`, explicit untrusted-data policy. |
+| `generation/llm.py` | `generate_chat` for stub/OpenAI-compatible/Ollama/HF backends; flattened fallback via `generate_with_messages`; stub ignores question-only sentences when extracting claims. |
+| `generation/grounded.py` | Drops blocked passages before generation; records excluded ids and timestamps; uses chat roles when available. |
+| `trust/ledger.py` | Injected clock; SQLite busy timeout; evidence deduplication; **this pass:** `close()` is idempotent, failed construction closes the connection, and a finalizer is a last-resort cleanup. |
+| `trust/policy.py` | Full state machine: blocked-status guard, fail-closed MEDIUM, deduplicated trust updates, inline/queued shared `_apply_outcome`, unified quarantine remediation. |
+| `trust/queue.py` | Bounded FIFO dedupes by doc; records errors and malformed results as NEUTRAL with `error`; evidence-keyed ledger updates. |
+| `trust/verifier.py` | Evidence recording, counterfactual influence, independent-source filtering, topical refutation gate, person-name conflict detection, trust-aware refutation, lexical/NLI aggregation. **This pass:** `nli_probe()` exercises the loaded cross-encoder and validates the outcome contract. |
+| `ingestion/provenance.py` | **This pass:** idempotent close, failed-constructor cleanup, finalizer; no behaviour change to ingestion. |
+| `provenance/answer_log.py` | **This pass:** idempotent close, failed-constructor cleanup, finalizer; no change to recorded answers. |
 
 ### Person C: attacks, baselines, evaluation
 
 | File | Change |
 |---|---|
-| `src/trace_rag/attacks/poisoned_rag.py` | Deterministic entity-swap, negation and instruction-injection generators; `make_poisoned_document`; stable serialization. |
-| `src/trace_rag/attacks/adaptive.py` | `slow_burn`, `hit_and_run`, `framing`, `signal_evasion`, attack event serialization and schedule helpers. |
-| `src/trace_rag/attacks/stream.py` | Canonical query/ingestion rows, legacy adapters, `StreamContractError`, `zipf_queries`, query/ingestion schedule builders, ordering validation. |
-| `src/trace_rag/attacks/__init__.py` | Exports the full attack registry and stream API. |
-| `src/trace_rag/baselines/policies.py` | Eight baselines on one policy interface: no defence, duplicate filter, trust threshold, n-gram perplexity, TrustRAG, RobustRAG, always-on LOO; reads `t_eff`; shared `BaselineResult`. |
-| `src/trace_rag/baselines/__init__.py` | Exports the baseline registry and builders. |
-| `src/trace_rag/evaluation/chronological.py` | Stream execution over the real pipeline, per-step records, band/verification/detection/remediation metrics, JSONL/JSON outputs. |
-| `src/trace_rag/evaluation/experiment.py` | **New** fixture loader, target selection, attack schedule construction, per-baseline pipeline assembly, `execute_case`, `run_matrix`, CSV/markdown writers. |
-| `src/trace_rag/evaluation/integration.py` | Replaced the incompatible `{text, qid, t}` conversion with adapters over `attacks.stream` canonical rows. |
-| `src/trace_rag/evaluation/metrics.py` | Document-level detection metrics, zero-denominator-safe rates, latency percentiles, exposure/detection delays, cost/utility metrics. |
-| `src/trace_rag/evaluation/runner.py` | `EvaluationResult.details` and serialization for case artefacts. |
-| `src/trace_rag/evaluation/__init__.py` | Exports the new metrics/experiment surface. |
+| `attacks/poisoned_rag.py` | Deterministic entity-swap, negation and instruction-injection generators; `make_poisoned_document`; stable serialization. |
+| `attacks/adaptive.py` | `slow_burn`, `hit_and_run`, `framing`, `signal_evasion`, attack event serialization and schedule helpers. |
+| `attacks/stream.py` | Canonical query/ingestion rows, legacy adapters, `StreamContractError`, `zipf_queries`, schedule builders, ordering validation. |
+| `baselines/policies.py` | Eight baselines on one policy interface; reads `t_eff`; shared `BaselineResult`. |
+| `evaluation/chronological.py` | Stream execution over the real pipeline; eligibility is fixed before outcomes; exposure and citation use the same eligible-attempt denominator; answer-level ASR emitted as `None` + `NOT MEASURED`. |
+| `evaluation/metrics.py` | **This pass (verified, not rewritten):** `poison_exposure_rate(exposed, eligible_attempts)`, `poison_citation_rate(cited, eligible_attempts)`, explicit `answer_level_asr_fields`, zero-denominator `None`, detection and timing metrics. |
+| `evaluation/runner.py` | `EvaluationResult` serializes numerator/denominator for exposure, citation and answer-level ASR; defaults answer-level ASR to `NOT MEASURED`. |
+| `evaluation/experiment.py` | **New** fixture loader, attacks, per-baseline pipelines, `execute_case`, matrix, CSV/markdown. CSV includes eligible/exposed/cited counts, not a bare "ASR". |
+| `evaluation/integration.py` | Uses `attacks.stream` canonical rows. |
+| `evaluation/__init__.py` | Exports the metrics/experiment surface. |
 
 ### Tests and documentation
 
 | File | Change |
 |---|---|
-| `tests/test_chronological_smoke.py` | **New** stream adapter/contract test, Zipf test, full entity-swap lifecycle test, matrix output test. |
+| `tests/test_security_wiring.py` | **Extended this pass:** 12 readiness cases — healthy embedding, NaN/zero/wrong-dim vectors, metadata-only generator, generation failure, valid completion, NLI inference failure, valid NLI outcome, requested-NLI-to-lexical fallback, unavailable ledger, absent queue, offline backends, full PROTECTED, custom verifier unverified, and security-disabled UNPROTECTED. Mocks simulate operations, not `ready=True` flags. |
+| `tests/conftest.py` | **This pass:** autouse teardown closes any test-owned `AnswerLog`, `ProvenanceStore` or `TrustLedger`, even when an assertion fails; every close is idempotent. |
+| `tests/test_chronological_smoke.py` | Stream adapter/contract, Zipf, full entity-swap lifecycle and matrix output tests. |
 | `tests/test_person_c.py` | Attack registry, baselines, metrics, statistics and experiment executor coverage. |
-| `tests/test_trust.py` | Added evidence-deduplication and logical-clock tests; existing trust/policy/verifier coverage. |
+| `tests/test_trust.py` | Evidence deduplication, logical clock, trust/policy/verifier coverage. |
 | `tests/test_trust_plan_gaps.py` | Queue drain, background worker, admin review, trust propagation and plot tests. |
-| `tests/test_verifier_nli.py` | NLI/lexical false-positive regressions: off-topic, silence-as-conflict, less-trusted witness, equal-trust contradiction, entity swap. |
-| `tests/test_security_wiring.py` | **New** secure-by-default wiring, UNPROTECTED baseline report, fail-closed MEDIUM test. |
-| `tests/test_generation.py` | Added chat-role separation, document-block escaping, and blocked-passage filtering tests. |
-| `tests/conftest.py` | Clarified that the Person A fixture is intentionally UNPROTECTED; the secure default is covered separately. |
-| `README.md` | Rewritten for the integrated system: setup, architecture, config, verified smoke results, limitations, real-model links. |
-| `docs/REAL_MODEL_EVAL.md` | **New** exact NQ/GPU runbook and acceptance criteria. |
-| `docs/ENGINEERING_REPORT.md` | This report. |
-| `"tall pytest pytest-cov"` | Deleted tracked junk file (a captured terminal log with no code value) from the original commit. |
+| `tests/test_verifier_nli.py` | NLI/lexical false-positive regressions. |
+| `tests/test_generation.py` | Chat-role separation, document-block escaping, blocked-passage filtering. |
+| `README.md` | Rewritten for the integrated system; **this pass:** 244/79 evidence, functional readiness explanation, exposure/citation table, NOT-MEASURED ASR, current limitation wording. |
+| `docs/REAL_MODEL_EVAL.md` | **New** NQ/GPU runbook; **this pass:** explicit status box (subset, not full corpus, not executed, answer ASR not measured). |
+| `docs/ENGINEERING_REPORT.md` | This report, regenerated from the current execution logs. |
+| `"tall pytest pytest-cov"` | Deleted tracked junk file from the original commit. |
 
 ---
 
@@ -125,28 +125,30 @@ or full-dataset experiment has been executed.
 
 | # | Severity | Defect | Root cause | Fix | Regression test |
 |---|---|---|---|---|---|
-| 1 | Critical | Documented stream adapters emitted `{text, qid, t}` but `run_stream` required `{query, query_id, step}`; entry point failed with `KeyError: 'step'`. | Two independently invented schemas with no shared contract. | Canonical rows in `attacks/stream.py`; all conversions go through `as_query_row`/`as_ingestion_row`; required-field validation. | `test_stream_adapters_accept_legacy_and_canonical_rows` |
-| 2 | Critical | `run_trust_stream.py` crashed on import: `zipf_queries` did not exist in `attacks/stream.py`. | Person C function referenced before implementation/export. | Implemented deterministic Zipf sampler and exported it. | `test_zipf_queries_is_deterministic_and_returns_known_questions` |
-| 3 | High | `trust_threshold_filter` and `RobustRAGPolicy` read `doc.trust.trust`, which `TrustSnapshot` does not define. | Baselines written against an older trust object. | Baselines read the contract field `t_eff`; registry test asserts the baselines are distinct. | `test_trust_and_robust_baselines_are_distinct` |
-| 4 | Critical | `PersonAPipeline.from_config()` built a `NullTrustProvider` and `DefaultPolicy`; the CLI was unprotected despite shipping a security module. | Security was opt-in wiring, not part of the factory. | `attach_security()` runs by default; `secure=False` is the explicit baseline; health report and CLI warn. | `test_default_config_enables_the_security_stack`, `test_explicit_unprotected_baseline_is_reported_as_unprotected` |
-| 5 | High | Queued (HIGH-band) refutations updated trust but never triggered the quarantine callback, so earlier answers were not remediated. | Inline and queued paths duplicated the state-machine logic and diverged. | Both call shared `_apply_outcome`; `QueueDrainReport` carries newly quarantined ids; policy invokes remediation once. | `test_high_band_is_queued_and_drained_off_path`, `test_queued_refutation_triggers_the_same_remediation_callback` |
-| 6 | High | MEDIUM + NEUTRAL was treated as "benefit of the doubt" and used in the answer; a missing verifier also failed open. | Policy conflated "unresolved" with "clean". | Default `medium_neutral_action=exclude`; missing verifier fails closed unless the research flag is set. | `test_medium_band_without_verifier_fails_closed`, `test_medium_band_can_fail_open_only_when_configured` |
-| 7 | High | Lexical verifier counted an off-topic passage as a full-confidence contradiction. | No topical floor before refutation. | `min_refute_topical_overlap` gate in both lexical and NLI paths. | `test_off_topic_passage_cannot_refute`, `test_lexical_mode_also_refuses_to_refute_off_topic` |
-| 8 | High | A passage that merely omitted the designer's name was treated as a rival named answer, refuting and eventually quarantining correct content. | `name_conflict` tested absence of the target name instead of presence of a rival person. | Person-position detection including agent phrases (`by/of`); silence is neutral. | `test_lexical_silence_is_not_a_rival_answer` |
-| 9 | Medium | A less-trusted fresh source could refute a more-established target source. | Refutation ignored relative source trust. | `_may_outrank` gate: equal trust may refute; strictly lower trust may not. | `test_less_trusted_source_cannot_refute_a_trusted_target`, `test_equal_trust_source_can_still_refute` |
-| 10 | High | A quarantined document could reach the generator if a caller assembled the context list itself. | Policy was the only enforcement point. | `GroundedGenerator` filters blocked snapshots and records them as excluded. | `test_generator_never_uses_a_quarantined_passage` |
-| 11 | High | Retrieved passages and system policy were flattened into one prompt string, so in-context instructions could act as policy. | Prompt-only LLM interface. | `build_answer_messages` keeps policy in `system` and evidence in `user`; backends implement `generate_chat`; flattened fallback retains delimiters and warnings. | `test_chat_prompt_keeps_policy_and_evidence_in_separate_roles`, `test_evidence_cannot_close_its_own_document_block` |
-| 12 | Medium | The ledger counted the same verification evidence twice on retries/duplicate queue entries. | No idempotency key on observations. | `trust_observations` unique `(doc_id, evidence_key)`; `record_observation` returns False for duplicates. | `test_duplicate_evidence_key_is_idempotent`, `test_new_evidence_key_counts_as_a_new_observation` |
-| 13 | Medium | Simulations read the wall clock in trust decay, bursts and source age, so runs were not reproducible. | `time.time()` calls scattered through ledger/ingestor. | Injected `Clock`; logical mode maps step → `epoch + step*seconds`. | `test_logical_clock_makes_snapshots_deterministic` |
-| 14 | Medium | Zero-denominator rates returned fake `0.0`, hiding "not measured" as "perfect". | Direct division in metrics. | `_ratio` returns `None`; summary renders `None` explicitly. | `test_metrics_and_zero_denominators` |
-| 15 | Medium | `demo_person_b.py` and `run_trust_stream.py` opened a second ledger on the same SQLite file after `from_config` had already attached one, producing `database is locked`. | Scripts re-wired components instead of reusing the factory stack. | Both scripts reuse `pipeline.security`/`pipeline.trust_provider`; `run_trust_stream` refuses to run unprotected. | Verified by both scripts exiting 0 (`baseline_logs/`) |
+| 1 | Critical | Documented stream adapters emitted `{text, qid, t}` but `run_stream` required `{query, query_id, step}`. | Two independently invented schemas. | Canonical rows in `attacks/stream.py`; all conversions through adapters. | `test_stream_adapters_accept_legacy_and_canonical_rows` |
+| 2 | Critical | `run_trust_stream.py` crashed on import: `zipf_queries` did not exist. | Function referenced before implementation/export. | Implemented deterministic Zipf sampler and exported it. | `test_zipf_queries_is_deterministic_and_returns_known_questions` |
+| 3 | High | Trust/robust baselines read `doc.trust.trust`, which `TrustSnapshot` does not define. | Baselines written against an older object. | Baselines read `t_eff`. | `test_trust_and_robust_baselines_are_distinct` |
+| 4 | Critical | `from_config()` built a null trust provider and `DefaultPolicy`. | Security was opt-in wiring. | `attach_security()` runs by default; `secure=False` is explicit. | `test_default_config_enables_the_security_stack` |
+| 5 | High | Queued refutations updated trust but never triggered quarantine remediation. | Inline and queued paths duplicated logic. | Shared `_apply_outcome`; drain report carries newly quarantined ids. | `test_queued_refutation_triggers_the_same_remediation_callback` |
+| 6 | High | MEDIUM + NEUTRAL was used; missing verifier failed open. | Policy conflated unresolved with clean. | Default withhold; fail-closed missing verifier. | `test_medium_band_without_verifier_fails_closed` |
+| 7 | High | Lexical verifier treated an off-topic passage as a contradiction. | No topical floor. | `min_refute_topical_overlap` on both paths. | `test_off_topic_passage_cannot_refute` |
+| 8 | High | A passage that omitted the designer's name was treated as a rival answer. | `name_conflict` tested absence, not a rival person. | Person-position detection; silence neutral. | `test_lexical_silence_is_not_a_rival_answer` |
+| 9 | Medium | A less-trusted fresh source could refute a more-established target. | Refutation ignored relative source trust. | `_may_outrank` gate. | `test_less_trusted_source_cannot_refute_a_trusted_target` |
+| 10 | High | A quarantined document could reach generation if the caller assembled context. | Policy was the only enforcement point. | `GroundedGenerator` filters blocked snapshots. | `test_generator_never_uses_a_quarantined_passage` |
+| 11 | High | Passages and policy were flattened into one prompt string. | Prompt-only LLM interface. | Role-separated messages; backends implement `generate_chat`. | `test_chat_prompt_keeps_policy_and_evidence_in_separate_roles` |
+| 12 | Medium | Duplicate verification evidence counted twice. | No idempotency key. | `trust_observations` unique `(doc_id, evidence_key)`. | `test_duplicate_evidence_key_is_idempotent` |
+| 13 | Medium | Simulations read the wall clock. | `time.time()` scattered through ledger/ingestor. | Injected `Clock`. | `test_logical_clock_makes_snapshots_deterministic` |
+| 14 | Medium | Zero-denominator rates returned fake `0.0`. | Direct division in metrics. | `_ratio` returns `None`; explicit rendering. | `test_metrics_and_zero_denominators` |
+| 15 | Medium | Scripts opened a second ledger on the same file. | Re-wiring instead of reusing the factory stack. | Reuse `pipeline.security`; stream refuses unprotected. | Scripts exit 0 (`baseline_logs/`) |
+| 16 | **High** | The smoke table reported **ASR 0.202**; the numerator was poison reaching the generation context, not a successful answer manipulation. | One metric name covered retrieval, citation and answer success; the harness inferred more than it measured. | `EvaluationResult` now carries `eligible_attack_attempts`, `poison_exposed_attempts/rate`, `poison_cited_attempts/rate` and `answer_level_asr=None` with `NOT MEASURED`. Results were regenerated; the old number is relabelled exposure. | `test_poison_rates_use_eligible_attempts_and_hand_calculated_counts`, `test_answer_level_asr_is_explicitly_not_measured`, matrix output asserts `attack_success_rate` absent and `answer_level_asr_status == "NOT MEASURED"` |
+| 17 | **High** | `doctor` trusted model names, `/models` metadata and `nli_ready` booleans; a reachable endpoint with a broken completion or an unloaded NLI model could look research-ready. | Readiness checked configuration, not operations. | Functional probes: finite embedding, two-token completion, fixed NLI inference with label/score validation; `PROTECTED` requires all to pass; `research_ready` requires `PROTECTED`. | 12 cases in `tests/test_security_wiring.py` |
+| 18 | **Medium** | Repeated `ResourceWarning: unclosed database`; abandoned ledgers/stores/logs leaked SQLite connections. | Clearance depended on every test closing its own object; failed paths never did. | Idempotent `close()` on `TrustLedger`, `ProvenanceStore`, `AnswerLog`; failed constructors close partial connections; `pipeline.close()` closes all owned resources; finalizers are a last resort; test teardown closes leftovers. | Full suite run with `-W always::ResourceWarning` reports 0 warnings |
 
 **Residual defect, not claimed fixed:** the lexical verifier still produces
 false positives when a correct passage and a poison passage have equal source
 trust and the only supporting copy is excluded as a near-duplicate. One clean
 `newcomer` passage was quarantined in `hit_and_run` and `signal_evasion`
-(clean FPR 0.026). This is recorded in the evaluation below and in the
-limitations, not hidden.
+(clean FPR 0.026). This is recorded below, not hidden.
 
 ---
 
@@ -165,25 +167,19 @@ PersonAPipeline.from_config(config)
 
 pipeline.answer(query, query_id, step)
   ├─ TrustWeightedRetriever.retrieve
-  │    └─ score = similarity * max(t_eff, floor)^lambda; blocked docs removed
   ├─ SignalComputer.compute + scorer.score_snapshot/band
   ├─ TrustPolicy.decide
   │    ├─ LOW → context
   │    ├─ MEDIUM → CorroborationVerifier.verify
-  │    │    ├─ _extract_claim
-  │    │    ├─ _check_influence / _counterfactual_influence
-  │    │    ├─ _find_independent (different source, family, not same burst)
-  │    │    ├─ _corroborate_lexical / _corroborate_nli
-  │    │    └─ _decide → SUPPORT / REFUTE / NEUTRAL
+  │    │    ├─ _extract_claim / _check_influence / _counterfactual_influence
+  │    │    ├─ _find_independent (source, family, burst rules)
+  │    │    └─ _corroborate_lexical / _corroborate_nli → SUPPORT/REFUTE/NEUTRAL
   │    ├─ _apply_outcome → TrustLedger.record_observation
-  │    │    └─ _check_demotion → QUARANTINED
   │    ├─ HIGH → record_high_band + queue.enqueue
   │    └─ _remediate → pipeline.on_quarantine → RemediationService
-  ├─ GroundedGenerator.generate (role-separated prompt, citations, abstention)
+  ├─ GroundedGenerator.generate
   ├─ AnswerLog.record
   └─ drain_verification_queue (after the answer)
-       └─ queue.drain → verifier.verify → ledger.record_observation
-            └─ newly quarantined → _remediate
 
 evaluation.run_stream / run_chronological_eval
   ├─ Ingestor.ingest_text → ProvenanceStore
@@ -192,17 +188,62 @@ evaluation.run_stream / run_chronological_eval
   └─ metrics + per-step JSONL/JSON + summary
 ```
 
+### Readiness probes and status classification
+
+`security.py` now distinguishes three things that were previously conflated:
+
+| Concept | What it means | Where it appears |
+|---|---|---|
+| **Configuration** | The requested backends, paths, verifier mode and thresholds | `configuration_valid` |
+| **Component readiness** | Each already-constructed component passed a functional probe | `readiness_probes`, `readiness_ready` |
+| **Research readiness** | `status == PROTECTED` and every required probe passed | `research_ready` |
+
+Functional probes, all bounded and side-effect free apart from one tiny
+inference call:
+
+* **Embedding:** encode `"readiness probe"`; require shape `(1, dim)`, the
+  configured dimensionality, only finite values and a non-zero norm. `hashing`
+  is allowed to pass the operation but is reported as **fallback**.
+* **Generation:** after checking `/models` or `/api/tags` metadata, request a
+  two-token completion with a fixed harmless prompt. OpenAI-compatible and
+  Ollama responses must contain non-empty text; HF must have loaded
+  tokenizer/model and return a response. The served model and response length
+  are recorded. `stub` is **fallback**, never ready.
+* **NLI:** `CorroborationVerifier.nli_probe()` runs one fixed inference on the
+  already-loaded cross-encoder and validates that the label maps to
+  entailment/contradiction/neutral and the score is a finite probability. A
+  loaded model that crashes is **failed**, not ready. No probe downloads a
+  model.
+* **Trust ledger:** must be a `TrustLedger` with `SELECT 1` succeeding and a
+  persistent path; in-memory is fallback.
+* **Queue:** must exist, have positive capacity and be readable.
+
+Status rules:
+
+* `UNPROTECTED` — security disabled, or the ledger/policy/verifier/queue is not
+  attached, or the persistent ledger/queue probe fails.
+* `DEGRADED` — controls are attached, but a required backend is fallback,
+  unavailable or not functionally verified (including lexical instead of NLI).
+* `PROTECTED` — every required probe passed. This is the only state in which
+  `research_ready` is true.
+
+On this offline checkout `doctor` reports `DEGRADED` with embedding, generation
+and NLI fallbacks, and ledger/queue ready; `readiness_failures` is empty because
+the offline backends are documented fallbacks, not crashes.
+
 Key contracts:
 
 * `RetrievedDocument.trust` is a `TrustSnapshot`; retrieval and baselines read
-  `t_eff`, never an ad-hoc attribute.
+  `t_eff`.
 * Stream rows are canonical `{step, query_id, query}` and
   `{step, doc_id, text, source_id, ...}`; adapters accept legacy rows.
-* `VerificationResult` records `evidence_doc_ids` and `error`, so an audit can
-  see which independent passages produced a verdict and a failed backend cannot
-  grant trust.
+* `VerificationResult` records evidence ids and errors, so a failed backend
+  cannot grant trust.
 * A `QUARANTINED`/`REJECTED` snapshot is enforced at retrieval, policy and
-  generation (defence in depth).
+  generation.
+* Exposure and citation denominators are fixed to **eligible attack attempts**
+  (target queries with targeted poison ingested before the query), including
+  abstentions, generation failures and poison that was never retrieved.
 
 ---
 
@@ -217,20 +258,22 @@ python -m venv .venv
 pip install -e ".[dev]"
 
 pytest -o addopts="" -q
-pytest -o addopts="" -q --cov=trace_rag --cov-report=term
+pytest -o addopts="" -q --cov=trace_rag --cov-report=term-missing
 python -m compileall -q src scripts tests
 python scripts/check_setup.py
 ```
 
-Environment: Python 3.13.3, numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1.
-No GPU. `faiss-cpu`, `torch`, `transformers`, `pyarrow`, `matplotlib` absent.
+Environment: Python 3.13.3, Windows 11, numpy 2.5.4, scikit-learn 1.9.1,
+pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1, pytest-cov 7.1.0. No GPU.
+`faiss-cpu`, `torch`, `transformers`, `pyarrow`, `matplotlib` absent.
 
 ### Results
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **235 passed, 6 skipped** in 13.94 s |
-| Coverage | **80%** total |
+| `pytest -o addopts="" -q` | **244 passed, 6 skipped** in 31.83 s |
+| Coverage | **79%** total (5688 statements, 1171 missed) |
+| `-W always::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
 | `check_setup.py` | exit 1: only `pyarrow` missing; torch/transformers/ollama/vLLM warnings are expected on this host |
 
@@ -247,11 +290,14 @@ Coverage caveats:
 
 * `index/faiss_index.py` 0% (library absent), `embeddings/hf_embedder.py` 0%
   (torch absent), `generation/llm.py` 56% (HTTP/HF paths not exercised),
-  `trust/plots.py` 28% (matplotlib absent).
+  `trust/plots.py` 28% (matplotlib absent), `security.py` 79% (network
+  branches and finalizers are not all exercised offline).
 * These are environment gaps, not passes. They are listed in limitations.
 
-Logs: `baseline_logs/pytest_final.txt`, `pytest_cov_final.txt`,
-`compileall.txt`, `check_setup.txt`.
+Logs: `baseline_logs/task_final_pytest.txt`,
+`task_final_coverage.txt`, `task_final_compileall.txt`,
+`task_final_check_setup.txt`, `task_final_pytest_after.txt` (ResourceWarning
+run).
 
 ---
 
@@ -268,48 +314,52 @@ PoisonedRAG benchmark corpus.
 Command:
 
 ```bash
-python scripts/run_chronological_eval.py --out runs/smoke_matrix
+python scripts/run_chronological_eval.py --out runs/final_smoke
 ```
 
 Configuration: 7 attacks × 8 baselines × 1 seed (`20260921`), `target_limit=6`,
 `repeat_targets=2`, 56 cases. Result: **56/56 completed, 0 failures**.
+Every case reports `answer_level_asr: null`, `answer_level_asr_status:
+"NOT MEASURED"`.
 
 ### RAGLedger by attack
 
-| Attack | ASR | Precision | Recall | Clean FPR | Detection delay | LLM calls |
-|---|---:|---:|---:|---:|---:|---:|
-| entity_swap | 0.000 | 1.000 | 0.333 | 0.000 | 12 | 123 |
-| negation | 0.333 | 0.000 | 0.000 | 0.000 | — | 123 |
-| instruction_injection | 0.417 | 0.000 | 0.000 | 0.000 | — | 129 |
-| slow_burn | 0.000 | 0.500 | 0.167 | 0.020 | 19 | 131 |
-| hit_and_run | 0.167 | 0.500 | 0.167 | 0.026 | 19 | 115 |
-| signal_evasion | 0.167 | 0.500 | 0.167 | 0.026 | 19 | 137 |
-| framing | 0.333 | 0.000 | 0.000 | 0.000 | — | 123 |
+| Attack | Eligible | Exposed (rate) | Cited (rate) | Precision | Recall | Clean FPR | Detection delay | LLM calls |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| entity_swap | 12 | 0 (0.000) | 0 (0.000) | 1.000 | 0.333 | 0.000 | 12 | 123 |
+| negation | 12 | 4 (0.333) | 4 (0.333) | 0.000 | 0.000 | 0.000 | — | 123 |
+| instruction_injection | 12 | 5 (0.417) | 3 (0.250) | 0.000 | 0.000 | 0.000 | — | 129 |
+| slow_burn | 12 | 0 (0.000) | 0 (0.000) | 0.500 | 0.167 | 0.020 | 19 | 131 |
+| hit_and_run | 12 | 2 (0.167) | 2 (0.167) | 0.500 | 0.167 | 0.026 | 19 | 115 |
+| signal_evasion | 12 | 2 (0.167) | 2 (0.167) | 0.500 | 0.167 | 0.026 | 19 | 137 |
+| framing | 12 | 4 (0.333) | 4 (0.333) | 0.000 | 0.000 | 0.000 | — | 123 |
 
-Mean over attacks: ASR **0.202**, clean FPR **0.010**, recall **0.119**.
-Aggregated over the seven cases, document-level detection has 5 true positives
-and 3 false positives (precision 0.625). All three false positives are
-`late_clean_3#0000`: it is quarantined in `hit_and_run` and `signal_evasion`,
-and flagged but not quarantined in `slow_burn`.
-Detection delay is the mean over detected documents only; `—` means no
-detection.
+Mean over attacks: poison exposure **0.202**, poison citation **0.179**, clean
+FPR **0.010**, recall **0.119**, LLM calls **125.9**. The old label "ASR 0.202"
+was the exposure rate; it is not answer success. Aggregated over the seven
+cases, document-level detection has 5 true positives and 3 false positives
+(precision 0.625). All three false positives are `late_clean_3#0000`: it is
+quarantined in `hit_and_run` and `signal_evasion`, and flagged but not
+quarantined in `slow_burn`. Detection delay is the mean over detected documents
+only; `—` means no detection.
 
 ### Baseline comparison (mean over the seven attacks)
 
-| Baseline | Mean ASR | Mean clean FPR | Mean recall | Mean LLM calls |
-|---|---:|---:|---:|---:|
-| no_defence | 0.929 | 0.000 | 0.000 | 29.0 |
-| duplicate_filter | 0.929 | 0.000 | 0.000 | 29.0 |
-| trust_threshold | 0.929 | 0.000 | 0.000 | 29.0 |
-| perplexity | 0.929 | 0.000 | 0.000 | 29.0 |
-| TrustRAG | 0.857 | 0.000 | 0.000 | 29.0 |
-| RobustRAG | 0.929 | 0.000 | 0.000 | 29.0 |
-| always_on_loo | 0.762 | 0.052 | 0.238 | 296.4 |
-| **RAGLedger** | **0.202** | **0.010** | **0.119** | **125.9** |
+| Baseline | Mean exposure | Mean citation | Mean clean FPR | Mean recall | Mean LLM calls |
+|---|---:|---:|---:|---:|---:|
+| no_defence | 0.929 | 0.643 | 0.000 | 0.000 | 29.0 |
+| duplicate_filter | 0.929 | 0.643 | 0.000 | 0.000 | 29.0 |
+| trust_threshold | 0.929 | 0.643 | 0.000 | 0.000 | 29.0 |
+| perplexity | 0.929 | 0.643 | 0.000 | 0.000 | 29.0 |
+| TrustRAG | 0.857 | 0.643 | 0.000 | 0.000 | 29.0 |
+| RobustRAG | 0.929 | 0.643 | 0.000 | 0.000 | 29.0 |
+| always_on_loo | 0.762 | 0.500 | 0.052 | 0.238 | 296.4 |
+| **RAGLedger** | **0.202** | **0.179** | **0.010** | **0.119** | **125.9** |
 
 These baselines are implemented against the same policy interface and run on the
 same fixture/schedule; they are not the published systems' full pipelines, and
-the toy corpus makes the comparison illustrative only.
+the toy corpus makes the comparison illustrative only. They measure exposure and
+citation, not answer-level attack success.
 
 ### Trust-stream smoke (real pipeline, mini corpus)
 
@@ -318,24 +368,27 @@ Command:
 ```bash
 python scripts/run_trust_stream.py --config config/default.yaml \
   --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json \
-  --steps 12 --targets 2 --out runs/trust_stream_check
+  --steps 12 --targets 2 --out runs/final_trust_stream
 ```
 
-Observed (`runs/trust_stream_check/metrics.json`):
+Observed (`runs/final_trust_stream/metrics.json`):
 
 | Metric | Value |
 |---|---:|
+| eligible attack attempts | 6 |
 | poison retrieved rate | 1.000 |
+| poison exposure rate | 0.000 |
 | poison citation rate | 0.000 |
 | poison quarantined | 0 |
 | clean false quarantine | 0 |
 | verifier outcomes | SUPPORT 0, REFUTE 0, NEUTRAL 22 |
 | mean LLM calls/query | 4.667 |
-| mean latency | 6.75 ms |
+| mean latency | 17.57 ms |
+| answer-level ASR | `null` (`NOT MEASURED`) |
 
-The poison was retrieved but never cited, and no clean document was quarantined.
-It was also **not detected or quarantined**: with the lexical fallback the only
-contradicting copy was a near-duplicate in the same family, which the
+The poison was retrieved but withheld from the generation context and never
+cited. It was also **not detected or quarantined**: with the lexical fallback the
+only contradicting copy was a near-duplicate in the same family, which the
 independence rule correctly excludes. This is a limitation of the lexical
 configuration on this fixture, not evidence that the defence works.
 
@@ -343,10 +396,10 @@ configuration on this fixture, not evidence that the defence works.
 
 | Command | Result |
 |---|---|
-| `python scripts/demo_end_to_end.py --root /tmp/demo_a_final` | exit 0; 57 chunks indexed; 3 answers; 1 answer flagged after quarantine; no poison retrieved after quarantine |
-| `python scripts/demo_person_b.py --root /tmp/demo_b_final` | exit 0; 3 poison docs quarantined; queue drained; later context contains clean documents only |
-| `python -m trace_rag.cli --config config/default.yaml doctor` | exit 0; `DEGRADED`, verifier lexical, queue on, trust persistent |
-| `python -m trace_rag.cli ... smoke --attacks negation --baselines RAGLedger --targets 1` | exit 0; 1/1 case |
+| `python scripts/demo_end_to_end.py --root runs/demo` | exit 0; unprotected Person A demo |
+| `python scripts/demo_person_b.py --root runs/final_demo_b` | exit 0; 3 poison docs quarantined; queue drained; later context contains clean documents only |
+| `trace-rag doctor` | exit 0; `DEGRADED`, lexical verifier, queue on, trust persistent, no probe failures |
+| `python scripts/run_chronological_eval.py --out runs/final_smoke` | exit 0; 56/56 cases |
 
 Demo B uses a **scripted** verifier for stage 5 (documented in its output) to
 exercise queue → quarantine → remediation without a model. It is a lifecycle
@@ -355,8 +408,10 @@ demonstration, not a detection result.
 ### What was not measured
 
 No Contriever, LLM, DeBERTa NLI, FAISS, full NQ corpus or multi-seed run. No
-real ASR, detection FPR, detection delay, remediation recall, latency or cost
-numbers. See `docs/REAL_MODEL_EVAL.md`.
+real answer-level ASR, detection FPR, detection delay, remediation recall,
+latency or cost numbers. The harness has no validated attack-specific
+malicious-answer criterion, so answer-level ASR remains `NOT MEASURED`. See
+`docs/REAL_MODEL_EVAL.md`.
 
 ---
 
@@ -365,35 +420,39 @@ numbers. See `docs/REAL_MODEL_EVAL.md`.
 1. **No real-model or full-dataset result.** The only evaluation is the
    synthetic smoke matrix and the mini trust stream. Do not report them as NQ,
    PoisonedRAG or research results.
-2. **Lexical verifier false positives.** In `hit_and_run` and `signal_evasion`,
+2. **Answer-level ASR is not measured.** No attacker-target criterion is
+   validated for these attacks, so no answer-success number exists. Exposure and
+   citation must not be called ASR.
+3. **Lexical verifier false positives.** In `hit_and_run` and `signal_evasion`,
    the correct `late_clean_3#0000` passage was quarantined after two refutations
    from an equal-trust attacker source. The clean FPR is 0.026 in those cases.
    The trust-aware gate prevents a strictly less-trusted witness, but equal
    trust remains ambiguous.
-3. **High ASR for negation, instruction injection and framing** (0.33–0.42).
-   The cheap signals do not reliably flag these transformations, and the
-   lexical verifier often returns NEUTRAL. `instruction_injection` also depends
-   on the generator's instruction-following; the stub LLM is not a realistic
-   target.
-4. **The mini corpus is trivially separable.** All signals can separate the toy
+4. **High poison exposure for negation, instruction injection and framing**
+   (0.33–0.42). The cheap signals do not reliably flag these transformations,
+   and the lexical verifier often returns NEUTRAL. `instruction_injection` also
+   depends on the generator's instruction-following; the stub LLM is not a
+   realistic target.
+5. **The mini corpus is trivially separable.** All signals can separate the toy
    poison; the scorer demo reports perfect held-out scores that mean nothing.
-5. **Optional backends unexercised.** FAISS, HuggingFace embeddings, torch,
+6. **Optional backends unexercised.** FAISS, HuggingFace embeddings, torch,
    transformers, pyarrow and matplotlib are not installed. Their tests are
-   skipped. `run_trust_stream` figures are skipped without matplotlib.
-6. **No real-NQ attack/baseline matrix.** `run_chronological_eval.py` is
+   skipped. `run_trust_stream` figures are skipped without matplotlib. The
+   functional readiness probes for real backends are unit-tested with simulated
+   operations but have not been run against real models here.
+7. **No real-NQ attack/baseline matrix.** `run_chronological_eval.py` is
    fixture-only. `run_trust_stream.py` is the available real-data end-to-end
-   path and does not compute ASR.
-7. **Suspicion scorer training on real data.** The real runner uses the
+   path and does not compute answer-level ASR.
+8. **Suspicion scorer training on real data.** The real runner uses the
    heuristic scorer unless a trained `scorer.joblib` and labelled rows are
    supplied. There is no real-NQ labelled-row generator in this repository.
-8. **Single seed.** The smoke matrix uses one seed; no confidence intervals or
+9. **Single seed.** The smoke matrix uses one seed; no confidence intervals or
    paired significance tests are reported for it. The statistics module exists
    and is unit-tested, but not applied to a multi-seed real experiment.
-9. **Historical docs.** `docs/INTERFACES.md`, `docs/HANDOVER*.md` and
-   `docs/VERIFICATION.md` retain Person A-era statements and counts. Code,
-   README and this report are authoritative; the old documents are retained for
-   provenance.
-10. **Data/licence.** No NQ corpus or model weights are committed. Check the
+10. **Historical docs.** `docs/INTERFACES.md`, `docs/HANDOVER*.md` and
+    `docs/VERIFICATION.md` retain Person A-era statements and counts. Code,
+    README and this report are authoritative.
+11. **Data/licence.** No NQ corpus or model weights are committed. Check the
     dataset and model licences before redistribution.
 
 ---
@@ -414,47 +473,53 @@ python -m venv .venv
 pip install -e ".[dev]"
 
 pytest -o addopts="" -q
-pytest -o addopts="" -q --cov=trace_rag --cov-report=term
+pytest -o addopts="" -q --cov=trace_rag --cov-report=term-missing
+pytest -o addopts="" -q -W always::ResourceWarning
 python -m compileall -q src scripts tests
 
 python scripts/check_setup.py          # exit 1 is expected if pyarrow is absent
 trace-rag doctor                       # expect DEGRADED in this offline setup
 
-python scripts/run_chronological_eval.py --out runs/smoke_matrix
+python scripts/run_chronological_eval.py --out runs/final_smoke
 python scripts/demo_end_to_end.py --root runs/demo
-python scripts/demo_person_b.py --root runs/demo_b
+python scripts/demo_person_b.py --root runs/final_demo_b
 
 python scripts/run_trust_stream.py --config config/default.yaml \
   --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json \
-  --steps 12 --targets 2 --out runs/trust_stream_mini
+  --steps 12 --targets 2 --out runs/final_trust_stream
 ```
 
-Expected: 235 passed, 6 skipped; 56/56 matrix cases; all three scripts exit 0;
-`runs/smoke_matrix/summary.md` carries the explicit smoke-scope statement.
+Expected: **244 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
+`doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning run
+is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
+statement and `answer_level_asr_status = NOT MEASURED`.
 
 For the real-model run, follow `docs/REAL_MODEL_EVAL.md`. A reportable run
-requires `doctor` to say `PROTECTED` with `verifier_mode=nli`,
+requires `doctor` to say `PROTECTED` after functional probes (real embedding,
+generation completion, NLI inference), `verifier_mode=nli`,
 `trust_persistent=true`, `queue_enabled=true`, and a persistent ledger. Do not
 label a `DEGRADED` or `UNPROTECTED` run as RAGLedger.
 
 ### Captured evidence
 
 ```
-baseline_logs/pytest_final.txt
-baseline_logs/pytest_cov_final.txt
-baseline_logs/compileall.txt
-baseline_logs/check_setup_final.txt
-baseline_logs/chronological_matrix_final.txt
-baseline_logs/demo_end_to_end_final.txt
-baseline_logs/demo_person_b_final.txt
-baseline_logs/run_trust_stream_final.txt
-baseline_logs/doctor_final.txt
-runs/smoke_matrix/results.json
-runs/smoke_matrix/results.csv
-runs/smoke_matrix/summary.md
-runs/smoke_matrix/cases/*/stream.jsonl
-runs/trust_stream_check/metrics.json
-runs/trust_stream_check/stream.jsonl
+baseline_logs/task_final_pytest.txt
+baseline_logs/task_final_pytest_after.txt      # -W always::ResourceWarning, 0 warnings
+baseline_logs/task_final_coverage.txt
+baseline_logs/task_final_compileall.txt
+baseline_logs/task_final_check_setup.txt
+baseline_logs/task_final_deps.txt
+baseline_logs/task_final_environment.txt
+baseline_logs/task_final_smoke_matrix.txt
+baseline_logs/task_final_demo_b.txt
+baseline_logs/task_final_trust_stream.txt
+baseline_logs/task_final_doctor.txt
+runs/final_smoke/results.json
+runs/final_smoke/results.csv
+runs/final_smoke/summary.md
+runs/final_smoke/cases/*/stream.jsonl
+runs/final_trust_stream/metrics.json
+runs/final_trust_stream/stream.jsonl
 ```
 
 All captured logs are from the environment described at the top of this report.

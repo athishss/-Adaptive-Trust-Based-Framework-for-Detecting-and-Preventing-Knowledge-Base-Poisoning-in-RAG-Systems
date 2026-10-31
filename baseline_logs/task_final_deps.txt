@@ -1,0 +1,27 @@
+Package            Version Editable project location
+------------------ ------- -------------------------------------------
+annotated-types    0.8.0
+cloudpickle        3.1.2
+colorama           0.4.6
+coverage           7.16.2
+iniconfig          2.3.1
+joblib             1.6.0
+narwhals           2.27.1
+numpy              2.5.4
+packaging          26.3
+pip                26.2.2
+pluggy             1.7.0
+pydantic           2.14.1
+pydantic_core      2.50.1
+Pygments           2.21.0
+pytest             9.1.1
+pytest-cov         7.1.0
+PyYAML             6.0.3
+scikit-learn       1.9.1
+scipy              1.18.1
+setuptools         84.2.1
+threadpoolctl      3.7.0
+trace-rag-person-a 0.1.0   C:\Users\athis\roblox-groupfinder\RAGLedger
+typing_extensions  4.16.0
+typing-inspection  0.4.4
+wheel              0.48.0
