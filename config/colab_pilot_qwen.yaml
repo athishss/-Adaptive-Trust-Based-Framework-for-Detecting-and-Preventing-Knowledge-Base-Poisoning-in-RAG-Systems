@@ -1,0 +1,80 @@
+# Colab integration pilot: ALTERNATE MODEL, NOT THE RESEARCH CONFIGURATION.
+#
+# Research model (config/nq_gpu.yaml): Contriever + DeBERTa NLI + Llama-3.1-8B
+#   Instruct, revision a09a35458c702b33eeacc393d103063234e8bc28, unquantised
+#   bfloat16 served by vLLM.
+#
+# This file deliberately uses Qwen2.5-7B via Ollama q4_K_M so the complete
+# integration path fits on a free Colab T4.  It is a pilot only.  Its numbers
+# must never be presented as equivalent to, or pooled with, the Llama research
+# results.  The runner writes run_purpose=pilot and equivalence_claim=false.
+#
+# The notebook resolves the exact Ollama manifest digest at pull time and
+# passes it as generation.revision to BOTH the preflight and the runner.
+seed: 20260921
+
+ingestion:
+  chunk_words: 100
+  chunk_overlap_words: 20
+  family_backend: exact
+
+embedding:
+  backend: huggingface
+  model_name: facebook/contriever
+  revision: 2bd46a25019aeea091fd42d1f0fd4801675cf699
+  precision: float32
+  device: auto
+  batch_size: 32
+  normalize: true
+
+index:
+  backend: faiss
+  faiss_kind: flat
+
+retrieval:
+  candidate_pool: 50
+  top_k: 5
+  trust_lambda: 1.0
+  trust_floor: 0.05
+
+signals:
+  neighbourhood_k: 10
+  min_corpus_for_isolation: 10000
+
+scorer:
+  model_path: null
+  target_high_fpr: 0.02
+  escalation_budget: 1.0
+  calibration: isotonic
+
+generation:
+  backend: ollama
+  model_name: qwen2.5:7b
+  revision: null              # replaced with the pulled Ollama digest by the notebook
+  precision: int4
+  quantization: q4_K_M
+  base_url: http://127.0.0.1:11434
+  temperature: 0.0
+  seed: 20260921
+  max_context_docs: 5
+  abstain_evidence_mass: 0.5
+  require_citations: true
+
+security:
+  enabled: true
+  verifier: nli
+  nli_model: cross-encoder/nli-deberta-v3-base
+  nli_revision: 6c749ce3425cd33b46d187e45b92bbf96ee12ec7
+  max_corroboration: 3
+  queue_size: 1000
+  drain_queue: true
+  fail_open_without_verifier: false
+
+trust:
+  quarantine_refutations: 2
+  reject_refutations: 3
+  burst_window_seconds: 60.0
+  burst_min_docs: 4
+
+storage:
+  root: runs/colab_pilot

@@ -57,9 +57,12 @@ import hashlib
 import json
 import os
 import platform
+import random
 import statistics
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -77,10 +80,210 @@ from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics,
 ATTACKER_SOURCE = "attacker_burst"
 WRONG_ANSWER = "Zog the Alien"
 ROOT = Path(__file__).resolve().parent.parent
+RUN_PURPOSES = ("smoke", "pilot", "research", "research_lifecycle")
 
 
 def banner(title: str) -> None:
     print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def build_query_stream(questions: Sequence[Dict[str, str]], steps: int, seed: int,
+                       sample_mode: str) -> List[str]:
+    """Build the query sequence and make its sampling semantics explicit.
+
+    ``zipf`` is the trust-lifecycle stream and samples with replacement, so the
+    number of steps is not the number of distinct queries.  ``no-repeat``
+    samples query *indices* without replacement and refuses to silently shorten
+    the request when the pool is too small.
+    """
+    pool = [str(question["question"]) for question in questions]
+    if sample_mode == "zipf":
+        return zipf_queries(pool, steps, seed=seed)
+    if sample_mode == "no-repeat":
+        if steps > len(pool):
+            raise ValueError(
+                f"no-repeat evaluation requested {steps} steps but the query pool has "
+                f"only {len(pool)} queries")
+        indices = random.Random(seed).sample(range(len(pool)), steps)
+        return [pool[index] for index in indices]
+    raise ValueError(f"unknown query sample mode: {sample_mode}")
+
+
+def validate_run_scope(purpose: str, real_model: bool, limit: Optional[int], steps: int,
+                       targets: int, questions: int, sample_mode: str) -> List[str]:
+    """Reject labels that would turn a smoke run into a research claim."""
+    errors: List[str] = []
+    if purpose not in RUN_PURPOSES:
+        errors.append(f"unknown run purpose {purpose!r}")
+        return errors
+    if real_model and purpose == "smoke":
+        errors.append("a real-model run must declare --run-purpose pilot or research")
+    if purpose == "pilot":
+        if limit is None or limit > 5000:
+            errors.append("integration pilot requires --limit 5000 (or smaller)")
+        if questions != 20:
+            errors.append(f"integration pilot requires the prepared 20-query pool (got {questions})")
+        if steps > 20:
+            errors.append("integration pilot supports at most 20 stream steps")
+        if targets > 5:
+            errors.append("integration pilot supports at most 5 poisoned targets")
+    if purpose in {"research", "research_lifecycle"}:
+        if limit is not None:
+            errors.append("research runs require the full prepared corpus; remove --limit")
+        if questions != 500:
+            errors.append(f"research runs require the prepared 500-query pool (got {questions})")
+        if steps != 500:
+            errors.append(f"research runs require exactly 500 stream steps (got {steps})")
+        expected = "no-repeat" if purpose == "research" else "zipf"
+        if sample_mode != expected:
+            errors.append(
+                f"{purpose} requires --sample-mode {expected}; the Zipf lifecycle stream "
+                "is never the same experiment as a unique-query evaluation")
+    return errors
+
+
+def _dataset_signature(corpus: Path, queries: Path, qrels: Path) -> Dict[str, Any]:
+    return {"corpus": _file_identity(corpus), "queries": _file_identity(queries),
+            "qrels": _file_identity(qrels)}
+
+
+def run_signature(config: Config, purpose: str, sample_mode: str, seed: int, steps: int,
+                  targets: int, limit: Optional[int], n_sources: int,
+                  dataset: Dict[str, Any], target_qids: Sequence[str]) -> str:
+    """Stable identity for safe resume: config, data, scope and code."""
+    payload = {
+        "schema": "ragledger.stream_signature.v1",
+        "git_commit": _git_commit(),
+        "config": config.model_dump(mode="json"),
+        "purpose": purpose,
+        "sample_mode": sample_mode,
+        "seed": seed,
+        "steps": steps,
+        "targets": targets,
+        "limit": limit,
+        "n_sources": n_sources,
+        "dataset": dataset,
+        "target_qids": list(target_qids),
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def check_output_state(out_dir: Path, resume: bool) -> Optional[Dict[str, Any]]:
+    """Refuse to overwrite a run; on resume require a prepared checkpoint."""
+    markers = ["metrics.json", "run_manifest.json", "checkpoint.json", "stream.jsonl"]
+    existing = [name for name in markers if (out_dir / name).exists()]
+    if not resume:
+        if existing:
+            raise ValueError(
+                f"output directory already contains {existing}; choose a new --out or "
+                "use --resume for an interrupted run")
+        return None
+    if "metrics.json" in existing:
+        raise ValueError("this run already has metrics.json; refusing to overwrite a completed run")
+    if "checkpoint.json" not in existing or "run_manifest.json" not in existing:
+        raise ValueError("resume requires both checkpoint.json and run_manifest.json")
+    checkpoint = _read_json(out_dir / "checkpoint.json")
+    if checkpoint.get("in_flight_step") is not None:
+        raise ValueError(
+            "the previous attempt was interrupted inside a stream step; its ledger may "
+            "contain partial effects. Start a new run directory instead of mixing states")
+    return checkpoint
+
+
+def _http_json(url: str, payload: Optional[Dict[str, Any]] = None,
+               timeout: float = 5.0) -> Any:
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=data, method="GET" if payload is None else "POST",
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ollama_provenance(config: Config) -> Dict[str, Any]:
+    """Read the exact pulled digest, quantisation and GPU residency."""
+    if config.generation.backend != "ollama":
+        return {}
+    base = config.generation.base_url.rstrip("/")
+    model = config.generation.model_name
+    result: Dict[str, Any] = {}
+    try:
+        tags = _http_json(f"{base}/api/tags")
+        for item in tags.get("models", []):
+            if item.get("name") == model or str(item.get("name", "")).split(":")[0] == model.split(":")[0]:
+                result.update({"digest": item.get("digest"),
+                               "size_bytes": item.get("size"),
+                               "modified_at": item.get("modified_at")})
+                break
+    except Exception as exc:  # noqa: BLE001 - provenance must not break a run
+        result["tags_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        shown = _http_json(f"{base}/api/show", {"name": model})
+        result["details"] = shown.get("details") or {}
+        result["format"] = shown.get("format")
+        result["capabilities"] = shown.get("capabilities") or []
+    except Exception as exc:  # noqa: BLE001
+        result["show_error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        running = _http_json(f"{base}/api/ps")
+        for item in running.get("models", []):
+            if item.get("name") == model:
+                result["size_vram_bytes"] = int(item.get("size_vram") or 0)
+                result["gpu_resident"] = int(item.get("size_vram") or 0) > 0
+                break
+    except Exception as exc:  # noqa: BLE001
+        result["ps_error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
+def _model_provenance(config: Config, pipeline, verifier) -> Dict[str, Any]:
+    embedder = getattr(pipeline, "embedder", None)
+    llm = getattr(getattr(pipeline, "generator", None), "llm", None)
+    nli_probe = verifier.nli_probe() if getattr(verifier, "mode", None) == "nli" else {}
+    ollama = _ollama_provenance(config)
+    quantisation = (ollama.get("details", {}).get("quantization_level")
+                    or config.generation.quantization or "UNSPECIFIED")
+    return {
+        "equivalence_claim": False,
+        "embedding": {
+            "backend": config.embedding.backend,
+            "model_id": getattr(embedder, "model_name", config.embedding.model_name),
+            "revision": getattr(embedder, "revision", config.embedding.revision) or "UNSPECIFIED",
+            "precision": getattr(embedder, "precision", config.embedding.precision),
+            "device": getattr(embedder, "device", config.embedding.device),
+            "dim": getattr(embedder, "dim", None),
+        },
+        "generation": {
+            "backend": config.generation.backend,
+            "model_id": getattr(llm, "name", config.generation.model_name),
+            "revision": (config.generation.revision or ollama.get("digest")
+                         or "UNSPECIFIED"),
+            "precision": config.generation.precision or "UNSPECIFIED",
+            "quantization": quantisation,
+            "device": ("GPU-resident" if ollama.get("gpu_resident") else
+                       ("server-managed; verify nvidia-smi" if config.generation.backend == "openai"
+                        else getattr(llm, "device", "UNSPECIFIED"))),
+            "runtime": ollama,
+        },
+        "verifier": {
+            "backend": getattr(verifier, "mode", None),
+            "model_id": nli_probe.get("model", config.security.nli_model),
+            "revision": nli_probe.get("revision", config.security.nli_revision)
+                        or "UNSPECIFIED",
+        },
+    }
 
 
 def _git_commit() -> Optional[str]:
@@ -257,7 +460,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--n-sources", type=int, default=2000, help="simulated contributors")
     parser.add_argument("--seed", type=int, default=20260921)
     parser.add_argument("--skip-index", action="store_true",
-                        help="reuse the saved index from a previous run")
+                        help="deprecated alias: reuse a prepared run (requires --resume)")
+    parser.add_argument("--run-purpose", choices=RUN_PURPOSES, default="smoke",
+                        help="explicit scope; real-model runs must be pilot or research")
+    parser.add_argument("--sample-mode", choices=("zipf", "no-repeat"), default="zipf",
+                        help="zipf samples with replacement (trust lifecycle); no-repeat "
+                             "evaluates each sampled query index exactly once")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue an interrupted run from checkpoint.json after verifying "
+                             "the full config/dataset/model signature")
     parser.add_argument("--force-medium", action="store_true",
                         help="demo mode: escalate every passage so the verifier path "
                              "always runs (the calibrated bands are the real setting)")
@@ -276,6 +487,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.skip_index and not args.resume:
+        print("--skip-index is no longer sufficient; use --resume for a prepared run",
+              file=sys.stderr)
+        return 2
+    try:
+        previous_checkpoint = check_output_state(out_dir, args.resume)
+    except ValueError as exc:
+        print(f"refusing to mix run outputs: {exc}", file=sys.stderr)
+        return 2
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
     # Configure the security stack before building the pipeline.  Building it
@@ -287,7 +507,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     config.security.max_corroboration = args.max_corroboration
     real_model = (config.generation.backend != "stub"
                   or config.embedding.backend != "hashing")
-    pipeline = PersonAPipeline.from_config(config, load_existing_index=args.skip_index)
+    questions = load_questions(Path(args.queries))
+    if not questions:
+        print("no questions found", file=sys.stderr)
+        return 2
+    targets = questions[: max(1, args.targets)]
+    qrels_path = Path(args.qrels) if args.qrels else Path(args.queries).with_name("qrels.tsv")
+    if args.run_purpose in {"research", "research_lifecycle"} and not qrels_path.exists():
+        print("research runs require --qrels; targets cannot fall back to the retrieved pool",
+              file=sys.stderr)
+        return 2
+    scope_errors = validate_run_scope(
+        args.run_purpose, real_model, args.limit, args.steps, args.targets,
+        len(questions), args.sample_mode)
+    if scope_errors:
+        print("run scope is not valid:", file=sys.stderr)
+        for error in scope_errors:
+            print(f"  - {error}", file=sys.stderr)
+        return 2
+    dataset_identity = _dataset_signature(Path(args.corpus), Path(args.queries), qrels_path)
+    signature = run_signature(config, args.run_purpose, args.sample_mode, args.seed,
+                              args.steps, args.targets, args.limit, args.n_sources,
+                              dataset_identity, [target["qid"] for target in targets])
+    if previous_checkpoint is not None:
+        previous_manifest = _read_json(out_dir / "run_manifest.json")
+        if previous_checkpoint.get("signature") != signature or \
+                previous_manifest.get("signature") != signature:
+            print("refusing to resume: config, dataset, model revision, seed, scope or code "
+                  "changed since the checkpoint", file=sys.stderr)
+            return 2
+        print(f"resuming prepared run {out_dir} at step "
+              f"{previous_checkpoint.get('completed_steps', 0)}/{args.steps}")
+
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=args.resume)
     # A real-model run must never proceed on a degraded security stack.  This
     # check runs before ingestion/indexing so a misconfigured GPU run fails in
     # seconds instead of after hours of embedding work.
@@ -315,77 +567,114 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 print(f"  - readiness: {failure}", file=sys.stderr)
             pipeline.close()
             return 2
-    questions = load_questions(Path(args.queries))
-    if not questions:
-        print("no questions found", file=sys.stderr)
-        pipeline.close()
-        return 2
-    targets = questions[: max(1, args.targets)]
-
-    # ---------------------------------------------------------------- ingest
-    banner("1. Ingest the clean corpus with simulated contributors")
     ingestor = Ingestor(pipeline.store, config.ingestion)
-    if not args.skip_index or pipeline.store.counts().get("chunks", 0) == 0:
+    if previous_checkpoint is None:
+        # ------------------------------------------------------------ ingest
+        banner("1. Ingest the clean corpus with simulated contributors")
         report = ingestor.ingest_beir(args.corpus, SourceAssigner(n_sources=args.n_sources,
                                                                  seed=args.seed),
                                       limit=args.limit, seconds_per_doc=60.0)
         print(f"  ingested: {report.to_dict()}")
-    print(f"  store: {pipeline.store.counts()}")
+        print(f"  store: {pipeline.store.counts()}")
 
-    # ---------------------------------------------------------------- index
-    banner("2. Index the clean corpus (the GPU step)")
-    if not args.skip_index:
+        # ------------------------------------------------------------ index
+        banner("2. Index the clean corpus (the GPU step)")
         indexed = pipeline.index_chunks()
         pipeline.save_index()
         print(f"  indexed: {indexed} passages   index size: {len(pipeline.index)}")
-
-    # ---------------------------------------------------------------- poison
-    banner("3. Craft poison from each target's gold passage (Person C's helpers)")
-    qrels_path = Path(args.qrels) if args.qrels else Path(args.queries).with_name("qrels.tsv")
-    gold_ids = load_qrels(qrels_path) if qrels_path.exists() else {}
-    if gold_ids:
-        print(f"  qrels: {qrels_path} ({len(gold_ids)} queries with a gold passage)")
     else:
-        print("  no qrels file: targets fall back to the retrieved pool")
-    wanted = {doc_id for target in targets for doc_id in gold_ids.get(target["qid"], [])}
-    gold_texts = fetch_passages(Path(args.corpus), wanted) if wanted else {}
-    poison_docs = []
-    poison_chunk_ids: set = set()
-    poison_info: List[Dict[str, str]] = []
-    for index, target in enumerate(targets):
-        outcome = pipeline.retriever.retrieve(target["question"], f"craft_{target['qid']}")
-        chosen = choose_target(outcome, gold_texts, gold_ids.get(target["qid"], []),
-                               target["gold_answer"])
-        if chosen is None:
-            print(f"  {target['qid']}: no passage retrieved, skipped")
-            continue
-        target_text, origin, how = chosen
-        poison_text, attack_type = corrupt_passage(target_text, target["gold_answer"])
-        record = make_poisoned_document(
-            doc_id=f"poison_{target['qid']}", chunk_id=f"poison_{target['qid']}#0000",
-            text=poison_text, source_id=ATTACKER_SOURCE,
-            family_id=f"poison_family_{index}", attack_type=attack_type,
-            target_query=target["question"],
-            metadata={"source_of_truth": origin},
-        )
-        chunks = ingestor.ingest_text(record.doc_id, record.text, record.source_id,
-                                      ingested_at=1_800_000_000.0 + index * 20.0,
-                                      passage_mode=True)
-        # The pipeline and the ledger work in chunk ids (``doc#0000``), so keep
-        # those: comparing document ids against them silently matched nothing.
-        poison_chunk_ids.update(chunk.chunk_id for chunk in chunks)
-        poison_docs.append(record)
-        poison_info.append({"doc_id": record.doc_id, "origin": origin, "chosen_by": how,
-                            "attack": attack_type, "chunk_ids": [c.chunk_id for c in chunks]})
-        print(f"  {record.doc_id}: {attack_type} on {origin} [{how}] "
-              f"-> {[c.chunk_id for c in chunks]}")
-    if not poison_docs:
-        print("no poison was generated - nothing to test", file=sys.stderr)
-        pipeline.close()
-        return 2
-    pipeline.index_chunks()
-    pipeline.save_index()
-    print(f"  index size after poison: {len(pipeline.index)}")
+        banner("1-2. Reuse the prepared corpus and index")
+        print(f"  store: {pipeline.store.counts()}   index size: {len(pipeline.index)}")
+        if len(pipeline.index) == 0:
+            print("resume checkpoint exists but the saved index is empty", file=sys.stderr)
+            pipeline.close()
+            return 2
+
+    if previous_checkpoint is None:
+        # ------------------------------------------------------------ poison
+        banner("3. Craft poison from each target's gold passage (Person C's helpers)")
+        gold_ids = load_qrels(qrels_path) if qrels_path.exists() else {}
+        if gold_ids:
+            print(f"  qrels: {qrels_path} ({len(gold_ids)} queries with a gold passage)")
+        else:
+            print("  no qrels file: targets fall back to the retrieved pool")
+        wanted = {doc_id for target in targets for doc_id in gold_ids.get(target["qid"], [])}
+        gold_texts = fetch_passages(Path(args.corpus), wanted) if wanted else {}
+        poison_docs = []
+        poison_chunk_ids: set = set()
+        poison_info: List[Dict[str, Any]] = []
+        for index, target in enumerate(targets):
+            outcome = pipeline.retriever.retrieve(target["question"], f"craft_{target['qid']}")
+            chosen = choose_target(outcome, gold_texts, gold_ids.get(target["qid"], []),
+                                   target["gold_answer"])
+            if chosen is None:
+                print(f"  {target['qid']}: no passage retrieved, skipped")
+                continue
+            target_text, origin, how = chosen
+            poison_text, attack_type = corrupt_passage(target_text, target["gold_answer"])
+            record = make_poisoned_document(
+                doc_id=f"poison_{target['qid']}", chunk_id=f"poison_{target['qid']}#0000",
+                text=poison_text, source_id=ATTACKER_SOURCE,
+                family_id=f"poison_family_{index}", attack_type=attack_type,
+                target_query=target["question"],
+                metadata={"source_of_truth": origin},
+            )
+            chunks = ingestor.ingest_text(record.doc_id, record.text, record.source_id,
+                                          ingested_at=1_800_000_000.0 + index * 20.0,
+                                          passage_mode=True)
+            # The pipeline and the ledger work in chunk ids (``doc#0000``), so keep
+            # those: comparing document ids against them silently matched nothing.
+            poison_chunk_ids.update(chunk.chunk_id for chunk in chunks)
+            poison_docs.append(record)
+            poison_info.append({"doc_id": record.doc_id, "origin": origin, "chosen_by": how,
+                                "attack": attack_type, "chunk_ids": [c.chunk_id for c in chunks]})
+            print(f"  {record.doc_id}: {attack_type} on {origin} [{how}] "
+                  f"-> {[c.chunk_id for c in chunks]}")
+        if not poison_docs:
+            print("no poison was generated - nothing to test", file=sys.stderr)
+            pipeline.close()
+            return 2
+        pipeline.index_chunks()
+        pipeline.save_index()
+        print(f"  index size after poison: {len(pipeline.index)}")
+        checkpoint = {
+            "schema": "ragledger.checkpoint.v1",
+            "signature": signature,
+            "phase": "prepared",
+            "completed_steps": 0,
+            "in_flight_step": None,
+            "run_purpose": args.run_purpose,
+            "sample_mode": args.sample_mode,
+            "steps": args.steps,
+            "poison_info": poison_info,
+            "poison_chunk_ids": sorted(poison_chunk_ids),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_write(out_dir / "checkpoint.json", json.dumps(checkpoint, indent=2))
+        preliminary = {
+            "schema": "ragledger.run_manifest.v2",
+            "state": "running",
+            "signature": signature,
+            "run_purpose": args.run_purpose,
+            "sample_mode": args.sample_mode,
+            "seed": args.seed,
+            "steps_requested": args.steps,
+            "query_pool_size": len(questions),
+            "target_queries": len(targets),
+            "config_path": str(args.config),
+            "config": config.model_dump(mode="json"),
+            "dataset": dataset_identity,
+            "models": _model_provenance(config, pipeline, pipeline.verifier),
+            "started_at": started_at,
+        }
+        _atomic_write(out_dir / "run_manifest.json",
+                      json.dumps(preliminary, indent=2, default=str))
+    else:
+        banner("3. Reuse the checkpointed poison documents")
+        poison_info = list(previous_checkpoint.get("poison_info") or [])
+        poison_chunk_ids = set(previous_checkpoint.get("poison_chunk_ids") or [])
+        poison_docs = poison_info
+        print(f"  poison documents: {len(poison_docs)}")
 
     # ---------------------------------------------------------------- trust
     banner("4. Wire in Person B's trust layer")
@@ -415,13 +704,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("    demo mode: every passage escalated to MEDIUM (--force-medium)")
 
     # ---------------------------------------------------------------- stream
-    banner(f"5. Replay the query stream ({args.steps} steps, Zipf repetition)")
-    stream = zipf_queries([q["question"] for q in questions], args.steps, seed=args.seed)
+    stream = build_query_stream(questions, args.steps, args.seed, args.sample_mode)
+    semantic = ("Zipf sampling with replacement (trust lifecycle; steps != distinct queries)"
+                if args.sample_mode == "zipf" else
+                "sampling without replacement (each sampled query index appears once)")
+    banner(f"5. Replay the query stream ({len(stream)} steps; {semantic})")
     target_text = {q["question"].strip().lower() for q in targets}
 
     per_step: List[Dict[str, object]] = []
+    stream_path = out_dir / "stream.jsonl"
+    if previous_checkpoint is not None:
+        checkpoint = previous_checkpoint
+        if stream_path.exists():
+            per_step = [json.loads(line) for line in stream_path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()]
+        if int(checkpoint.get("completed_steps", 0)) != len(per_step):
+            print("checkpoint and stream.jsonl disagree; refusing to resume", file=sys.stderr)
+            pipeline.close()
+            return 2
+        if len(per_step) > len(stream):
+            print("stream.jsonl has more steps than the configured plan", file=sys.stderr)
+            pipeline.close()
+            return 2
+        print(f"  resuming at step {len(per_step)} of {len(stream)}")
+    else:
+        checkpoint = _read_json(out_dir / "checkpoint.json")
+        _atomic_write(stream_path, "")
     poison_ids = poison_chunk_ids
     for step, question in enumerate(stream):
+        if step < len(per_step):
+            continue
+        checkpoint["in_flight_step"] = step
+        checkpoint["phase"] = "streaming"
+        checkpoint["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _atomic_write(out_dir / "checkpoint.json", json.dumps(checkpoint, indent=2))
         result = pipeline.answer(question, f"stream_{step:04d}")
         drained = policy.drain_verification_queue(verifier)
         cited_poison = [d.doc_id for d in result.retrieval.documents
@@ -429,7 +745,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         context_poison = [doc_id for doc_id in result.decision.context_doc_ids
                           if doc_id in poison_ids]
         retrieved_ids = [d.doc_id for d in result.retrieval.documents]
-        per_step.append({
+        row = {
             "step": step,
             "query": question,
             "is_target": question.strip().lower() in target_text,
@@ -450,7 +766,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "newly_quarantined": list(result.decision.notes.get("newly_quarantined", [])),
             "llm_calls": int(result.llm_calls),
             "latency_ms": float(result.timings_ms.get("total", 0.0)),
-        })
+        }
+        per_step.append(row)
+        with open(stream_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        checkpoint["completed_steps"] = step + 1
+        checkpoint["in_flight_step"] = None
+        checkpoint["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _atomic_write(out_dir / "checkpoint.json", json.dumps(checkpoint, indent=2))
 
     # ---------------------------------------------------------------- metrics
     banner("6. Smoke-test metrics (not the headline evaluation)")
@@ -477,18 +802,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     false_positive_rate = false_positive / clean_documents if clean_documents else None
 
     metrics = {
-        "smoke_test": True,
+        "smoke_test": args.run_purpose in {"smoke", "pilot"},
+        "run_purpose": args.run_purpose,
+        "research_findings_allowed": args.run_purpose == "research",
         "run_kind": "real_model" if real_model else "offline_smoke",
         "git_commit": _git_commit(),
         "seed": args.seed,
-        "note": ("component smoke test; the chronological runner owns answer-level "
+        "note": ("component trust-stream run; the chronological runner owns answer-level "
                  "ASR and is NOT MEASURED here (no validated attack-specific "
-                 "answer criterion); this runner reports exposure and citation, "
-                 "not answer success"),
+                 "answer criterion); this runner reports exposure and citation, not "
+                 "answer success, and does not implement the full attack x baseline matrix"),
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "corpus": str(args.corpus),
         "steps": len(per_step),
+        "query_pool_size": len(questions),
+        "stream_steps_requested": args.steps,
+        "stream_steps_completed": len(per_step),
+        "query_sampling": args.sample_mode,
+        "distinct_queries_evaluated": len({row["query"] for row in per_step}),
+        "repeated_query_evaluations": (len(per_step)
+                                       - len({row["query"] for row in per_step})),
         "target_steps": len(target_steps),
         "verifier_mode": verifier.mode,
         "llm": ("stub (claim extraction is lexical: verdicts are indicative only)"
@@ -535,14 +869,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "queued_verifications": sum(len(row["drained_verified"]) for row in per_step),
         "poison_trust": {doc_id: {"t_eff": round(snap.t_eff, 4), "status": snap.status.value}
                          for doc_id, snap in trust_snaps.items()},
+        "research_evaluation": {
+            "implements_full_attack_baseline_matrix": False,
+            "remaining_requirements": "docs/PERSON_C_TODO.md",
+            "answer_level_asr_status": "NOT MEASURED",
+        },
     }
     print(json.dumps(metrics, indent=2))
 
-    (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    (out_dir / "stream.jsonl").write_text(
-        "\n".join(json.dumps(row, default=str) for row in per_step), encoding="utf-8")
+    _atomic_write(out_dir / "metrics.json", json.dumps(metrics, indent=2))
     manifest = {
-        "schema": "ragledger.run_manifest.v1",
+        "schema": "ragledger.run_manifest.v2",
+        "state": "completed",
+        "signature": signature,
+        "run_purpose": args.run_purpose,
+        "sample_mode": args.sample_mode,
+        "research_findings_allowed": args.run_purpose == "research",
         "run_kind": metrics["run_kind"],
         "real_model": real_model,
         "git_commit": metrics["git_commit"],
@@ -551,25 +893,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "config_path": str(args.config),
         "config": config.model_dump(mode="json"),
-        "dataset": {
-            "corpus": _file_identity(Path(args.corpus)),
-            "queries": _file_identity(Path(args.queries)),
-            "qrels": _file_identity(qrels_path),
-        },
-        "models": {
-            "embedding": {
-                "backend": config.embedding.backend,
-                "model": (config.embedding.model_name
-                          if config.embedding.backend == "huggingface" else None),
-                "dim": getattr(pipeline.embedder, "dim", None),
-            },
-            "generation": {
-                "backend": config.generation.backend,
-                "model": getattr(pipeline.generator.llm, "name", None),
-            },
-            "verifier": ("cross-encoder/nli-deberta-v3-base"
-                         if verifier.mode == "nli" else verifier.mode),
-        },
+        "dataset": dataset_identity,
+        "models": _model_provenance(config, pipeline, verifier),
         "seed": args.seed,
         "hardware": _hardware(),
         "verifier_mode": verifier.mode,
@@ -581,14 +906,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         },
         "ledger_path": getattr(ledger, "path", None),
         "indexed_passages": len(pipeline.index),
+        "query_pool_size": len(questions),
+        "stream_steps_requested": args.steps,
+        "stream_steps_completed": len(per_step),
+        "query_sampling": args.sample_mode,
+        "distinct_queries_evaluated": len({row["query"] for row in per_step}),
+        "repeated_query_evaluations": (len(per_step)
+                                       - len({row["query"] for row in per_step})),
         "evaluated_queries": len(per_step),
         "target_queries": len(targets),
         "poison_documents": len(poison_docs),
-        "resumed_index": bool(args.skip_index),
+        "resumed": bool(args.resume),
+        "resumed_from_step": (int(previous_checkpoint.get("completed_steps", 0))
+                              if previous_checkpoint is not None else 0),
         "answer_level_asr_status": "NOT MEASURED",
+        "research_evaluation": {
+            "full_attack_baseline_matrix": False,
+            "remaining_requirements": "docs/PERSON_C_TODO.md",
+            "note": "this trust-stream runner is not the complete C6 benchmark",
+        },
     }
-    (out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2, default=str),
-                                                encoding="utf-8")
+    _atomic_write(out_dir / "run_manifest.json", json.dumps(manifest, indent=2, default=str))
 
     # ---------------------------------------------------------------- figures
     banner("7. Trust-dynamics figures (B6)")

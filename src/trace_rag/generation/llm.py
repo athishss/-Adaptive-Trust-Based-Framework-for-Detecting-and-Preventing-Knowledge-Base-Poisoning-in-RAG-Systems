@@ -220,7 +220,8 @@ class HFLocalLLM:
     """In-process transformers generation (greedy)."""
 
     def __init__(self, model_name: str = "meta-llama/Llama-3.1-8B-Instruct", device: str = "cuda",
-                 dtype: str = "bfloat16", seed: int = 20260921) -> None:
+                 dtype: str = "bfloat16", seed: int = 20260921,
+                 revision: Optional[str] = None) -> None:
         try:
             import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -231,8 +232,10 @@ class HFLocalLLM:
         device = resolve_device(device, torch)
         torch.manual_seed(seed)
         self.name = model_name
+        self.revision = revision
+        self.precision = dtype
         self._torch = torch
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
         resolved_dtype = getattr(torch, dtype, torch.float32)
         # device_map= needs the `accelerate` package and is only useful for
         # sharding across devices; a plain device string loads and moves the
@@ -241,10 +244,10 @@ class HFLocalLLM:
         kwargs = {"device_map": device} if device in {"auto", "balanced", "sequential"} else {}
         try:                                         # transformers v5 renamed torch_dtype -> dtype
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, dtype=resolved_dtype, **kwargs)
+                model_name, revision=revision, dtype=resolved_dtype, **kwargs)
         except TypeError:  # pragma: no cover - older transformers
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, torch_dtype=resolved_dtype, **kwargs)
+                model_name, revision=revision, torch_dtype=resolved_dtype, **kwargs)
         if not kwargs:
             self.model = self.model.to(device)
         self.model = self.model.eval()
@@ -302,8 +305,10 @@ def build_llm(config):  # type: ignore[no-untyped-def]
         return OpenAICompatLLM(config.model_name, config.base_url, config.api_key_env,
                                config.temperature, config.seed, config.timeout_s)
     if backend == "ollama":
-        return OllamaLLM(config.model_name, temperature=config.temperature, seed=config.seed,
+        return OllamaLLM(config.model_name, base_url=config.base_url,
+                         temperature=config.temperature, seed=config.seed,
                          timeout_s=config.timeout_s)
     if backend == "huggingface":
-        return HFLocalLLM(config.model_name, seed=config.seed)
+        return HFLocalLLM(config.model_name, dtype=config.precision or "bfloat16",
+                          seed=config.seed, revision=config.revision)
     raise ValueError(f"unknown generation backend: {backend}")

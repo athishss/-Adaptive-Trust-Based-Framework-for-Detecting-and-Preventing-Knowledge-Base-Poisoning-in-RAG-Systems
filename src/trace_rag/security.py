@@ -28,7 +28,7 @@ from .contracts import DefaultPolicy, NullTrustProvider, Policy, TrustProvider, 
 from .trust.ledger import TrustConfig, TrustLedger
 from .trust.policy import TrustPolicy
 from .trust.queue import VerificationQueue
-from .trust.verifier import CorroborationVerifier
+from .trust.verifier import CorroborationVerifier, configure_nli
 from .utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -92,6 +92,8 @@ def attach_security(pipeline, config: Optional[Config] = None) -> Optional[Secur
     verifier = getattr(pipeline, "verifier", None)
     if verifier is None:
         use_nli = {"nli": True, "lexical": False, "auto": None}[security.verifier]
+        if use_nli is not False:
+            configure_nli(security.nli_model, security.nli_revision)
         verifier = CorroborationVerifier(
             llm=pipeline.generator.llm,
             max_corroboration=security.max_corroboration,

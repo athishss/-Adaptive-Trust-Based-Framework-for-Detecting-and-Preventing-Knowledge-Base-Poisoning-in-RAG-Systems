@@ -54,7 +54,7 @@ class HFEmbedder(BaseEmbedder):
     def __init__(self, model_name: str = "facebook/contriever", device: str = "cpu",
                  pooling: Literal["mean", "cls"] = "mean", max_length: int = 512,
                  query_prefix: str = "", document_prefix: str = "", normalize: bool = True,
-                 dtype: str = "float32") -> None:
+                 dtype: str = "float32", revision: str | None = None) -> None:
         try:
             import torch
             from transformers import AutoModel, AutoTokenizer
@@ -65,6 +65,7 @@ class HFEmbedder(BaseEmbedder):
             ) from exc
 
         self.model_name = model_name
+        self.revision = revision
         self.device = resolve_device(device, torch)
         self.pooling = pooling
         self.max_length = int(max_length)
@@ -72,15 +73,18 @@ class HFEmbedder(BaseEmbedder):
         self.document_prefix = document_prefix
         self.normalize = bool(normalize)
         self._torch = torch
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, revision=revision)
         resolved_dtype = getattr(torch, dtype, torch.float32)
         # transformers renamed torch_dtype -> dtype in v5; support both.
         try:
-            self.model = AutoModel.from_pretrained(model_name, dtype=resolved_dtype)
+            self.model = AutoModel.from_pretrained(
+                model_name, revision=revision, dtype=resolved_dtype)
         except TypeError:  # pragma: no cover - older transformers
-            self.model = AutoModel.from_pretrained(model_name, torch_dtype=resolved_dtype)
+            self.model = AutoModel.from_pretrained(
+                model_name, revision=revision, torch_dtype=resolved_dtype)
         self.model = self.model.to(self.device).eval()
         self.dim = int(self.model.config.hidden_size)
+        self.precision = dtype
 
     def _pool(self, hidden, mask):  # type: ignore[no-untyped-def]
         if self.pooling == "cls":

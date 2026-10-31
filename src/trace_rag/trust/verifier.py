@@ -149,7 +149,11 @@ class NLIScorer:
 
     model_name = "cross-encoder/nli-deberta-v3-base"
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: Optional[str] = None,
+                 revision: Optional[str] = None) -> None:
+        if model_name:
+            self.model_name = model_name
+        self.revision = revision
         self._pipeline = None
         self._available: Optional[bool] = None
         self.load_error: Optional[str] = None
@@ -176,7 +180,8 @@ class NLIScorer:
                 device = -1
             self._pipeline = hf_pipeline(
                 "text-classification",
-                model="cross-encoder/nli-deberta-v3-base",
+                model=self.model_name,
+                revision=self.revision,
                 device=device,
                 truncation=True,
                 max_length=512,
@@ -184,7 +189,8 @@ class NLIScorer:
             # Try a quick inference to confirm it works
             self._pipeline("Test premise. [SEP] Test hypothesis.")
             self._available = True
-            logger.info("NLI scorer loaded: cross-encoder/nli-deberta-v3-base")
+            logger.info("NLI scorer loaded: %s%s", self.model_name,
+                        f" @ {self.revision}" if self.revision else "")
         except Exception as exc:
             self._available = False
             self.load_error = f"{type(exc).__name__}: {exc}"
@@ -215,6 +221,20 @@ class NLIScorer:
 
 # Singleton NLI scorer (loaded on first use)
 _nli_scorer = NLIScorer()
+
+
+def configure_nli(model_name: str, revision: Optional[str] = None) -> NLIScorer:
+    """Select the NLI model before the verifier is constructed.
+
+    The scorer is a process-wide singleton because loading DeBERTa is
+    expensive.  A verifier and its preflight therefore share exactly the same
+    model revision; changing either model or revision resets the singleton.
+    """
+    global _nli_scorer
+    if (_nli_scorer.model_name != model_name
+            or getattr(_nli_scorer, "revision", None) != revision):
+        _nli_scorer = NLIScorer(model_name=model_name, revision=revision)
+    return _nli_scorer
 
 
 class CorroborationVerifier:
@@ -364,7 +384,8 @@ class CorroborationVerifier:
             if not math.isfinite(score) or not 0.0 <= score <= 1.0:
                 raise ValueError(f"invalid NLI score {score!r}")
             return {"status": "ready", "label": label, "score": score,
-                    "model": _nli_scorer.model_name}
+                    "model": _nli_scorer.model_name,
+                    "revision": getattr(_nli_scorer, "revision", None)}
         except Exception as exc:  # noqa: BLE001 - report, never claim readiness
             return {"status": "failed",
                     "detail": f"{type(exc).__name__}: {exc}"}

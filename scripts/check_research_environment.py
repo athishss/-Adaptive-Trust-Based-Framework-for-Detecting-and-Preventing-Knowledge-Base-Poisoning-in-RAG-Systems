@@ -28,6 +28,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -171,13 +172,13 @@ def _model_is_local(model: str) -> bool:
     return Path(model).expanduser().exists()
 
 
-def model_cache_status(model: str) -> Dict[str, Any]:
+def model_cache_status(model: str, revision: Optional[str] = None) -> Dict[str, Any]:
     """Check the local Hugging Face cache without downloading anything."""
     if _model_is_local(model):
         return {"model": model, "cached": True, "source": "local_path"}
     try:
         from huggingface_hub import try_to_load_from_cache  # type: ignore
-        cached = try_to_load_from_cache(model, "config.json")
+        cached = try_to_load_from_cache(model, "config.json", revision=revision)
         if cached is not None and Path(str(cached)).exists():
             return {"model": model, "cached": True, "source": "huggingface_hub"}
         return {"model": model, "cached": False, "source": "huggingface_hub"}
@@ -185,7 +186,8 @@ def model_cache_status(model: str) -> Dict[str, Any]:
         pass
     root = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
     folder = root / ("models--" + model.replace("/", "--"))
-    snapshots = list(folder.glob("snapshots/*/config.json"))
+    pattern = f"snapshots/{revision}/config.json" if revision else "snapshots/*/config.json"
+    snapshots = list(folder.glob(pattern))
     return {"model": model, "cached": bool(snapshots),
             "source": "cache_scan" if snapshots else "cache_scan_missing"}
 
@@ -294,14 +296,15 @@ def dataset_status(corpus: Optional[str], queries: Optional[str],
     return {"status": "ready", "sizes": sizes, "detail": "dataset files exist"}
 
 
-def functional_doctor(config_path: Path, timeout: float) -> Dict[str, Any]:
+def functional_doctor(config: Config, timeout: float) -> Dict[str, Any]:
     """Run the existing doctor probes with offline HF env vars.
 
     The offline flags prevent an attempted model download.  If weights are not
     cached, the doctor fails fast and that failure is reported honestly.
     """
-    command = [sys.executable, "-m", "trace_rag.cli",
-               "--config", str(config_path), "doctor"]
+    # Doctor must receive the already-resolved config, including every --set
+    # override.  Checking a YAML file and running a different command was the
+    # exact mismatch this preflight is meant to prevent.
     env = os.environ.copy()
     env.update({
         "HF_HUB_OFFLINE": "1",
@@ -309,11 +312,16 @@ def functional_doctor(config_path: Path, timeout: float) -> Dict[str, Any]:
         "HF_DATASETS_OFFLINE": "1",
         "PYTHONPATH": str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", ""),
     })
-    try:
-        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
-                                text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return {"status": "failed", "detail": f"doctor timed out after {timeout:.0f}s"}
+    with tempfile.TemporaryDirectory(prefix="ragledger-preflight-") as directory:
+        resolved_path = Path(directory) / "resolved.yaml"
+        config.dump(resolved_path)
+        command = [sys.executable, "-m", "trace_rag.cli",
+                   "--config", str(resolved_path), "doctor"]
+        try:
+            result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+                                    text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return {"status": "failed", "detail": f"doctor timed out after {timeout:.0f}s"}
     output = result.stdout.strip()
     payload: Optional[Dict[str, Any]] = None
     start = output.find("{")
@@ -350,9 +358,16 @@ def classify_status(checks: List[Dict[str, str]],
     return BLOCKED, f"functional security doctor failed: {report or 'unknown status'}"
 
 
+def resolve_config(config_path: Path, overrides: Optional[List[str]] = None) -> Config:
+    """Load the exact effective configuration shared with the runner."""
+    from trace_rag.cli import apply_overrides
+
+    return apply_overrides(Config.load(config_path), overrides)
+
+
 def build_report(config_path: Path, functional: bool, functional_timeout: float,
                  corpus: Optional[str], queries: Optional[str],
-                 qrels: Optional[str]) -> Dict[str, Any]:
+                 qrels: Optional[str], overrides: Optional[List[str]] = None) -> Dict[str, Any]:
     checks: List[Dict[str, str]] = []
     info = system_info()
     checks.append(_check("python", "ok" if sys.version_info >= (3, 10) else "fail",
@@ -387,7 +402,7 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
                              f"CUDA {torch_data['cuda_version']}"))
 
     try:
-        config = Config.load(config_path)
+        config = resolve_config(config_path, overrides)
     except Exception as exc:  # noqa: BLE001
         checks.append(_check("config", "fail",
                              f"cannot load {config_path}: {type(exc).__name__}: {exc}",
@@ -421,9 +436,11 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
         checks.append(_check("index", "ok", f"FAISS {config.index.faiss_kind}"))
 
     cache_checks = []
-    for role, model in (("embedding", config.embedding.model_name),
-                        ("nli", "cross-encoder/nli-deberta-v3-base")):
-        cache = model_cache_status(model)
+    for role, model, revision in (("embedding", config.embedding.model_name,
+                                   config.embedding.revision),
+                                  ("nli", config.security.nli_model,
+                                   config.security.nli_revision)):
+        cache = model_cache_status(model, revision)
         cache_checks.append({"role": role, **cache})
         checks.append(_check(
             f"cache:{role}", "ok" if cache["cached"] else "fail",
@@ -447,13 +464,22 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
 
     doctor: Optional[Dict[str, Any]] = None
     if functional:
-        doctor = functional_doctor(config_path, functional_timeout)
+        doctor = functional_doctor(config, functional_timeout)
         checks.append(_check(
             "functional_doctor",
             "ok" if doctor.get("status") == "PROTECTED" else "fail",
             f"doctor status={doctor.get('status')}: {doctor.get('detail', '')}",
             "resolve the doctor readiness failures; a real-model run requires PROTECTED",
         ))
+        probes = (doctor.get("security") or {}).get("readiness_probes") or {}
+        for probe_name in ("embedding", "generation", "nli_verifier", "trust_ledger"):
+            probe = probes.get(probe_name) or {}
+            checks.append(_check(
+                f"functional:{probe_name}",
+                "ok" if probe.get("status") == "ready" else "fail",
+                f"{probe.get('status', 'missing')}: {probe.get('detail', '')}",
+                "resolve this model/storage probe; a PROTECTED doctor is required",
+            ))
 
     failures = [item for item in checks if item["status"] == "fail"]
     warnings = [item for item in checks if item["status"] == "warn"]
@@ -470,12 +496,19 @@ def build_report(config_path: Path, functional: bool, functional_timeout: float,
         "config": {
             "seed": config.seed,
             "embedding_model": config.embedding.model_name,
+            "embedding_revision": config.embedding.revision,
+            "embedding_precision": config.embedding.precision,
             "embedding_device": config.embedding.device,
             "index": f"{config.index.backend}/{config.index.faiss_kind}",
             "generation_backend": config.generation.backend,
             "generation_model": config.generation.model_name,
+            "generation_revision": config.generation.revision,
+            "generation_precision": config.generation.precision,
+            "generation_quantization": config.generation.quantization,
             "base_url": config.generation.base_url,
             "verifier": config.security.verifier,
+            "nli_model": config.security.nli_model,
+            "nli_revision": config.security.nli_revision,
             "trust_db": config.trust_db_path(),
             "storage_root": config.storage.root,
         },
@@ -518,11 +551,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--corpus", default=None)
     parser.add_argument("--queries", default=None)
     parser.add_argument("--qrels", default=None)
+    parser.add_argument("--set", action="append", metavar="KEY=VALUE", default=None,
+                        help="override the same config keys as run_trust_stream.py, e.g. "
+                             "--set generation.backend=ollama --set generation.model_name=qwen2.5:7b")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     args = parser.parse_args(argv)
 
     report = build_report(Path(args.config), args.functional, args.functional_timeout,
-                          args.corpus, args.queries, args.qrels)
+                          args.corpus, args.queries, args.qrels, args.set)
     if args.json:
         print(json.dumps(report, indent=2, default=str))
     else:

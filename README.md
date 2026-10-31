@@ -383,7 +383,9 @@ python scripts/check_research_environment.py --config config/pilot_gpu.yaml \
 python scripts/run_trust_stream.py --config config/pilot_gpu.yaml \
   --corpus data/nq_pilot/corpus_subset.parquet \
   --queries data/nq_pilot/queries_subset.jsonl --qrels data/nq_pilot/qrels.tsv \
-  --steps 20 --targets 2 --out runs/pilot/trust_stream --require-protected
+  --run-purpose pilot --sample-mode zipf \
+  --limit 5000 --steps 12 --targets 2 --out runs/pilot/trust_stream \
+  --require-protected
 ```
 
 ### Research experiment
@@ -398,16 +400,21 @@ python scripts/check_research_environment.py --config config/nq_gpu.yaml \
 python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
   --corpus data/nq/corpus_subset.parquet \
   --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv \
-  --steps 500 --targets 3 --out runs/nq/trust_stream
+  --run-purpose research --sample-mode no-repeat \
+  --steps 500 --targets 5 --out runs/nq/trust_stream
 ```
 
 For a non-stub generation backend the runner now refuses to proceed unless the
 functional doctor is `PROTECTED`, the verifier is NLI and the trust ledger is
 persistent. `--require-protected` additionally enforces that gate for any
 backend. `run_manifest.json` records the commit, dataset hashes, resolved
-configuration, model backends, seed, hardware, ledger path, indexed passages and
-evaluated queries. The runner writes exposure/citation and document-level
-precision/recall/F1/FPR; answer-level ASR remains **NOT MEASURED**.
+configuration, model backends/revisions/precision/quantisation, seed, hardware,
+ledger path, indexed passages, query pool, stream steps and distinct queries. A
+500-step Zipf run is labelled `research_lifecycle` and is never 500 unique
+queries; the primary research run uses `--sample-mode no-repeat`. The runner
+writes exposure/citation and document-level precision/recall/F1/FPR;
+answer-level ASR remains **NOT MEASURED**, and this runner is not the full attack
+× baseline matrix.
 
 ---
 

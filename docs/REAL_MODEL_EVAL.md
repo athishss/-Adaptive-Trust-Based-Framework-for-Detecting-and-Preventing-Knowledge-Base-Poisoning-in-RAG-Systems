@@ -26,17 +26,20 @@ clearly labelled smoke scopes. Their numbers are not NQ evidence.
 |---|---|---|
 | Purpose | prove the complete real-model path works | measure poisoning behaviour on NQ |
 | Data | 5,000 passages, 20 queries | 200,000 passages, 500 queries |
-| Config | `config/pilot_gpu.yaml` | `config/nq_gpu.yaml` |
-| Output | `runs/pilot/trust_stream/` | `runs/nq/trust_stream/` |
+| Config | `config/pilot_gpu.yaml` (or explicitly alternate `config/colab_pilot_qwen.yaml`) | `config/nq_gpu.yaml` |
+| Output | `runs/pilot/trust_stream/` (or a separate Colab pilot directory) | `runs/nq/trust_stream/` |
 | Claim status | engineering validation only | research result, only after review |
 
 Do not merge the two result directories and do not describe pilot metrics as
 research findings.
 
-The pilot is deliberately not a smaller copy of the scientific configuration:
-it uses the same Contriever, Llama-3.1-8B-Instruct and DeBERTa NLI backends,
-but a small subset and a different storage root. The research thresholds and
-policy are unchanged.
+The local/GPU pilot keeps the research model. The Colab integration pilot is an
+**explicitly named alternate-model pilot**: Contriever + DeBERTa NLI + Qwen2.5-7B
+via Ollama q4_K_M. Qwen and Llama are not equivalent; their manifests and result
+directories must remain separate. The research thresholds and policy are unchanged.
+
+For the full Colab workflow, pinned commits, Drive persistence, model revisions
+and resume rules, see [`COLAB_RUNBOOK.md`](COLAB_RUNBOOK.md).
 
 ---
 
@@ -101,9 +104,10 @@ environment verdict, not a model evaluation.
   and an Ollama model name such as `llama3.1:8b` via an explicit `--set`.
 * The endpoint check lists served models; the functional doctor additionally
   performs a two-token completion.
-* The NLI loader is hard-coded to `cross-encoder/nli-deberta-v3-base` in
-  `trust/verifier.py`. If it cannot load, the verifier falls back to lexical,
-  the doctor reports `DEGRADED`, and the real-model gate refuses the run.
+* The NLI model and revision are configuration fields (`security.nli_model`,
+  `security.nli_revision`) and are recorded in the manifest. If NLI cannot load,
+  the verifier falls back to lexical, the doctor reports `DEGRADED`, and the
+  real-model gate refuses the run.
 
 ---
 
@@ -173,11 +177,14 @@ python scripts/run_trust_stream.py --config config/pilot_gpu.yaml \
   --corpus data/nq_pilot/corpus_subset.parquet \
   --queries data/nq_pilot/queries_subset.jsonl \
   --qrels data/nq_pilot/qrels.tsv \
-  --steps 20 --targets 2 --out runs/pilot/trust_stream --require-protected
+  --run-purpose pilot --sample-mode zipf \
+  --limit 5000 --steps 12 --targets 2 --out runs/pilot/trust_stream \
+  --require-protected
 ```
 
 This is an engineering integration test. Report it as "pilot, real backends,
-not a research result". Its manifest must say `run_kind: real_model`.
+not a research result". Its manifest must say `run_kind: real_model`,
+`run_purpose: pilot`, and `equivalence_claim: false`.
 
 The runner itself ingests the clean corpus, builds the FAISS index, injects the
 two attack passages, probes the NLI verifier and replays the query stream.
@@ -185,7 +192,7 @@ There is no need to run separate CLI ingest/index steps first.
 
 ---
 
-## 7. Research experiment (200K / 500)
+## 7. Research experiment (200K / 500 unique queries)
 
 ```bash
 python scripts/download_data.py --dataset nq --out data/nq \
@@ -200,32 +207,38 @@ python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
   --corpus data/nq/corpus_subset.parquet \
   --queries data/nq/queries_subset.jsonl \
   --qrels data/nq/qrels.tsv \
-  --steps 500 --targets 3 --out runs/nq/trust_stream
+  --run-purpose research --sample-mode no-repeat \
+  --steps 500 --targets 5 --out runs/nq/trust_stream
 ```
 
-`--targets 3` means only three target questions are poisoned in this stream.
+This evaluates 500 query indices without replacement: 500 stream steps and 500
+distinct queries. The manifest records both. The historical 500-step Zipf
+protocol is a **separate** `research_lifecycle` run; it samples with replacement
+and must never be reported as 500 unique queries.
+
+`--targets 5` means only five target questions are poisoned in this stream.
 It is not the seven-attack × eight-baseline matrix. Do not report the stream as
-the full NQ benchmark.
+the full NQ benchmark; answer-level ASR remains **NOT MEASURED**.
 
 ### Resume
 
-Use `--skip-index` to reuse an existing store and saved index:
+Use `--resume` with the exact original arguments. The runner validates the Git
+commit, resolved config, model revisions, dataset hashes, seed, scope and query
+plan before continuing from `stream.jsonl`:
 
 ```bash
 python scripts/run_trust_stream.py --config config/nq_gpu.yaml \
   --corpus data/nq/corpus_subset.parquet \
   --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv \
-  --steps 500 --targets 3 --out runs/nq/trust_stream --skip-index
+  --run-purpose research --sample-mode no-repeat \
+  --steps 500 --targets 5 --out runs/nq/trust_stream --resume
 ```
 
-This skips clean re-ingestion and re-indexing, but the script still re-crafts
-and re-ingests the poison documents before streaming. Use it only after a
-completed run with a valid `provenance.sqlite3` and index in the same output
-root. It is not a checkpoint for a partially completed poison stream.
-
-The CLI `index` command supports `--save-every` and `--limit` for building a
-large index in sittings; the stream runner expects the index and store to be in
-sync.
+`checkpoint.json` is written before and after each step. If the previous process
+died inside a step (`in_flight_step` non-null), resume fails closed because the
+ledger may contain partial effects; start a new run directory. A completed run
+with `metrics.json` is never overwritten. `--skip-index` alone is no longer
+supported.
 
 ---
 
@@ -236,8 +249,9 @@ runs/nq/trust_stream/
   metrics.json          exposure/citation; document-level precision, recall,
                         F1, FPR, detection delay; verification counts; latency
   stream.jsonl          per-query retrieved/context/cited ids and outcomes
-  run_manifest.json     commit, command, dataset hashes, resolved config, model
-                        backends, seed, hardware, ledger path, indexed passages
+  run_manifest.json     v2: commit, command, dataset hashes, resolved config,
+                        exact models/revisions/precision/quantisation, purpose,
+                        query sampling and counts, hardware, ledger path
   trust_history.csv     persistent-ledger history
   figures/              optional matplotlib plots
 ```

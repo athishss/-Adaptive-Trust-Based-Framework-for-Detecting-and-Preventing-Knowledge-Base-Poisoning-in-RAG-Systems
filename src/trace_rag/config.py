@@ -35,6 +35,9 @@ class IngestionConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     backend: Literal["hashing", "huggingface"] = "hashing"
     model_name: str = "facebook/contriever"
+    revision: Optional[str] = Field(
+        None, description="Hugging Face commit SHA; None means the repository default branch")
+    precision: str = Field("float32", description="torch dtype used to load the embedding model")
     dim: int = Field(256, ge=16, description="only used by the hashing backend")
     batch_size: int = Field(32, ge=1)
     device: str = "cpu"
@@ -96,6 +99,12 @@ class ScorerConfig(BaseModel):
 class GenerationConfig(BaseModel):
     backend: Literal["stub", "openai", "ollama", "huggingface"] = "stub"
     model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    revision: Optional[str] = Field(
+        None, description="model commit/revision requested from the serving stack; recorded in the manifest")
+    precision: Optional[str] = Field(
+        None, description="declared serving precision (for example bfloat16 or int4); recorded, not inferred")
+    quantization: Optional[str] = Field(
+        None, description="declared generator quantization (for example q4_K_M); recorded in the manifest")
     base_url: str = "http://localhost:8000/v1"
     api_key_env: str = "OPENAI_API_KEY"
     temperature: float = 0.0
@@ -189,6 +198,9 @@ class SecurityConfig(BaseModel):
     queue_size: int = Field(1000, ge=1)
     max_corroboration: int = Field(3, ge=1)
     verifier: Literal["auto", "nli", "lexical"] = "lexical"
+    nli_model: str = "cross-encoder/nli-deberta-v3-base"
+    nli_revision: Optional[str] = Field(
+        None, description="Hugging Face commit SHA for the NLI model; None means the default branch")
     drain_queue: bool = True              # verify queued HIGH-band items after each answer
     fail_open_without_verifier: bool = False
     # MEDIUM + NEUTRAL means "corroboration did not resolve this".  The default
