@@ -26,8 +26,8 @@ checks out detached HEAD, asserts `git rev-parse HEAD` equals the pin, and print
 the actual SHA before any experiment. Do not replace this with a branch name or
 `git pull` for a reported run.
 
-The notebook's pin is updated to the implementation commit at the end of this
-change. It was **not** run in Colab.
+The notebook pins implementation commit
+`2bac018997a80ba1cf6d8cdc49e8ec20efc4660d`. It was **not** run in Colab.
 
 ## 2. Drive persistence
 
