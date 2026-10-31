@@ -259,24 +259,25 @@ trace-rag --config config/default.yaml query "Who designed the Eiffel Tower?" \
 ## Verified results (smoke scope only)
 
 Environment: Windows 11, CPython 3.13.3, no GPU, no `faiss-cpu`, `torch`,
-`transformers`, `pyarrow` or `matplotlib`. Configuration
-`config/default.yaml` (hashing embeddings, numpy index, stub LLM, lexical
-verifier, heuristic scorer).
+`transformers` or `matplotlib`; `pyarrow 26.0.0` is installed for the Parquet
+subset tests. Configuration `config/default.yaml` (hashing embeddings, numpy
+index, stub LLM, lexical verifier, heuristic scorer).
 
 ### Tests
 
 ```bash
 pytest -q
 pytest -q --cov=trace_rag --cov-report=term-missing
+pytest -q -W error::ResourceWarning
 ```
 
-Result: **266 passed, 6 skipped**. Coverage: **80%** overall (5704 statements).
-The suite runs with `ResourceWarning` visible; no unclosed SQLite connections
-remain. Skips are optional backends: `faiss-cpu` (2 tests), `torch` (1),
-`matplotlib` (3). The readiness tests now cover empty/whitespace HF, OpenAI and
-Ollama completions, HTTP timeouts, credential redaction, malformed/missing NLI
-outputs and the NLI-not-loaded path; preflight classification is also tested.
-Full logs: [`baseline_logs/`](baseline_logs/).
+Result: **340 passed, 6 skipped**. Coverage: **81%** overall (6299 statements,
+1212 missed). The ResourceWarning run is clean. Skips are optional backends:
+`faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3). New tests cover exact
+Parquet subset construction, snapshot corruption/interruption/signature mixing,
+preflight storage isolation and the notebook pin. Historical logs remain in
+[`baseline_logs/`](baseline_logs/); this pass's logs were captured outside the
+repository and record the tested Git SHA.
 
 ### Chronological smoke matrix
 
@@ -358,14 +359,15 @@ is only `DEGRADED`; `READY` requires the functional doctor to report
 ```bash
 python scripts/check_research_environment.py --config config/nq_gpu.yaml
 python scripts/check_research_environment.py --config config/nq_gpu.yaml \
-  --functional --corpus data/nq/corpus_subset.parquet \
+  --functional --preflight-storage-root /tmp/ragledger-preflight \
+  --corpus data/nq/corpus_subset.parquet \
   --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv
 ```
 
-Current host result: **BLOCKED** — `torch`, `transformers`, `faiss` and
-`pyarrow` are absent, CUDA is unavailable, Contriever is not cached, and no
-generator is served at `localhost:8000`. That is an accurate environment
-result, not a model result.
+Current host result: **BLOCKED** — `torch`, `transformers` and `faiss` are
+absent, CUDA is unavailable, Contriever is not cached, and no generator is
+served at `localhost:8000`. That is an accurate environment result, not a model
+result.
 
 ### Integration pilot
 

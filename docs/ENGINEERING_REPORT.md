@@ -2,73 +2,110 @@
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-10-31
-**Code commit under test:** `e84f60390f7011bf69eee1a3d42ff6a54b6a1901`
+**Implementation commit under test:** `58de432c3124cc7cf81dcbfc4cc169b91c00af08`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
-dependencies only (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML
-6.0.3, pytest 9.1.1, pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`,
-`transformers`, `pyarrow` and `matplotlib` are **not installed**.
-**Scope:** measurement correctness, functional model-readiness checks, SQLite
-lifecycle reliability, documentation reconciliation, and regeneration of the
-offline evidence. No security-policy thresholds were changed.
+dependencies plus `pyarrow 26.0.0` installed for the Parquet subset tests
+(numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1,
+pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`, `transformers` and
+`matplotlib` are **not installed**.
+**Scope:** Colab preflight storage isolation, exact subset construction,
+snapshot/recovery hardening, notebook pin correctness, documentation
+reconciliation and offline validation. No security-policy thresholds changed.
 
 ---
 
 ## A. Executive summary
 
-The integrated system was already runnable at smoke scale, but four claims were
-not trustworthy enough to hand over:
+Earlier passes fixed the ASR/exposure label, functional readiness probes, SQLite
+lifecycle and prompt-role separation. This pass audited the Colab handoff and
+found four blockers that could invalidate a run before it started:
 
-* the smoke matrix published a mean **"ASR" of 0.202**; the underlying numerator
-  was *poison reaching the generation context*, not a manipulated answer. It is
-  now labelled **poison exposure rate**, with citation reported separately and
-  **answer-level ASR explicitly `NOT MEASURED`**;
-* `doctor` could report `PROTECTED` from configuration and metadata checks
-  without proving that the generator or NLI model could perform inference;
-* abandoned SQLite connections emitted `ResourceWarning: unclosed database`
-  during the test suite;
-* the README and report described the earlier 235-test run and the old ASR
-  label, so they no longer matched the code.
+* the functional preflight constructed a real pipeline against the experiment's
+  `storage.root`, leaving SQLite files in a fresh run directory; the runner then
+  refused that directory as "partial artifacts";
+* subset construction had no duplicate or blank identifier guard, malformed
+  qrels/query rows could be silently dropped, and the tests only checked a loose
+  size range;
+* snapshot replacement was in place and metadata was not tied to a run
+  signature, so an interrupted restore or a different experiment's snapshot
+  could be mixed into the active run;
+* the notebook pinned a stale implementation commit and downloaded the
+  multi-gigabyte NQ corpus implicitly.
 
 After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite | **266 passed, 6 skipped** in 45.38 s |
-| Coverage | **80%** (5704 statements, 1135 missed) |
+| Full test suite at the tested commit | **340 passed, 6 skipped** |
+| Coverage | **81%** (6299 statements, 1212 missed) |
 | Python compilation | `compileall` exit 0 |
-| ResourceWarnings | **0** with `-W always::ResourceWarning` |
-| Chronological matrix | **56/56 cases**, 0 failures |
-| `demo_person_b.py` | exit 0; 3 poison passages quarantined; later context clean |
-| `run_trust_stream.py` (mini, lexical) | exit 0; 6 eligible attempts; retrieved 1.0; **exposure 0.0**, citation 0.0; no quarantine |
-| `trace-rag doctor` | `DEGRADED`; embedding/generation/NLI fallbacks, ledger and queue ready |
+| ResourceWarnings | **0** with `-W error::ResourceWarning` |
+| Subset tests (direct Parquet) | 34 tests: exact size, gold coverage, seeds, duplicates, invalid rows |
+| Snapshot/recovery tests | 16 tests: corruption, interruption, signature mixing, atomic restore |
+| Preflight isolation tests | 12 tests, including a real offline doctor into a fresh directory |
+| Notebook | 30 cells, 15 code cells, all parse, no saved outputs, pin is an ancestor of HEAD |
+| Offline mini stream with `--backup-dir` | exit 0; 4/4 steps; snapshot chain written |
 | Answer-level ASR | **NOT MEASURED** (no validated attack-specific answer criterion) |
-| Real-model NQ run | **not run** |
+| Real-model NQ run / Colab execution | **not run** |
 
 The system remains reproducible at smoke scale. It is **not** a validated
 benchmark result: the lexical verifier still misses several attack families,
 one clean passage is falsely quarantined in two smoke cases, and no real-model
 or full-dataset experiment has been executed.
 
-### Research-environment preflight (this pass)
+### Research-environment preflight
 
-`scripts/check_research_environment.py` is the new non-invasive gate for a
+`scripts/check_research_environment.py` is the non-invasive gate for a
 real-model run. It reports host/CPU/memory/disk, torch/CUDA/VRAM, the optional
 scientific packages, the configured generator endpoint and served model, the
 Hugging Face cache, the persistent SQLite ledger, dataset files and the resolved
 config. It never downloads weights or starts a service. Static checks alone can
 only produce `DEGRADED`; `READY` requires `--functional` and a `PROTECTED`
-functional doctor. Current NQ result: **BLOCKED** — torch, transformers, faiss
-and pyarrow are absent, CUDA is unavailable, `facebook/contriever` is not
-cached, and `localhost:8000` is not serving the configured Llama model. Exact
-output is in `baseline_logs/readiness_hardening_preflight.txt` and `.json`.
+functional doctor. Current NQ result on this host: **BLOCKED** — torch,
+transformers and faiss are absent, CUDA is unavailable,
+`facebook/contriever` is not cached, and `localhost:8000` is not serving the
+configured Llama model.
 
-The trust-stream runner now fails closed before ingestion for any non-stub
+The functional doctor builds a real `PersonAPipeline`, so this pass isolated its
+storage. It always receives a unique disposable probe root (from
+`--preflight-storage-root`, or a system temporary directory), copies the
+resolved config with model/security/generation settings unchanged, rebases
+absolute or `..` storage paths to safe basenames, records
+`functional_doctor.storage_isolation`, and deletes the probe tree. A regression
+runs the real CLI doctor with stub/lexical config and confirms a fresh
+experiment directory remains empty, so
+`check_output_state(fresh, resume=False)` accepts it. This was the first Colab
+blocker: before the fix, the doctor created `answers.sqlite3`,
+`provenance.sqlite3` and `trust.sqlite3` in the run root and the runner then
+refused the directory.
+
+The trust-stream runner fails closed before ingestion for any non-stub
 generation backend (or with `--require-protected`) unless the doctor is
-`PROTECTED`, `verifier_mode == "nli"` and `trust_persistent` is true. This was
-verified with the offline config: exit 2 with the two expected blockers. A
-successful real run will also write `run_manifest.json` with the commit, dataset
-hashes, config, models, seed, hardware, ledger path and counts. The offline mini
-manifest is correct and explicitly says `run_kind: offline_smoke`.
+`PROTECTED`, `verifier_mode == "nli"` and `trust_persistent` is true. A
+successful real run writes `run_manifest.json` with the commit, dataset hashes,
+config, models, seed, hardware, ledger path and counts. The offline mini
+manifest explicitly says `run_kind: offline_smoke`.
+
+### Exact subsets and snapshot recovery (this pass)
+
+`src/trace_rag/ingestion/subset.py` now streams the Parquet corpus with bounded
+memory, writes through a temporary file plus `os.replace`, rejects duplicate or
+blank document/query IDs, rejects missing gold passages and insufficient rows,
+and verifies exact output count, unique IDs, query membership and 100% gold
+coverage. `read_qrels_set` accepts header or headerless BEIR TSV but rejects
+malformed rows and non-finite scores; `write_queries_exact` rejects duplicate,
+blank, missing or text-less queries. Tests in `tests/test_ingestion_subset.py`
+build real Parquet fixtures for exact size, determinism, seeds, all-gold,
+missing gold, insufficient rows, duplicate IDs, invalid queries and both qrels
+layouts.
+
+`src/trace_rag/snapshots.py` now stages snapshot copies, validates manifest
+signature/hash, SQLite integrity, stream/checkpoint agreement and the complete
+index file set, records `run_signature` in metadata, refuses to restore a
+snapshot from another experiment signature, installs `checkpoint.json` last as
+the commit marker, and keeps a recoverable `.<name>.previous` index directory.
+Interrupted staging is cleaned or refused. `tests/test_snapshots.py` covers
+corruption, interruption, signature mixing and restore atomicity.
 
 ---
 
@@ -82,8 +119,8 @@ manifest is correct and explicitly says `run_kind: offline_smoke`.
 | `config/nq_gpu.yaml` | Added the same security/trust surface with `verifier: nli`, persistent ledger, queue and production quarantine thresholds. |
 | `config/full_nq.yaml` | Same real-model security configuration for the full-corpus IVF-PQ setup. |
 | `config/pilot_gpu.yaml` | **New:** explicit 5K/20-query integration-pilot configuration under `runs/pilot`; it keeps the research model identifiers and is not a results configuration. |
-| `scripts/check_research_environment.py` | **New:** READY/DEGRADED/BLOCKED preflight for Python, OS, CPU/RAM/disk, CUDA/VRAM, scientific packages, configured endpoint and served model, HF cache, persistent ledger, dataset and config. No downloads or service starts. |
-| `config.py` | Added `probe_timeout_s` (default 10 s, bounded 0–120 s) for the functional readiness probes. |
+| `scripts/check_research_environment.py` | **New:** READY/DEGRADED/BLOCKED preflight for Python, OS, CPU/RAM/disk, CUDA/VRAM, scientific packages, configured endpoint and served model, HF cache, persistent ledger, dataset and config. No downloads or service starts. **This pass:** `--preflight-storage-root`, `isolate_storage_config()`, non-creating ledger diagnostics and `functional_doctor.storage_isolation`; the real doctor never writes into the experiment root. |
+| `config.py` | Added `probe_timeout_s` (default 10 s, bounded 0–120 s) for the functional readiness probes. **This pass:** non-mutating `resolve_path()` and `trust_db_path(create_parent=False)` so read-only diagnostics do not create experiment directories. |
 | `scripts/demo_end_to_end.py` | Explicitly builds an **UNPROTECTED** Person A demo (`secure=False`) and prints that mode. |
 | `scripts/demo_person_b.py` | Reuses the attached security stack; scripted verifier exercises queue → refute → quarantine → remediation. |
 | `scripts/run_trust_stream.py` | Reuses the attached stack; figures optional; metrics state answer-level ASR is **NOT MEASURED**. **This pass:** fail-closed gate for real backends (`PROTECTED` + NLI + persistent ledger) before ingestion; `run_manifest.json` provenance; document-level precision/recall/F1/FPR and detection delay. |
@@ -109,6 +146,8 @@ manifest is correct and explicitly says `run_kind: offline_smoke`.
 | `trust/verifier.py` | Evidence recording, counterfactual influence, independent-source filtering, topical refutation gate, person-name conflict detection, trust-aware refutation, lexical/NLI aggregation. **This pass:** `nli_probe()` exercises the loaded cross-encoder and validates the outcome contract. |
 | `ingestion/provenance.py` | **This pass:** idempotent close, failed-constructor cleanup, finalizer; no behaviour change to ingestion. |
 | `provenance/answer_log.py` | **This pass:** idempotent close, failed-constructor cleanup, finalizer; no change to recorded answers. |
+| `ingestion/subset.py` | **This pass:** bounded-memory exact subset construction, atomic output, duplicate/blank ID rejection, strict qrels/query validation, and exact size/unique ID/100% gold verification. |
+| `snapshots.py` | **This pass:** staged backup/restore, signature-bound metadata, manifest hash/index file-set validation, checkpoint-last commit marker, recoverable `.previous` index and interrupted-staging cleanup. |
 
 ### Person C: attacks, baselines, evaluation
 
@@ -138,6 +177,11 @@ manifest is correct and explicitly says `run_kind: offline_smoke`.
 | `tests/test_verifier_nli.py` | NLI/lexical false-positive regressions. |
 | `tests/test_generation.py` | Chat-role separation, document-block escaping, blocked-passage filtering, and generation backend failure recorded as an abstention. |
 | `tests/test_resource_lifecycle.py` | **New this pass:** repeated close is a no-op for all three SQLite components; a constructor that fails after opening SQLite closes its connection; pipeline shutdown can be repeated. |
+| `tests/test_snapshots.py` | **New this pass:** 16 tests for atomic backup/restore, corruption, interruption, signature mixing, index rollback and read-only summaries. |
+| `tests/test_ingestion_subset.py` | **New this pass:** 34 direct Parquet tests for exact size, unique IDs, 100% gold coverage, determinism, seeds, all-gold, missing gold, insufficient rows, duplicate IDs, invalid queries and both qrels layouts. |
+| `tests/test_research_preflight.py` | **Extended this pass:** real CLI doctor into disposable storage; fresh experiment directory remains empty; report records isolation and cleanup. |
+| `tests/test_colab_workflow.py` | **Extended this pass:** notebook preflight isolation/opt-in assertions and a stale-pin guard (ancestor, pin ≠ HEAD, no implementation/test diff, sentinel code at pin). |
+| `notebooks/trace_rag_colab.ipynb` | **This pass:** preflight uses `PREFLIGHT_PARENT` and asserts isolation; raw NQ download is opt-in and validates all three files; pin updated to the tested implementation commit. |
 | `README.md` | Rewritten for the integrated system; **this pass:** 250/80 evidence, functional readiness explanation, exposure/citation table, NOT-MEASURED ASR, current limitation wording. |
 | `docs/REAL_MODEL_EVAL.md` | **New** NQ/GPU runbook; **this pass:** explicit status box (subset, not full corpus, not executed, answer ASR not measured). |
 | `docs/ENGINEERING_REPORT.md` | This report, regenerated from the current execution logs. |
@@ -166,7 +210,11 @@ manifest is correct and explicitly says `run_kind: offline_smoke`.
 | 15 | Medium | Scripts opened a second ledger on the same file. | Re-wiring instead of reusing the factory stack. | Reuse `pipeline.security`; stream refuses unprotected. | Scripts exit 0 (`baseline_logs/`) |
 | 16 | **High** | The smoke table reported **ASR 0.202**; the numerator was poison reaching the generation context, not a successful answer manipulation. | One metric name covered retrieval, citation and answer success; the harness inferred more than it measured. | `EvaluationResult` now carries `eligible_attack_attempts`, `poison_exposed_attempts/rate`, `poison_cited_attempts/rate` and `answer_level_asr=None` with `NOT MEASURED`. Results were regenerated; the old number is relabelled exposure. | `test_poison_rates_use_eligible_attempts_and_hand_calculated_counts`, `test_answer_level_asr_is_explicitly_not_measured`, matrix output asserts `attack_success_rate` absent and `answer_level_asr_status == "NOT MEASURED"` |
 | 17 | **High** | `doctor` trusted model names, `/models` metadata and `nli_ready` booleans; a reachable endpoint with a broken completion or an unloaded NLI model could look research-ready. | Readiness checked configuration, not operations. | Functional probes: finite embedding, two-token completion, fixed NLI inference with label/score validation; `PROTECTED` requires all to pass; `research_ready` requires `PROTECTED`. **This pass:** HF empty/whitespace rejected, OpenAI/Ollama completion text validated, HTTP timeouts failed closed, credentials redacted, malformed/missing NLI outputs rejected, NLI-not-loaded is `failed`. | 20 cases in `tests/test_security_wiring.py` plus preflight tests |
-| 18 | **Medium** | Repeated `ResourceWarning: unclosed database`; abandoned ledgers/stores/logs leaked SQLite connections. | Clearance depended on every test closing its own object; failed paths never did. | Idempotent `close()` on `TrustLedger`, `ProvenanceStore`, `AnswerLog`; failed constructors close partial connections; `pipeline.close()` closes all owned resources; finalizers are a last resort; test teardown closes leftovers. | Full suite run with `-W always::ResourceWarning` reports 0 warnings |
+| 18 | **Medium** | Repeated `ResourceWarning: unclosed database`; abandoned ledgers/stores/logs leaked SQLite connections. | Clearance depended on every test closing its own object; failed paths never did. | Idempotent `close()` on `TrustLedger`, `ProvenanceStore`, `AnswerLog`; failed constructors close partial connections; `pipeline.close()` closes all owned resources; finalizers are a last resort; test teardown closes leftovers. | Full suite run with `-W error::ResourceWarning` reports 0 warnings |
+| 19 | **Critical** | Functional preflight created `answers.sqlite3`, `provenance.sqlite3` and `trust.sqlite3` in a fresh experiment directory; the runner then rejected its own clean run as "partial artifacts". | The doctor ran the real pipeline against the experiment's `storage.root`. | `--preflight-storage-root` plus `isolate_storage_config()`: unique disposable probe tree, model/security config unchanged, absolute/`..` storage paths rebased, isolation recorded, probe removed. | `test_functional_doctor_uses_isolated_storage_and_leaves_fresh_run_empty`, notebook assertion on `storage_isolation` |
+| 20 | **High** | Subset construction could emit duplicate IDs, silently skip malformed qrels/query rows, and was tested only with a loose size range. | No identifier/row validation, in-place output, and weak assertions. | Duplicate/blank ID rejection, strict qrels/query validation, atomic write, exact-count/unique-ID/100%-gold verification, direct Parquet tests. | 34 tests in `tests/test_ingestion_subset.py`; `test_subset_always_keeps_gold_passages` now asserts exactly 300 |
+| 21 | **High** | Snapshot restore replaced files in place and metadata was not tied to a run signature; an interrupted restore or another experiment's snapshot could be mixed in. | No staging/commit marker and no signature binding. | Staged restore, `checkpoint.json` installed last, `run_signature`/manifest hash/index digest validation, signature refusal, recoverable `.previous` index, interrupted-staging cleanup. | 16 tests in `tests/test_snapshots.py`, including corruption, interruption and signature mixing |
+| 22 | **Medium** | Notebook pinned stale commit `2bac018…` and downloaded the multi-gigabyte NQ corpus implicitly. | Pin and data switch were not release-gated. | Pin updated to the tested implementation commit; `RUN_DATASET_DOWNLOAD = False`; raw files validated; stale-pin regression requires the pin to be an ancestor of HEAD, different from HEAD, with no implementation/test diff and sentinel code present at the pin. | `test_notebook_pin_contains_the_test_suite_implementation`, `test_notebook_isolates_preflight_storage_and_requires_data_opt_in` |
 
 **Residual defect, not claimed fixed:** the lexical verifier still produces
 false positives when a correct passage and a poison passage have equal source
@@ -288,18 +336,20 @@ python scripts/check_setup.py
 ```
 
 Environment: Python 3.13.3, Windows 11, numpy 2.5.4, scikit-learn 1.9.1,
-pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1, pytest-cov 7.1.0. No GPU.
-`faiss-cpu`, `torch`, `transformers`, `pyarrow`, `matplotlib` absent.
+pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1, pytest-cov 7.1.0, pyarrow 26.0.0.
+No GPU. `faiss-cpu`, `torch`, `transformers`, `matplotlib` absent.
 
 ### Results
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **266 passed, 6 skipped** in 45.38 s |
-| Coverage | **80%** total (5704 statements, 1135 missed) |
-| `-W always::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
+| `pytest -o addopts="" -q` | **340 passed, 6 skipped** |
+| Coverage | **81%** total (6299 statements, 1212 missed) |
+| `-W error::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
-| `check_setup.py` | exit 1: only `pyarrow` missing; torch/transformers/ollama/vLLM warnings are expected on this host |
+| `check_setup.py` | exit 0: pyarrow found; faiss/torch/transformers/Ollama/vLLM warnings expected on this host |
+| Notebook JSON/AST/pin | 30 cells, 15 code cells parse, no saved outputs; pin is an ancestor of HEAD |
+| Offline mini stream + `--backup-dir` | exit 0; 4/4 steps, 3 distinct queries; snapshot chain and manifest written |
 
 Skipped tests:
 
@@ -314,14 +364,17 @@ Coverage caveats:
 
 * `index/faiss_index.py` 0% (library absent), `embeddings/hf_embedder.py` 0%
   (torch absent), `generation/llm.py` 56% (HTTP/HF paths not exercised),
-  `trust/plots.py` 28% (matplotlib absent), `security.py` 79% (network
+  `trust/plots.py` 28% (matplotlib absent), `security.py` 88% (network
   branches and finalizers are not all exercised offline).
+* New code coverage: `ingestion/subset.py` 91%, `snapshots.py` 86%,
+  `provenance/remediation.py` 100%.
 * These are environment gaps, not passes. They are listed in limitations.
 
-Logs: `baseline_logs/task_final_pytest.txt`,
-`task_final_coverage.txt`, `task_final_compileall.txt`,
-`task_final_check_setup.txt`, `task_final_pytest_after.txt` (ResourceWarning
-run).
+This pass's validation logs were captured outside the repository for the exact
+tested commit (pytest, coverage, ResourceWarning, compileall, notebook check and
+mini stream). They are reproducible with the commands above; no Colab log is
+claimed. The mini-stream manifest records the tested Git commit and
+`run_kind: offline_smoke`.
 
 ---
 
@@ -460,10 +513,12 @@ malicious-answer criterion, so answer-level ASR remains `NOT MEASURED`. See
 5. **The mini corpus is trivially separable.** All signals can separate the toy
    poison; the scorer demo reports perfect held-out scores that mean nothing.
 6. **Optional backends unexercised.** FAISS, HuggingFace embeddings, torch,
-   transformers, pyarrow and matplotlib are not installed. Their tests are
-   skipped. `run_trust_stream` figures are skipped without matplotlib. The
-   functional readiness probes for real backends are unit-tested with simulated
-   operations but have not been run against real models here.
+   transformers and matplotlib are not installed. Their tests are skipped.
+   `pyarrow 26.0.0` was installed only for the Parquet subset tests; the Colab
+   target is `pyarrow==17.0.0`, which remains unverified. `run_trust_stream`
+   figures are skipped without matplotlib. The functional readiness probes for
+   real backends are unit-tested with simulated operations but have not been run
+   against real models here.
 7. **No real-NQ attack/baseline matrix.** `run_chronological_eval.py` is
    fixture-only. `run_trust_stream.py` is the available real-data end-to-end
    path and does not compute answer-level ASR.
@@ -498,10 +553,10 @@ pip install -e ".[dev]"
 
 pytest -o addopts="" -q
 pytest -o addopts="" -q --cov=trace_rag --cov-report=term-missing
-pytest -o addopts="" -q -W always::ResourceWarning
+pytest -o addopts="" -q -W error::ResourceWarning
 python -m compileall -q src scripts tests
 
-python scripts/check_setup.py          # exit 1 is expected if pyarrow is absent
+python scripts/check_setup.py          # exit 0; optional backends warn
 trace-rag doctor                       # expect DEGRADED in this offline setup
 
 python scripts/run_chronological_eval.py --out runs/final_smoke
@@ -510,12 +565,14 @@ python scripts/demo_person_b.py --root runs/final_demo_b
 
 python scripts/run_trust_stream.py --config config/default.yaml \
   --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json \
-  --steps 12 --targets 2 --out runs/final_trust_stream
+  --steps 12 --targets 2 --out runs/final_trust_stream \
+  --backup-dir runs/final_trust_stream_backups
 ```
 
-Expected: **266 passed, 6 skipped**; 56/56 matrix cases; all scripts exit 0;
-`doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning run
-is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
+Expected: **340 passed, 6 skipped**; the pin test passes only after the
+notebook commit that follows the tested implementation commit; all scripts exit
+0; `doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning
+run is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
 statement and `answer_level_asr_status = NOT MEASURED`.
 
 For the real-model run, follow `docs/REAL_MODEL_EVAL.md`. A reportable run
@@ -526,25 +583,22 @@ label a `DEGRADED` or `UNPROTECTED` run as RAGLedger.
 
 ### Captured evidence
 
+This pass's logs were written outside the repository so they cannot drift from
+the tested tree. They record the exact `git rev-parse HEAD` in the mini-stream
+manifest and were captured for commit
+`58de432c3124cc7cf81dcbfc4cc169b91c00af08`:
+
 ```
-baseline_logs/task_final_pytest.txt
-baseline_logs/task_final_pytest_after.txt      # -W always::ResourceWarning, 0 warnings
-baseline_logs/task_final_coverage.txt
-baseline_logs/task_final_compileall.txt
-baseline_logs/task_final_check_setup.txt
-baseline_logs/task_final_deps.txt
-baseline_logs/task_final_environment.txt
-baseline_logs/task_final_smoke_matrix.txt
-baseline_logs/task_final_demo_b.txt
-baseline_logs/task_final_trust_stream.txt
-baseline_logs/task_final_doctor.txt
-runs/final_smoke/results.json
-runs/final_smoke/results.csv
-runs/final_smoke/summary.md
-runs/final_smoke/cases/*/stream.jsonl
-runs/final_trust_stream/metrics.json
-runs/final_trust_stream/stream.jsonl
+pytest.txt
+coverage.txt
+resource_warnings.txt          # -W error::ResourceWarning, 0 warnings
+compileall.txt
+notebook_check.txt             # JSON/AST/pin, no saved outputs
+mini_stream.txt
+mini_stream/active/run_manifest.json
+check_setup.txt
 ```
 
-All captured logs are from the environment described at the top of this report.
+Historical committed evidence remains in `baseline_logs/` and describes older
+commits; it is not evidence for this pass. No Colab or real-model log exists.
 They are not portable measurements of another machine or GPU.

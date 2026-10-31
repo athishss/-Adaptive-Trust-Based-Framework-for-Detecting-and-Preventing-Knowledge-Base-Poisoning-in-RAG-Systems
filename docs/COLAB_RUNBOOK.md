@@ -3,7 +3,9 @@
 The executable notebook is [`notebooks/trace_rag_colab.ipynb`](../notebooks/trace_rag_colab.ipynb).
 This runbook documents the same workflow as copy-paste commands and states what
 is, and is not, validated. The notebook has **not** been executed in Colab; the
-repository validation is static (JSON/AST/config tests) plus an offline mini run.
+repository validation is the offline test suite (including direct Parquet subset
+and snapshot-recovery tests), notebook JSON/AST/pin checks, coverage,
+ResourceWarning and compileall checks, and an offline mini stream.
 
 > **Scope:** the Colab pilot uses an explicitly different generator,
 > **Qwen2.5-7B via Ollama q4_K_M**, to fit a free T4. It is an integration pilot,
@@ -27,7 +29,10 @@ the actual SHA before any experiment. Do not replace this with a branch name or
 `git pull` for a reported run.
 
 The notebook pins implementation commit
-`2bac018997a80ba1cf6d8cdc49e8ec20efc4660d`. It was **not** run in Colab.
+`58de432c3124cc7cf81dcbfc4cc169b91c00af08`. That commit contains the exact
+implementation and tests described here; the later notebook commit only changes
+this pin and documentation, so it is not pinned to itself. The notebook was
+**not** run in Colab.
 
 ## 2. Drive persistence
 
@@ -54,14 +59,20 @@ count and SQLite snapshot all describe the same completed step. The prepared
 index is copied once; later snapshots reference its digest without duplicating
 hundreds of megabytes at every step.
 
-Before a run, the notebook calls `restore_latest_snapshot`. It validates the
-snapshot metadata, checkpoint/stream agreement, SQLite integrity and index
-digest, then restores only if the active checkpoint is missing, older or
-in-flight. The runner itself refuses any non-empty directory with partial
-ingestion, index or poison artifacts, even when no checkpoint or manifest
-exists. Safe recovery is: preserve the partial active directory for diagnosis,
-restore the latest valid snapshot, or create a new run directory. Never delete
-an incomplete directory and reuse its name as a clean run.
+Before a run, the notebook calls `restore_latest_snapshot`. Snapshot metadata
+records the run signature, manifest hash, index base/digest/file set, checkpoint
+stream position and SQLite state. Restore refuses a snapshot whose run signature
+differs from the current config/model/dataset/code signature, so two experiments
+can never be mixed. Replacement uses a staging directory and installs
+`checkpoint.json` last as the commit marker; an existing index is kept as a
+recoverable `.<name>.previous` directory until the new one is installed. An
+interrupted backup or restore is detected and cleaned or refused rather than
+being silently resumed. The runner itself refuses any non-empty directory with
+partial ingestion, index or poison artifacts, even when no checkpoint or
+manifest exists. Safe recovery is: preserve the partial active directory for
+diagnosis, restore the latest valid snapshot, or create a new run directory.
+Never delete an incomplete directory and reuse its name as a clean run, and
+never hand-edit `checkpoint.json` to force a resume.
 
 ## 3. Install and models
 
@@ -110,15 +121,22 @@ DeBERTa.
 ## 4. Data preparation
 
 The raw BEIR NQ source is downloaded once to `datasets/raw`; subsets are built
-with the repository's existing `build_subset` and `write_queries_subset`
-functions, always retaining gold passages. This avoids a second full corpus
-download and keeps pilot/research subsets separate.
+with `build_exact_subset` / `write_queries_exact`, always retaining every gold
+passage for the selected queries. Construction streams the Parquet corpus with
+bounded memory, refuses duplicate or blank document/query IDs, rejects missing
+gold passages and insufficient rows, writes the output atomically, and then
+`verify_subset` independently checks the exact row count, unique IDs, query
+membership and 100% gold coverage.
 
-* Pilot: 5,000 passages, 20-query pool.
-* Research: 200,000 passages, 500-query pool.
+* Pilot: exactly 5,000 passages, 20-query pool.
+* Research: exactly 200,000 passages, 500-query pool.
 
-Do not start either download automatically on a small disk. The notebook has
-`RUN_DATASET_DOWNLOAD` and `RUN_RESEARCH` switches.
+Downloading the raw corpus is deliberately **opt-in**:
+`RUN_DATASET_DOWNLOAD = False` in the notebook. If any of `corpus.parquet`,
+`queries.parquet` or `qrels.tsv` is missing, the notebook raises an explanatory
+error instead of silently consuming several gigabytes of Drive space. Set the
+flag to `True` after checking free space, or copy existing raw files into
+`datasets/raw`. `RUN_RESEARCH` remains a separate opt-in.
 
 ## 5. Functional preflight
 
@@ -126,11 +144,15 @@ Both preflight and runner receive the **same config and the same `--set`
 overrides**. The preflight writes a resolved temporary YAML and the doctor reads
 that exact file, eliminating the check-one-config/run-another failure.
 
-Pilot:
+The functional doctor constructs a real pipeline and therefore creates SQLite
+files. It must not write them into the experiment directory, because the runner
+refuses a non-empty output directory without a checkpoint. Pass a disposable
+parent directory:
 
 ```bash
 python scripts/check_research_environment.py \
   --config config/colab_pilot_qwen.yaml --functional --json \
+  --preflight-storage-root "$PREFLIGHT_PARENT/pilot" \
   --corpus "$PILOT/corpus_subset.parquet" \
   --queries "$PILOT/queries_subset.jsonl" --qrels "$PILOT/qrels.tsv" \
   --set embedding.revision=2bd46a25019aeea091fd42d1f0fd4801675cf699 \
@@ -139,6 +161,16 @@ python scripts/check_research_environment.py \
   --set generation.quantization="$QWEN_QUANT" \
   --set storage.root="$PILOT_RUN"
 ```
+
+The doctor copies the resolved config with model, security and generation
+settings unchanged, points every storage path at a unique child of
+`--preflight-storage-root`, rebases absolute or `..` storage paths to safe
+basenames, and records the result under
+`functional_doctor.storage_isolation` in the JSON (`schema`,
+`intended_root`, `probe_root`, `rebased_paths`, `cleaned`). The child is
+deleted afterwards. The notebook asserts that a fresh experiment directory is
+still absent and writes the JSON/log to `MyDrive/RAGLedger/preflight/`, never
+to the probe directory.
 
 It must print `READY` and contain a `PROTECTED` doctor with successful
 embedding, generation, NLI and trust-ledger probes. Exit codes are `0 READY`,
@@ -174,6 +206,7 @@ pinned Llama revision and an adequate GPU:
 ```bash
 python scripts/check_research_environment.py \
   --config config/nq_gpu.yaml --functional --json \
+  --preflight-storage-root "$PREFLIGHT_PARENT/research" \
   --corpus "$RESEARCH/corpus_subset.parquet" \
   --queries "$RESEARCH/queries_subset.jsonl" --qrels "$RESEARCH/qrels.tsv" \
   --set embedding.revision=2bd46a25019aeea091fd42d1f0fd4801675cf699 \
@@ -236,12 +269,15 @@ python scripts/run_trust_stream.py <the exact original arguments> --resume
 embedding/generator/NLI revisions, dataset hashes, seed, purpose, sample mode,
 steps, targets, limit, source count and target query ids. A changed model or
 dataset is rejected rather than mixed. Completed steps are read from
-`stream.jsonl`; work resumes at the next step.
+`stream.jsonl`; work resumes at the next step. Snapshot restore performs the
+same signature check before touching the active directory.
 
 If the checkpoint says `in_flight_step` is not null, the previous process died
 inside a step. The ledger may contain partial trust effects, so resume fails
-closed; start a **new run directory**. A completed run (with `metrics.json`) is
-never overwritten. `--skip-index` is no longer sufficient; use `--resume`.
+closed; start a **new run directory** or restore a snapshot that predates the
+in-flight step. A completed run (with `metrics.json`) is never overwritten.
+`--skip-index` is no longer sufficient; use `--resume`. Checkpoint/stream row
+count/SQLite/index disagreement is a refusal, not a repair.
 
 ## 9. Outputs and export
 
@@ -265,6 +301,9 @@ stays in the run directory on Drive for resume.
 
 * GPU is required for the notebook; it aborts without CUDA.
 * The pilot has been tested only offline locally; **not in Colab**.
+* Local validation used `pyarrow 26.0.0`; the Colab target pin is
+  `pyarrow==17.0.0`. The pinned Colab stack remains unverified until the
+  notebook is actually executed there.
 * `faiss-cpu` means CPU FAISS indexing. No GPU FAISS claim is made.
 * Qwen Ollama q4_K_M is an alternate pilot model, not Llama research.
 * Llama-3.1-8B research requires a larger GPU than a free T4, plus gated model

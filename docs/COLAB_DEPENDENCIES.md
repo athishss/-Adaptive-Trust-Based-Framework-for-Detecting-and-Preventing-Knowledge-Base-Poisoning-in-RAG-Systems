@@ -26,3 +26,8 @@ server version. The Qwen digest itself is recorded at pull time, never guessed.
 The versions above are only a starting compatibility set. They must be tested
 in the selected Colab image before a real experiment; the notebook records the
 observed versions in `run_manifest.json` and the preflight JSON.
+
+Local repository validation installed `pyarrow 26.0.0` only to exercise the
+Parquet subset code; that is **not** evidence that the `pyarrow==17.0.0` Colab
+pin works. `torch`, `transformers` and `faiss` were not installed on the local
+validation host, so their tests were skipped.

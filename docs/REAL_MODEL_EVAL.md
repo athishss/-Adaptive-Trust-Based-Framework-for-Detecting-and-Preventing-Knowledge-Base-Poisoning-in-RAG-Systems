@@ -8,7 +8,7 @@ record, not a report of real-model results.
 >
 > * Starting commit for this pass: `9bf18ca69f423ae2d5770c3f472b3d7357ef1638`.
 > * Code/preflight commit: `e84f60390f7011bf69eee1a3d42ff6a54b6a1901`.
-> * Colab workflow/pinned implementation commit: `2bac018997a80ba1cf6d8cdc49e8ec20efc4660d`.
+> * Colab workflow/pinned implementation commit: `58de432c3124cc7cf81dcbfc4cc169b91c00af08`.
 > * Research scope: a **200,000-passage / 500-query subset** of Natural
 >   Questions, not the full 2.68M-passage corpus.
 > * Current preflight: **BLOCKED** on this Windows host.
@@ -87,15 +87,17 @@ works. To allow `READY`, run the functional doctor probes with HF offline flags:
 
 ```bash
 python scripts/check_research_environment.py --config config/nq_gpu.yaml \
-  --functional --corpus data/nq/corpus_subset.parquet \
+  --functional --preflight-storage-root /tmp/ragledger-preflight \
+  --corpus data/nq/corpus_subset.parquet \
   --queries data/nq/queries_subset.jsonl --qrels data/nq/qrels.tsv
 ```
 
 Current host output: **BLOCKED**. Blocking checks: missing `torch`,
-`transformers`, `faiss` and `pyarrow`; no CUDA; `facebook/contriever` absent from
-the local cache; no generator served at `localhost:8000`. The NLI model file is
-cached, but `transformers` is absent, so NLI inference cannot run. This is an
-environment verdict, not a model evaluation.
+`transformers` and `faiss`; no CUDA; `facebook/contriever` absent from
+the local cache; no generator served at `localhost:8000`. `pyarrow 26.0.0` is
+installed locally but the Colab target pin `17.0.0` is still unverified. The NLI
+model file is cached, but `transformers` is absent, so NLI inference cannot run.
+This is an environment verdict, not a model evaluation.
 
 ### Endpoint and model rules
 
