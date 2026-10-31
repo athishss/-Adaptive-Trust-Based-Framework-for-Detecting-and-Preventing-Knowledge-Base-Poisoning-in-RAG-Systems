@@ -74,7 +74,7 @@ from trace_rag.config import Config
 from trace_rag.evaluation.metrics import answer_level_asr_fields
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
 from trace_rag.ingestion.subset import verify_subset
-from trace_rag.snapshots import backup_snapshot
+from trace_rag.snapshots import backup_snapshot, restore_latest_snapshot
 from trace_rag.pipeline import PersonAPipeline
 from trace_rag.trust import TrustLedger, TrustPolicy
 from trace_rag.trust.plots import plot_quarantine_timeline, plot_trust_dynamics, write_history_csv
@@ -472,6 +472,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--out", default="runs/trust_stream")
     parser.add_argument("--backup-dir", default=None,
                         help="Drive backup root; writes atomic snapshots at prepared/step boundaries")
+    parser.add_argument("--restore", action="store_true",
+                        help="restore the newest Drive snapshot matching this exact run signature "
+                             "before checking or resuming the active run (requires --backup-dir)")
     parser.add_argument("--set", action="append", metavar="KEY=VALUE", default=None,
                         help="override any config value, e.g. "
                              "--set generation.backend=ollama --set retrieval.top_k=5 "
@@ -512,12 +515,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("--skip-index is no longer sufficient; use --resume for a prepared run",
               file=sys.stderr)
         return 2
-    try:
-        previous_checkpoint = check_output_state(out_dir, args.resume)
-    except ValueError as exc:
-        print(f"refusing to mix run outputs: {exc}", file=sys.stderr)
+    if args.restore and not args.backup_dir:
+        print("--restore requires --backup-dir", file=sys.stderr)
         return 2
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     config = apply_overrides(Config.load(args.config, storage={"root": str(out_dir)}), args.set)
     # Configure the security stack before building the pipeline.  Building it
@@ -578,6 +578,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     signature = run_signature(config, args.run_purpose, args.sample_mode, args.seed,
                               args.steps, args.targets, args.limit, args.n_sources,
                               dataset_identity, [target["qid"] for target in targets])
+    # Restore is deliberately owned by the runner: the canonical signature has
+    # just been computed from the effective configuration, dataset contract and
+    # code revision.  A snapshot for any other experiment is never installed in
+    # the active directory, and the active directory is checked only afterwards.
+    restored = None
+    if args.restore:
+        restored = restore_latest_snapshot(out_dir, Path(args.backup_dir),
+                                           expected_signature=signature)
+        if restored is None:
+            print(f"no Drive snapshot matches run signature {signature[:12]}…; "
+                  "continuing without restoring")
+        else:
+            print(f"restored matching Drive snapshot for {signature[:12]}… at step "
+                  f"{restored.get('completed_steps', 0)}")
+            if (out_dir / "metrics.json").exists():
+                print("restored a completed run; no steps will be executed")
+                return 0
+    resume = bool(args.resume or restored is not None)
+    try:
+        previous_checkpoint = check_output_state(out_dir, resume)
+    except ValueError as exc:
+        print(f"refusing to mix run outputs: {exc}", file=sys.stderr)
+        return 2
+    out_dir.mkdir(parents=True, exist_ok=True)
     if previous_checkpoint is not None:
         previous_manifest = _read_json(out_dir / "run_manifest.json")
         if previous_checkpoint.get("signature") != signature or \
@@ -588,7 +612,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"resuming prepared run {out_dir} at step "
               f"{previous_checkpoint.get('completed_steps', 0)}/{args.steps}")
 
-    pipeline = PersonAPipeline.from_config(config, load_existing_index=args.resume)
+    pipeline = PersonAPipeline.from_config(config, load_existing_index=resume)
     # A real-model run must never proceed on a degraded security stack.  This
     # check runs before ingestion/indexing so a misconfigured GPU run fails in
     # seconds instead of after hours of embedding work.

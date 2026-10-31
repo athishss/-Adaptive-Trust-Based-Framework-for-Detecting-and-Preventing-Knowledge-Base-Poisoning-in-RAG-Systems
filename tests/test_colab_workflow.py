@@ -93,6 +93,26 @@ def test_notebook_pin_contains_the_test_suite_implementation():
     assert "expected_signature" in snapshots_at_pin
 
 
+def test_runner_owns_canonical_signature_checked_restore():
+    """Recovery must use the runner's one signature path, not a notebook copy."""
+    runner = (ROOT / "scripts" / "run_trust_stream.py").read_text(encoding="utf-8")
+    assert "expected_signature=signature" in runner
+    signature_at = runner.index("signature = run_signature(")
+    restore_at = runner.index("restore_latest_snapshot(")
+    state_at = runner.index("check_output_state(out_dir, resume)")
+    assert signature_at < restore_at < state_at, (
+        "recovery must compute the canonical signature, restore, then validate the "
+        "restored active directory")
+    assert "load_existing_index=resume" in runner
+
+    notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(
+        encoding="utf-8"))
+    text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
+    assert "--restore" in text
+    assert "restore_latest_snapshot(out, backup)" not in text
+    assert "run_signature(" not in text, "the notebook must not duplicate signature logic"
+
+
 def test_notebook_isolates_preflight_storage_and_requires_data_opt_in():
     notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(encoding="utf-8"))
     text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
@@ -216,6 +236,12 @@ def test_output_guard_refuses_overwrite_and_mixed_resume(tmp_path):
         stream.check_output_state(tmp_path, resume=True)
 
 
+def test_restore_flag_requires_a_backup_directory(capsys):
+    assert stream.main(["--corpus", "missing.parquet", "--queries", "missing.jsonl",
+                        "--restore"]) == 2
+    assert "--restore requires --backup-dir" in capsys.readouterr().err
+
+
 def test_runbook_documents_the_fork_drive_preflight_and_both_scopes():
     text = (ROOT / "docs" / "COLAB_RUNBOOK.md").read_text(encoding="utf-8")
     assert "athishss/-Adaptive-Trust-Based-Framework" in text
@@ -272,7 +298,7 @@ def test_snapshot_restore_preserves_checkpoint_and_sqlite_state(tmp_path):
     conn.commit(); conn.close()
     (run / "checkpoint.json").write_text(json.dumps(
         {"completed_steps": 0, "in_flight_step": 0, "signature": "sig"}))
-    restored = restore_latest_snapshot(run, backup)
+    restored = restore_latest_snapshot(run, backup, expected_signature="sig")
     assert restored and restored["completed_steps"] == 1
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT value FROM state").fetchone()[0] == 1
@@ -333,7 +359,8 @@ def test_notebook_preserves_layout_and_uses_content_for_active_runs():
     assert len(headings) == 13
     text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
     assert "/content/ragledger_active" in text
-    assert "backup-dir" in text and "restore_latest_snapshot" in text
+    assert "backup-dir" in text and "--restore" in text
+    assert "restore_latest_snapshot(out, backup)" not in text
     assert "constraints/colab.txt" in text
     assert "5,000" in text and "200,000" in text
 

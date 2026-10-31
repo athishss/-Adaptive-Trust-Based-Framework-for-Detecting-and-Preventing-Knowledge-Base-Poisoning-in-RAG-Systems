@@ -11,6 +11,7 @@ import pytest
 from trace_rag import snapshots
 
 SIGNATURE = "sha256:" + "a" * 64
+OTHER_SIGNATURE = "sha256:" + "b" * 64
 
 
 def _write_run(run: Path, steps: int, value: int = 0, signature: str = SIGNATURE,
@@ -76,7 +77,8 @@ def test_snapshot_at_step_zero_and_restore_without_active_directory(tmp_path):
     assert meta["completed_steps"] == 0
     shutil.rmtree(run)
 
-    restored = snapshots.restore_latest_snapshot(run, backup)
+    restored = snapshots.restore_latest_snapshot(run, backup,
+                                                  expected_signature=SIGNATURE)
 
     assert restored is not None and restored["completed_steps"] == 0
     assert _checkpoint(run)["completed_steps"] == 0
@@ -230,18 +232,106 @@ def test_recovery_is_idempotent_and_does_not_mix_signatures(tmp_path):
     _snapshot(run, backup, 2, copy_index=True, value=2)
     shutil.rmtree(run)
 
-    first = snapshots.restore_latest_snapshot(run, backup)
-    second = snapshots.restore_latest_snapshot(run, backup)
+    first = snapshots.restore_latest_snapshot(run, backup,
+                                               expected_signature=SIGNATURE)
+    second = snapshots.restore_latest_snapshot(run, backup,
+                                                expected_signature=SIGNATURE)
 
     assert first is not None and second is None
     assert _checkpoint(run)["signature"] == SIGNATURE
 
-    _write_run(run, 2, value=9, signature="sha256:" + "b" * 64)
+    _write_run(run, 2, value=9, signature=OTHER_SIGNATURE)
     (run / "checkpoint.json").write_text(json.dumps({
-        "signature": "sha256:" + "b" * 64, "completed_steps": 2,
+        "signature": OTHER_SIGNATURE, "completed_steps": 2,
         "in_flight_step": 2}))
+    assert snapshots.restore_latest_snapshot(
+        run, backup, expected_signature=SIGNATURE) is None
+    assert _checkpoint(run)["signature"] == OTHER_SIGNATURE
+
+
+def test_wrong_expected_signature_is_rejected_before_active_files_change(tmp_path):
+    run, backup = tmp_path / "run", tmp_path / "backup"
+    _snapshot(run, backup, 2, copy_index=True, value=5)
+
+    # Make the active run interrupted and inconsistent with the snapshot.  A
+    # restore with the wrong expected signature must not touch any of it.
+    connection = sqlite3.connect(run / "trust.sqlite3")
+    connection.execute("UPDATE state SET value = 9")
+    connection.commit()
+    connection.close()
+    (run / "index.npz").write_bytes(b"active-index")
+    checkpoint_before = json.dumps({
+        "signature": SIGNATURE, "completed_steps": 2, "in_flight_step": 2,
+    })
+    (run / "checkpoint.json").write_text(checkpoint_before, encoding="utf-8")
+
+    assert snapshots.restore_latest_snapshot(
+        run, backup, expected_signature=OTHER_SIGNATURE) is None
+    assert (run / "checkpoint.json").read_text(encoding="utf-8") == checkpoint_before
+    assert _value(run / "trust.sqlite3") == 9
+    assert (run / "index.npz").read_bytes() == b"active-index"
+
+    # The correct snapshot is still recoverable after that failed attempt.
+    restored = snapshots.restore_latest_snapshot(run, backup,
+                                                  expected_signature=SIGNATURE)
+    assert restored is not None and restored["completed_steps"] == 2
+    assert _value(run / "trust.sqlite3") == 5
+    assert (run / "index.npz").read_bytes() == b"index-v1"
+    assert _checkpoint(run)["in_flight_step"] is None
+
+
+def test_restore_without_an_experiment_identity_is_refused(tmp_path):
+    run, backup = tmp_path / "run", tmp_path / "backup"
+    _snapshot(run, backup, 1, copy_index=True, value=1)
+    shutil.rmtree(run)
+
     assert snapshots.restore_latest_snapshot(run, backup) is None
-    assert _checkpoint(run)["signature"] == "sha256:" + "b" * 64
+    assert not (run / "checkpoint.json").exists()
+
+
+def test_completed_run_is_never_replaced_by_a_snapshot(tmp_path):
+    run, backup = tmp_path / "run", tmp_path / "backup"
+    _snapshot(run, backup, 1, copy_index=True, value=1)
+    (run / "metrics.json").write_text('{"state": "completed"}', encoding="utf-8")
+    checkpoint_before = (run / "checkpoint.json").read_text(encoding="utf-8")
+
+    assert snapshots.restore_latest_snapshot(
+        run, backup, expected_signature=SIGNATURE) is None
+    assert (run / "metrics.json").read_text(encoding="utf-8") == '{"state": "completed"}'
+    assert (run / "checkpoint.json").read_text(encoding="utf-8") == checkpoint_before
+
+
+def test_shared_backup_parent_cannot_mix_experiment_state(tmp_path):
+    parent = tmp_path / "drive" / "backups"
+    run_a, run_b = tmp_path / "active" / "pilot", tmp_path / "active" / "research"
+    _snapshot(run_a, parent, 1, copy_index=True, value=1, signature=SIGNATURE)
+
+    # A second experiment cannot replace the shared prepared index or add a
+    # snapshot under an index that belongs to the first experiment.
+    with pytest.raises(ValueError, match="different run signature"):
+        _snapshot(run_b, parent, 1, copy_index=True, value=2,
+                  signature=OTHER_SIGNATURE)
+    summary = snapshots.snapshot_summary(parent)
+    assert summary["run_signature"] == SIGNATURE
+    assert summary["completed_steps"] == 1
+
+    # Nor can the other experiment's expected signature overwrite A's active run.
+    checkpoint_before = (run_a / "checkpoint.json").read_text(encoding="utf-8")
+    assert snapshots.restore_latest_snapshot(
+        run_a, parent, expected_signature=OTHER_SIGNATURE) is None
+    assert (run_a / "checkpoint.json").read_text(encoding="utf-8") == checkpoint_before
+    assert _value(run_a / "trust.sqlite3") == 1
+
+    # A remains recoverable, and B works in its own backup directory.
+    shutil.rmtree(run_a)
+    assert snapshots.restore_latest_snapshot(
+        run_a, parent, expected_signature=SIGNATURE)["completed_steps"] == 1
+    backup_b = tmp_path / "drive" / "backups_research"
+    _snapshot(run_b, backup_b, 1, copy_index=True, value=2,
+              signature=OTHER_SIGNATURE)
+    shutil.rmtree(run_b)
+    assert snapshots.restore_latest_snapshot(
+        run_b, backup_b, expected_signature=OTHER_SIGNATURE)["completed_steps"] == 1
 
 
 def test_restore_failure_before_checkpoint_commit_can_be_retried(tmp_path, monkeypatch):
@@ -259,11 +349,13 @@ def test_restore_failure_before_checkpoint_commit_can_be_retried(tmp_path, monke
 
     monkeypatch.setattr(snapshots, "_install_file", fail_at_checkpoint)
     with pytest.raises(OSError, match="simulated runtime reset"):
-        snapshots.restore_latest_snapshot(run, backup)
+        snapshots.restore_latest_snapshot(run, backup,
+                                          expected_signature=SIGNATURE)
     assert _checkpoint(run)["in_flight_step"] == 2
 
     monkeypatch.setattr(snapshots, "_install_file", real_install)
-    restored = snapshots.restore_latest_snapshot(run, backup)
+    restored = snapshots.restore_latest_snapshot(run, backup,
+                                                 expected_signature=SIGNATURE)
     assert restored is not None and restored["completed_steps"] == 2
     assert _checkpoint(run)["in_flight_step"] is None
 

@@ -159,6 +159,13 @@ def backup_snapshot(run_dir: Path, backup_dir: Path, completed_steps: int,
     if rows != int(completed_steps):
         raise ValueError(f"stream has {rows} rows but checkpoint says {completed_steps}")
     index_dir = backup_dir / "index"
+    index_manifest_path = backup_dir / "index_manifest.json"
+    existing_index_manifest = _read(index_manifest_path) if index_manifest_path.exists() else {}
+    existing_index_signature = str(existing_index_manifest.get("run_signature") or "")
+    if existing_index_signature and existing_index_signature != signature:
+        raise ValueError(
+            "backup directory contains an index snapshot for a different run signature; "
+            "use a separate --backup-dir for this experiment")
     if copy_index:
         staging_index = backup_dir / f".index-{_now()}.tmp"
         staging_index.mkdir(parents=True)
@@ -173,8 +180,8 @@ def backup_snapshot(run_dir: Path, backup_dir: Path, completed_steps: int,
         raise FileNotFoundError("index snapshot is missing; create the prepared snapshot first")
     index_files = sorted(item.name for item in index_dir.iterdir() if item.is_file())
     index_digest = _index_digest(index_dir)
-    _write(backup_dir / "index_manifest.json",
-           {"digest": index_digest, "files": index_files})
+    _write(index_manifest_path,
+           {"digest": index_digest, "files": index_files, "run_signature": signature})
     # Store where the index lives inside the run so restore does not assume the
     # default top-level ``index`` name.
     run_resolved, base_resolved = run_dir.resolve(), Path(index_base).resolve()
@@ -267,6 +274,10 @@ def _validate(path: Path, backup_dir: Path) -> Optional[Dict[str, Any]]:
             return None
         if meta.get("stream_sha256") and _sha(stream) != meta["stream_sha256"]:
             return None
+        index_manifest = _read(backup_dir / "index_manifest.json")
+        index_signature = str(index_manifest.get("run_signature") or "")
+        if index_signature and index_signature != signature:
+            return None
         for relative in meta.get("sqlite_files", []):
             if not _sqlite_ok(path / relative):
                 return None
@@ -332,6 +343,10 @@ def restore_latest_snapshot(run_dir: Path, backup_dir: Path,
     never installed over an active run.
     """
     run_dir, backup_dir = Path(run_dir), Path(backup_dir)
+    if (run_dir / "metrics.json").exists():
+        # A completed run is evidence of a finished experiment.  Never restore
+        # a checkpoint snapshot over it, even when the signature matches.
+        return None
     run_dir.mkdir(parents=True, exist_ok=True)
     for leftover in run_dir.glob(".restore-*.tmp"):
         shutil.rmtree(leftover, ignore_errors=True)
@@ -343,15 +358,23 @@ def restore_latest_snapshot(run_dir: Path, backup_dir: Path,
         # checkpoint and manifest disagree: installing either snapshot would mix
         # two identities.  Leave the evidence in place for human diagnosis.
         return None
+    if expected_signature and active_signatures and expected_signature not in active_signatures:
+        # Never replace one experiment's active run with another experiment's
+        # snapshot, even if the backup directory is shared.
+        return None
     wanted_signature = expected_signature or (next(iter(active_signatures))
                                                if active_signatures else None)
+    if not wanted_signature:
+        # With no active identity and no explicit expectation there is no safe
+        # way to decide which experiment should be restored.
+        return None
     candidates = []
     for item in backup_dir.iterdir():
         if item.is_dir() and item.name.startswith("step-"):
             meta = _validate(item, backup_dir)
             if meta is None:
                 continue
-            if wanted_signature and meta.get("run_signature") != wanted_signature:
+            if meta.get("run_signature") != wanted_signature:
                 continue
             candidates.append((int(meta["completed_steps"]), meta["created_at"], item, meta))
     if not candidates:
@@ -441,5 +464,10 @@ def snapshot_summary(backup_dir: Path) -> Dict[str, Any]:
         if item.is_dir() and item.name.startswith("step-"):
             meta = _validate(item, backup_dir)
             if meta is not None:
-                valid.append((int(meta["completed_steps"]), meta["created_at"], meta))
-    return max(valid, key=lambda item: (item[0], item[1]))[2] if valid else {}
+                valid.append((int(meta["completed_steps"]), meta["created_at"], item, meta))
+    if not valid:
+        return {}
+    best = max(valid, key=lambda item: (item[0], item[1]))
+    summary = dict(best[3])
+    summary["snapshot_name"] = best[2].name
+    return summary
