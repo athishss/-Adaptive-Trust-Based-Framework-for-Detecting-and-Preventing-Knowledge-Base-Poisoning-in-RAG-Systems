@@ -1,0 +1,5 @@
+# command: ./.venv/Scripts/python.exe -m compileall -q src scripts tests
+# tested_git_sha: 25b582c10fab1b08d2dcd1e4ea082436888bc93a
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+# exit_code: 0

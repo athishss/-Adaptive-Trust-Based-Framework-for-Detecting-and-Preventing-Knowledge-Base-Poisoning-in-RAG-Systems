@@ -1,0 +1,7 @@
+# command: ./.venv/Scripts/python.exe -m pytest -o addopts="" -q tests/test_colab_workflow.py::test_notebook_is_valid_and_every_code_cell_parses tests/test_colab_workflow.py::test_notebook_pin_contains_the_test_suite_implementation tests/test_colab_workflow.py::test_notebook_has_the_required_linear_sections_and_persistence tests/test_colab_workflow.py::test_notebook_preserves_layout_and_uses_content_for_active_runs
+# tested_git_sha: 25b582c10fab1b08d2dcd1e4ea082436888bc93a
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+....                                                                     [100%]
+4 passed in 0.49s
+# exit_code: 0

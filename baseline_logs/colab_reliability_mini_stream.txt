@@ -1,11 +1,15 @@
-13:45:46 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
-13:45:46 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
-13:45:46 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
-13:45:46 INFO    trace_rag.pipeline | indexing 29 passages with hashing on cpu (this is the slow step)
-13:45:46 INFO    trace_rag.pipeline | indexed 29 chunks (index size 29)
-13:45:46 INFO    trace_rag.pipeline | indexing 30 passages with hashing on cpu (this is the slow step)
-13:45:46 INFO    trace_rag.pipeline | 29 passages are already indexed; they will be skipped
-13:45:46 INFO    trace_rag.pipeline | indexed 1 chunks (index size 30)
+# commands: rm -rf runs/colab_validation_mini_active runs/colab_validation_mini_active_before_reset runs/colab_validation_mini_backups; ./.venv/Scripts/python.exe scripts/run_trust_stream.py --config config/default.yaml --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json --run-purpose smoke --steps 4 --targets 1 --out runs/colab_validation_mini_active --backup-dir runs/colab_validation_mini_backups; mv runs/colab_validation_mini_active runs/colab_validation_mini_active_before_reset; same runner command with --restore
+# tested_git_sha: 25b582c10fab1b08d2dcd1e4ea082436888bc93a
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+11:25:02 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+11:25:02 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+11:25:02 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+11:25:02 INFO    trace_rag.pipeline | indexing 29 passages with hashing on cpu (this is the slow step)
+11:25:02 INFO    trace_rag.pipeline | indexed 29 chunks (index size 29)
+11:25:02 INFO    trace_rag.pipeline | indexing 30 passages with hashing on cpu (this is the slow step)
+11:25:02 INFO    trace_rag.pipeline | 29 passages are already indexed; they will be skipped
+11:25:02 INFO    trace_rag.pipeline | indexed 1 chunks (index size 30)
 
 ==============================================================================
 1. Ingest the clean corpus with simulated contributors
@@ -43,7 +47,7 @@
   "run_purpose": "smoke",
   "research_findings_allowed": false,
   "run_kind": "offline_smoke",
-  "git_commit": "deca4b4fe7e87f78ad1f934f49d5efac9b1c40e8",
+  "git_commit": "25b582c10fab1b08d2dcd1e4ea082436888bc93a",
   "seed": 20260921,
   "note": "component trust-stream run; the chronological runner owns answer-level ASR and is NOT MEASURED here (no validated attack-specific answer criterion); this runner reports exposure and citation, not answer success, and does not implement the full attack x baseline matrix",
   "bands": "calibrated/heuristic",
@@ -101,7 +105,7 @@
   },
   "mean_llm_calls_per_query": 5.5,
   "llm_calls_total": 22,
-  "mean_latency_ms": 14.62,
+  "mean_latency_ms": 13.81,
   "verifications": {
     "SUPPORT": 0,
     "REFUTE": 0,
@@ -126,3 +130,19 @@
 ==============================================================================
   figures skipped: trust plots need matplotlib (pip install matplotlib)
   history rows: 9   figures: 0
+# simulated_runtime_reset: moved active directory to runs/colab_validation_mini_active_before_reset
+# pre_restore_metrics_sha256: 5182a40b62223d9e004f4d8d1147eab6d7e0c4ebec222d0c2415deac151c706f
+restored matching Drive snapshot for 38353b75be5e… at step 4
+restored a completed run; no steps will be executed
+# post_restore_metrics_sha256: 5182a40b62223d9e004f4d8d1147eab6d7e0c4ebec222d0c2415deac151c706f
+# run_exit_code: 0
+# restore_exit_code: 0
+# metrics_identical_after_restore: yes
+snapshot_steps= 4
+snapshot_files= ['checkpoint.json', 'run_manifest.json', 'stream.jsonl', 'metrics.json', 'trust_history.csv']
+snapshot_sqlite_files= ['provenance.sqlite3', 'answers.sqlite3', 'trust.sqlite3']
+index_snapshot_exists= True
+manifest_signature_matches_snapshot= True
+stream_rows= 4
+# checks_exit_code: 0
+# exit_code: 0

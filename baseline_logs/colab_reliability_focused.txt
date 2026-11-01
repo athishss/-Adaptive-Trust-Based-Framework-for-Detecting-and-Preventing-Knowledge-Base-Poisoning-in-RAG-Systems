@@ -1,0 +1,8 @@
+# command: ./.venv/Scripts/python.exe -m pytest -o addopts= -q tests/test_colab_workflow.py tests/test_research_preflight.py tests/test_ingestion_subset.py tests/test_snapshots.py
+# tested_git_sha: 25b582c10fab1b08d2dcd1e4ea082436888bc93a
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+........................................................................ [ 80%]
+.................                                                        [100%]
+89 passed in 11.17s
+# exit_code: 0
