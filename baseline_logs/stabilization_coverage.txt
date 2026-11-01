@@ -1,0 +1,77 @@
+# command: 'C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Scripts\python.exe' -m pytest -o addopts= -q --cov=trace_rag --cov-report=term-missing
+# tested_git_sha: 1760828b1e90419c7dd91f4ee691344c24fa5f1b
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+........................................................................ [ 20%]
+........................................................................ [ 41%]
+........................................................................ [ 61%]
+........................................................................ [ 82%]
+..................................................sss.........           [100%]
+=============================== tests coverage ================================
+_______________ coverage: platform win32, python 3.13.3-final-0 _______________
+
+Name                                           Stmts   Miss  Cover   Missing
+----------------------------------------------------------------------------
+src\trace_rag\__init__.py                          5      0   100%
+src\trace_rag\attacks\__init__.py                  6      0   100%
+src\trace_rag\attacks\adaptive.py                110     66    40%   65, 67, 69, 71, 118, 120, 155-179, 199-223, 233-240, 260-275, 280-283, 287-288, 293-296, 301
+src\trace_rag\attacks\poisoned_rag.py             55     13    76%   97, 99, 101, 107, 120, 122, 139, 141, 163, 165, 167, 169, 171
+src\trace_rag\attacks\stream.py                  151     46    70%   52, 85, 95, 133-134, 136, 138, 158, 160, 187, 190, 194, 201-206, 208-209, 236, 267-285, 306-327
+src\trace_rag\baselines\__init__.py                2      0   100%
+src\trace_rag\baselines\policies.py              205     93    55%   46, 62-72, 85-93, 96-108, 112-131, 137-145, 157-165, 177-188, 216, 230, 240, 247-248, 251, 258-260, 280, 326, 391, 401-403
+src\trace_rag\cli.py                             207     37    82%   124, 130-138, 152, 204-234, 239-259, 347
+src\trace_rag\config.py                          199      2    99%   182, 190
+src\trace_rag\contracts.py                       216      1    99%   467
+src\trace_rag\detection\__init__.py                4      0   100%
+src\trace_rag\detection\scorer.py                180     28    84%   91, 93, 103-109, 117, 130, 133, 136-140, 144, 167, 169, 185, 250, 252, 254, 256, 281, 290-292, 302
+src\trace_rag\detection\signals.py               169     10    94%   30, 35, 83, 112, 149, 219-220, 247, 290, 320
+src\trace_rag\detection\training.py              165     28    83%   61-62, 67, 83, 109-122, 129, 157, 184, 186, 188, 200, 211, 216, 218, 220-221, 223, 236, 263
+src\trace_rag\embeddings\__init__.py              13      5    62%   15-23
+src\trace_rag\embeddings\base.py                  24      3    88%   35, 37, 39
+src\trace_rag\embeddings\hashing_embedder.py      31      1    97%   26
+src\trace_rag\embeddings\hf_embedder.py           62     62     0%   7-118
+src\trace_rag\evaluation\__init__.py               2      0   100%
+src\trace_rag\evaluation\chronological.py        241     16    93%   139, 143-145, 148, 201, 286-287, 298, 317-318, 403-408, 522, 534
+src\trace_rag\evaluation\experiment.py           247     45    82%   67, 117, 119, 128, 145, 150, 160-161, 164, 168-176, 185, 187, 204, 251-257, 273, 306, 334-343, 348-360, 382, 445-448, 536-538
+src\trace_rag\evaluation\integration.py           23     23     0%   11-60
+src\trace_rag\evaluation\metrics.py              123      9    93%   16, 32, 35, 38, 120, 268, 270, 279, 301
+src\trace_rag\evaluation\runner.py                58      6    90%   88, 90, 92, 112, 120, 125
+src\trace_rag\evaluation\statistics.py            24      3    88%   20, 22, 24
+src\trace_rag\generation\__init__.py               5      0   100%
+src\trace_rag\generation\citations.py             58      4    93%   29, 55, 83-84
+src\trace_rag\generation\grounded.py              65      1    98%   40
+src\trace_rag\generation\llm.py                  178     79    56%   98, 125-129, 143-148, 152, 156-173, 181-185, 189-197, 203-215, 225-254, 258, 262-277, 296, 304-314
+src\trace_rag\generation\prompts.py               31      2    94%   113-120
+src\trace_rag\index\__init__.py                   15      6    60%   8-13, 19-21
+src\trace_rag\index\faiss_index.py               142    142     0%   11-199
+src\trace_rag\index\numpy_index.py                80     14    82%   31, 33, 37-38, 52, 54, 56, 77-78, 91-94, 106
+src\trace_rag\ingestion\__init__.py                5      0   100%
+src\trace_rag\ingestion\chunking.py               42      7    83%   33, 38, 47-51, 65
+src\trace_rag\ingestion\parsers.py               103     35    66%   46-49, 56-70, 77, 86, 93, 107-125, 134, 150-151, 153
+src\trace_rag\ingestion\pipeline.py              111     14    87%   67, 103-107, 109-110, 141, 149-150, 169, 193, 196
+src\trace_rag\ingestion\provenance.py            194     16    92%   87, 134-136, 223-228, 249, 287, 306-310, 314, 341, 384, 387-388
+src\trace_rag\ingestion\subset.py                237     21    91%   35, 44, 49, 111, 113, 160, 190, 217, 223-224, 229-230, 233, 240-241, 259-260, 278-279, 283-284
+src\trace_rag\pipeline.py                        248     35    86%   154, 170-175, 190, 206-207, 289, 300, 303, 310-319, 333, 341-344, 347-349, 353, 357-360
+src\trace_rag\provenance\__init__.py               3      0   100%
+src\trace_rag\provenance\answer_log.py           140     16    89%   81, 114-116, 151, 167, 198-203, 231, 258, 261-262
+src\trace_rag\provenance\remediation.py           37      0   100%
+src\trace_rag\retrieval\__init__.py                2      0   100%
+src\trace_rag\retrieval\retriever.py              76     13    83%   52, 55, 72, 76, 89, 98, 105-106, 110, 134-137
+src\trace_rag\security.py                        300     36    88%   59, 79-81, 96, 118-123, 134, 166, 172, 174, 198-200, 206-210, 247, 261, 263, 287, 298, 305, 310-313, 336, 378-379, 382, 391, 394-395, 468, 527
+src\trace_rag\snapshots.py                       353     49    86%   93, 99, 120, 128, 144, 146, 149, 152, 155, 160, 174-175, 180, 190-191, 205, 208-210, 214-215, 218-219, 221-222, 247, 254, 258, 260, 263, 272, 274, 276, 280, 287, 297, 323-324, 352, 354, 360, 378, 405, 419, 421, 427, 436, 445, 449
+src\trace_rag\trust\__init__.py                    6      0   100%
+src\trace_rag\trust\ledger.py                    451     24    95%   243-245, 299-300, 465-466, 604, 632, 657, 712, 808, 829, 914-915, 920-921, 970, 1048, 1064, 1100, 1112, 1115-1116
+src\trace_rag\trust\plots.py                      75     54    28%   51-88, 99-120, 125-133, 138
+src\trace_rag\trust\policy.py                    155     27    83%   64, 139-142, 171, 227-228, 240, 277-280, 288-290, 297-299, 311-313, 331, 356-364
+src\trace_rag\trust\queue.py                     104     15    86%   101-102, 121, 135-147, 149-160, 179
+src\trace_rag\trust\verifier.py                  324     65    80%   90-98, 155, 164, 176-192, 206-219, 234-237, 371-390, 529, 539, 551, 581, 615, 677-683, 783, 793, 825, 880, 893-898
+src\trace_rag\utils\__init__.py                    5      0   100%
+src\trace_rag\utils\clock.py                      47      5    89%   64, 87, 106, 117, 121
+src\trace_rag\utils\hashing.py                   143     34    76%   30-34, 48, 60, 69, 90-91, 94-97, 100, 103, 106, 110, 117, 120-122, 125, 128, 131, 135, 147-151, 165, 219, 225
+src\trace_rag\utils\logging.py                    13      0   100%
+src\trace_rag\utils\textnorm.py                   36      3    92%   31, 41, 56
+src\trace_rag\utils\timing.py                     13      0   100%
+----------------------------------------------------------------------------
+TOTAL                                           6319   1214    81%
+347 passed, 6 skipped in 77.25s (0:01:17)
+# exit_code: 0

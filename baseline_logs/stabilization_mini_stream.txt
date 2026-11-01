@@ -1,0 +1,159 @@
+# tested_git_sha: 1760828b1e90419c7dd91f4ee691344c24fa5f1b
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+# command_1: ./.venv/Scripts/python.exe scripts/run_trust_stream.py --config config/default.yaml --corpus examples/mini_corpus.jsonl --queries examples/mini_questions.json --run-purpose smoke --steps 4 --targets 1 --out runs/stabilization_active --backup-dir runs/stabilization_backups
+11:44:57 WARNING trace_rag.trust.verifier | CorroborationVerifier using lexical comparison (NLI cross-encoder unavailable); not comparable with NLI runs
+11:44:57 INFO    trace_rag.security | security: DEGRADED | ledger=TrustLedger | verifier=lexical | queue=on
+11:44:57 WARNING trace_rag.security | security: verification uses lexical overlap, not NLI; not comparable with NLI runs
+11:44:57 INFO    trace_rag.pipeline | indexing 29 passages with hashing on cpu (this is the slow step)
+11:44:57 INFO    trace_rag.pipeline | indexed 29 chunks (index size 29)
+11:44:57 INFO    trace_rag.pipeline | indexing 30 passages with hashing on cpu (this is the slow step)
+11:44:57 INFO    trace_rag.pipeline | 29 passages are already indexed; they will be skipped
+11:44:57 INFO    trace_rag.pipeline | indexed 1 chunks (index size 30)
+
+==============================================================================
+1. Ingest the clean corpus with simulated contributors
+==============================================================================
+  ingested: {'documents': 29, 'chunks': 29, 'skipped': 0, 'families': 29, 'errors': []}
+  store: {'sources': 20, 'documents': 29, 'chunks': 29}
+
+==============================================================================
+2. Index the clean corpus (the GPU step)
+==============================================================================
+  indexed: 29 passages   index size: 29
+
+==============================================================================
+3. Craft poison from each target's gold passage (Person C's helpers)
+==============================================================================
+  no qrels file: targets fall back to the retrieved pool
+  poison_eiffel: poisonedrag_bbox on clean_eiffel_0#0000 [retrieved pool (answer match)] -> ['poison_eiffel#0000']
+  index size after poison: 30
+
+==============================================================================
+4. Wire in Person B's trust layer
+==============================================================================
+    verifier mode: lexical   (NLI runs on cpu embeddings, CUDA when visible)
+    quarantine after 2 refutation(s); hierarchical=True
+
+==============================================================================
+5. Replay the query stream (4 steps; Zipf sampling with replacement (trust lifecycle; steps != distinct queries))
+==============================================================================
+
+==============================================================================
+6. Smoke-test metrics (not the headline evaluation)
+==============================================================================
+{
+  "smoke_test": true,
+  "run_purpose": "smoke",
+  "research_findings_allowed": false,
+  "run_kind": "offline_smoke",
+  "git_commit": "1760828b1e90419c7dd91f4ee691344c24fa5f1b",
+  "seed": 20260921,
+  "note": "component trust-stream run; the chronological runner owns answer-level ASR and is NOT MEASURED here (no validated attack-specific answer criterion); this runner reports exposure and citation, not answer success, and does not implement the full attack x baseline matrix",
+  "bands": "calibrated/heuristic",
+  "config": "config/default.yaml",
+  "dataset_contract": {},
+  "corpus": "examples/mini_corpus.jsonl",
+  "steps": 4,
+  "query_pool_size": 12,
+  "stream_steps_requested": 4,
+  "stream_steps_completed": 4,
+  "query_sampling": "zipf",
+  "distinct_queries_evaluated": 3,
+  "repeated_query_evaluations": 1,
+  "target_steps": 2,
+  "verifier_mode": "lexical",
+  "llm": "stub (claim extraction is lexical: verdicts are indicative only)",
+  "poison_documents": 1,
+  "poison_targets": [
+    {
+      "doc_id": "poison_eiffel",
+      "origin": "clean_eiffel_0#0000",
+      "chosen_by": "retrieved pool (answer match)",
+      "attack": "poisonedrag_bbox",
+      "chunk_ids": [
+        "poison_eiffel#0000"
+      ]
+    }
+  ],
+  "eligible_attack_attempts": 2,
+  "poison_retrieved_attempts": 2,
+  "poison_retrieved_rate": 1.0,
+  "poison_exposed_attempts": 0,
+  "poison_exposure_rate": 0.0,
+  "poison_cited_attempts": 0,
+  "poison_citation_rate": 0.0,
+  "answer_level_asr": null,
+  "answer_level_asr_status": "NOT MEASURED",
+  "answer_level_asr_numerator": null,
+  "answer_level_asr_denominator": 0,
+  "answer_level_asr_reason": "No validated attack-specific answer criterion is implemented for this harness. The stub/real generation answer is not scored against the attacker's target, so answer-level ASR is not inferred from retrieval or citation.",
+  "poison_quarantined": 0,
+  "clean_false_quarantine": 0,
+  "clean_false_quarantine_ids": [],
+  "first_quarantine_step": null,
+  "document_level": {
+    "poison_documents": 1,
+    "clean_documents": 29,
+    "true_positive_quarantine": 0,
+    "false_positive_quarantine": 0,
+    "precision": null,
+    "recall": 0.0,
+    "f1": null,
+    "false_positive_rate": 0.0,
+    "detection_delay_steps": null
+  },
+  "mean_llm_calls_per_query": 5.5,
+  "llm_calls_total": 22,
+  "mean_latency_ms": 13.88,
+  "verifications": {
+    "SUPPORT": 0,
+    "REFUTE": 0,
+    "NEUTRAL": 9
+  },
+  "queued_verifications": 0,
+  "poison_trust": {
+    "poison_eiffel#0000": {
+      "t_eff": 0.5,
+      "status": "TRUSTED"
+    }
+  },
+  "research_evaluation": {
+    "implements_full_attack_baseline_matrix": false,
+    "remaining_requirements": "docs/PERSON_C_TODO.md",
+    "answer_level_asr_status": "NOT MEASURED"
+  }
+}
+
+==============================================================================
+7. Trust-dynamics figures (B6)
+==============================================================================
+  figures skipped: trust plots need matplotlib (pip install matplotlib)
+  history rows: 9   figures: 0
+# command_1_exit_code: 0
+# metrics_sha256_after_run: ef24b6c0d0a708fce3437d44127cb076d83818244bcaceda9e60d1ab05e2f1bf
+# command_2: same as command_1 (exact completed rerun)
+completed run matches canonical signature c8382691e8d3…; reusing it without overwriting
+# command_2_exit_code: 0
+# metrics_sha256_after_exact_reuse: ef24b6c0d0a708fce3437d44127cb076d83818244bcaceda9e60d1ab05e2f1bf
+# command_3: same as command_1 but --steps 3 (changed experiment scope)
+refusing to reuse completed run: completed run belongs to a different experiment (signature c8382691e8d3 != fb33e25bf1cf); move or archive the directory, or choose a new --out; completed results are never overwritten
+# command_3_exit_code: 2
+# metrics_sha256_after_mismatch: ef24b6c0d0a708fce3437d44127cb076d83818244bcaceda9e60d1ab05e2f1bf
+# simulated_runtime_reset: moved runs/stabilization_active to runs/stabilization_active_saved
+# command_4: same as command_1 with --restore after removing the active directory
+restored matching Drive snapshot for c8382691e8d3… at step 4
+restored a completed run; no steps will be executed
+# command_4_exit_code: 0
+# metrics_sha256_after_restore: ef24b6c0d0a708fce3437d44127cb076d83818244bcaceda9e60d1ab05e2f1bf
+# snapshot_completed_steps: 4
+# snapshot_files: ['checkpoint.json', 'run_manifest.json', 'stream.jsonl', 'metrics.json', 'trust_history.csv']
+# snapshot_sqlite_files: ['provenance.sqlite3', 'answers.sqlite3', 'trust.sqlite3']
+# snapshot_index_exists: True
+# manifest_signature_matches_snapshot: True
+# stream_rows: 4
+# run_purpose: smoke | state: completed
+# summary_exit_code: 0
+# steps_executed_during_exact_reuse: 0
+# required_outcomes: run=0 exact_reuse=0 mismatch=2 restore=0 metrics_identical=yes
+# overall_exit_code: 0

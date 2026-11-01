@@ -3,16 +3,17 @@
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-11-01
 **Implementation commit under test:** `32333fe125c446d043bd422e9bbd86005d1259d8`
-**Validation tree commit:** `25b582c10fab1b08d2dcd1e4ea082436888bc93a`
+**Validation tree commit:** `1760828b1e90419c7dd91f4ee691344c24fa5f1b`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
 dependencies plus `pyarrow 26.0.0` installed for the Parquet subset tests
 (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1,
 pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`, `transformers` and
 `matplotlib` are **not installed**.
-**Scope:** canonical-signature snapshot restore owned by the runner, exact
-subset construction, Colab active-versus-Drive storage reconciliation, export
-fallback after a runtime reset, notebook pin correctness and offline
-validation. No security-policy thresholds changed.
+**Scope:** canonical-signature snapshot restore and completed-run reuse owned
+by the runner, exact subset construction, Colab active-versus-Drive storage
+reconciliation, export fallback after a runtime reset, notebook pin correctness
+and offline validation. The engineering scope is frozen at the implementation
+commit below; no security-policy thresholds changed.
 
 ---
 
@@ -38,17 +39,25 @@ After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite at the tested commit | **346 passed, 6 skipped** |
+| Full test suite at the tested commit | **347 passed, 6 skipped** |
 | Coverage | **81%** (6319 statements, 1214 missed) |
 | Python compilation | `compileall` exit 0 |
 | ResourceWarnings | **0** with `-W error::ResourceWarning` |
 | Subset tests | 35 tests: exact size, gold coverage, seeds, duplicates, invalid rows |
 | Snapshot/recovery tests | 20 tests: matching/mismatched signatures, shared backups, corruption, interruption, atomic/idempotent restore |
+| Completed-run identity | matching signature reused with no steps; changed scope rejected; metrics hash unchanged |
 | Preflight isolation tests | 12 tests, including a real offline doctor into a fresh directory |
 | Notebook | 30 cells, 15 code cells, all parse, no saved outputs, pin is an ancestor of HEAD |
-| Offline mini stream with `--backup-dir` and restore | exit 0; 4/4 steps; final snapshot restored a completed run without re-execution |
+| Offline mini stream, exact reuse, rejection and restore | run 0, reuse 0, changed-scope 2, restore 0; 4/4 steps; metrics byte-identical; no reuse execution |
 | Answer-level ASR | **NOT MEASURED** (no validated attack-specific answer criterion) |
 | Real-model NQ run / Colab execution | **not run** |
+
+This stabilization pass found one additional release blocker: the notebook
+returned an existing `metrics.json`/manifest before the runner computed the
+canonical signature. A stale result from a different model revision, dataset,
+seed or scope could therefore be presented as the requested pilot. The shortcut
+has been removed; the runner now owns completed-run reuse and compares the
+manifest and checkpoint signatures before returning success.
 
 The system remains reproducible at smoke scale. It is **not** a validated
 benchmark result: the lexical verifier still misses several attack families,
@@ -88,7 +97,7 @@ successful real run writes `run_manifest.json` with the commit, dataset hashes,
 config, models, seed, hardware, ledger path and counts. The offline mini
 manifest explicitly says `run_kind: offline_smoke`.
 
-### Exact subsets and snapshot recovery (this pass)
+### Exact subsets, completed-run reuse and snapshot recovery (this pass)
 
 `src/trace_rag/ingestion/subset.py` now streams the Parquet corpus with bounded
 memory, writes through a temporary file plus `os.replace`, rejects duplicate or
@@ -129,6 +138,19 @@ covers matching restore, wrong-signature rejection before changes, shared-backup
 separation, retry after a failed install, idempotence and completed-run
 protection; `tests/test_colab_workflow.py` proves the notebook and runner share
 the canonical signature path.
+
+Completed-run reuse now has one authority: after `run_signature()` is computed,
+`completed_run_matches_signature()` requires a completed manifest, a matching
+canonical signature and a matching checkpoint signature before returning
+success. A completed run with a different signature is rejected with exit 2 and
+is never overwritten. The notebook only invokes the runner; its old
+`metrics.json` shortcut is gone. A matching rerun executes zero steps, a
+changed-scope rerun (`--steps 3`) exits 2 without changing `metrics.json`, and a
+restore after removing the active directory still completes without
+re-execution. The regression is
+`test_completed_run_reuse_requires_exact_canonical_signature`; the expanded
+signature test covers configuration, model revision, dataset hash, seed and
+scope changes.
 
 ---
 
@@ -238,6 +260,7 @@ the canonical signature path.
 | 20 | **High** | Subset construction could emit duplicate IDs, silently skip malformed qrels/query rows, and was tested only with a loose size range. | No identifier/row validation, in-place output, and weak assertions. | Duplicate/blank ID rejection, strict qrels/query validation, atomic write, exact-count/unique-ID/100%-gold verification, direct Parquet tests. | 35 tests in `tests/test_ingestion_subset.py`; `test_subset_always_keeps_gold_passages` now asserts exactly 300 |
 | 21 | **High** | Snapshot restore replaced files in place and metadata was not tied to a run signature; an interrupted restore or another experiment's snapshot could be mixed in. | No staging/commit marker and no signature binding. | Staged restore, `checkpoint.json` installed last, `run_signature`/manifest hash/index digest validation, signature refusal, recoverable `.previous` index, interrupted-staging cleanup. | 20 tests in `tests/test_snapshots.py`, including matching and wrong-signature restore, shared backup directories, corruption, interruption, retry and idempotence |
 | 22 | **Medium** | Notebook pinned stale commit `2bac018…` and downloaded the multi-gigabyte NQ corpus implicitly. | Pin and data switch were not release-gated. | Pin updated to the tested implementation commit; `RUN_DATASET_DOWNLOAD = False`; raw files validated; stale-pin regression requires the pin to be an ancestor of HEAD, different from HEAD, with no implementation/test diff and sentinel code present at the pin. | `test_notebook_pin_contains_the_test_suite_implementation`, `test_notebook_isolates_preflight_storage_and_requires_data_opt_in` |
+| 23 | **High** | Notebook returned any existing completed run from `metrics.json` without proving it belonged to the requested experiment. | A second, pre-signature completion shortcut bypassed the runner's canonical identity. | Removed the notebook shortcut; the runner compares the completed manifest and checkpoint signatures before reuse, rejects mismatches with exit 2, and never overwrites the result. | `test_completed_run_reuse_requires_exact_canonical_signature`, expanded `test_run_signature_covers_config_model_dataset_seed_and_scope`, CLI reuse/mismatch/restore evidence |
 
 **Residual defect, not claimed fixed:** the lexical verifier still produces
 false positives when a correct passage and a poison passage have equal source
@@ -366,7 +389,7 @@ No GPU. `faiss-cpu`, `torch`, `transformers`, `matplotlib` absent.
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **346 passed, 6 skipped** |
+| `pytest -o addopts="" -q` | **347 passed, 6 skipped** |
 | Coverage | **81%** total (6319 statements, 1214 missed) |
 | `-W error::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
@@ -393,7 +416,7 @@ Coverage caveats:
   `provenance/remediation.py` 100%.
 * These are environment gaps, not passes. They are listed in limitations.
 
-Fresh validation logs are committed under `baseline_logs/colab_reliability_*.txt`
+Fresh validation logs are committed under `baseline_logs/stabilization_*.txt`
 for the exact validation commit (pytest, coverage, ResourceWarning, compileall,
 focused workflow tests, notebook checks and mini stream). Each log records the
 command, exit code, Python/OS versions and full tested Git SHA. No Colab GPU log
@@ -593,7 +616,7 @@ python scripts/run_trust_stream.py --config config/default.yaml \
   --backup-dir runs/final_trust_stream_backups
 ```
 
-Expected: **346 passed, 6 skipped**; the pin test passes only after the
+Expected: **347 passed, 6 skipped**; the pin test passes only after the
 notebook commit that follows the tested implementation commit; all scripts exit
 0; `doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning
 run is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
@@ -607,23 +630,49 @@ label a `DEGRADED` or `UNPROTECTED` run as RAGLedger.
 
 ### Captured evidence
 
-Fresh logs are committed under `baseline_logs/colab_reliability_*.txt`. Each log
+Fresh logs are committed under `baseline_logs/stabilization_*.txt`. Each log
 records its command, exit code, Python and operating-system versions, and the
 full Git SHA of the tested validation tree. The implementation commit
-`8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0` is what the notebook pins; the later
-documentation commit only updates this report, the runbook and the pin, so it
-does not alter the tested implementation.
+`32333fe125c446d043bd422e9bbd86005d1259d8` is what the notebook pins; the later
+documentation/evidence commits only update the pin, report and logs, so they do
+not alter the tested implementation.
 
 ```
-baseline_logs/colab_reliability_pytest.txt
-baseline_logs/colab_reliability_coverage.txt
-baseline_logs/colab_reliability_warnings.txt
-baseline_logs/colab_reliability_compileall.txt
-baseline_logs/colab_reliability_focused.txt
-baseline_logs/colab_reliability_mini_stream.txt
-baseline_logs/colab_reliability_environment.txt
+baseline_logs/stabilization_pytest.txt
+baseline_logs/stabilization_coverage.txt
+baseline_logs/stabilization_warnings.txt
+baseline_logs/stabilization_compileall.txt
+baseline_logs/stabilization_focused.txt
+baseline_logs/stabilization_notebook.txt
+baseline_logs/stabilization_mini_stream.txt
+baseline_logs/stabilization_environment.txt
 ```
 
-Historical logs for older commits remain in `baseline_logs/` and are not
-evidence for this pass. No Colab or real-model log exists. These offline
-measurements are not portable to another machine or GPU.
+The earlier `colab_reliability_*` logs remain historical evidence for
+`25b582c` and are superseded by this pass. No Colab or real-model log exists.
+These offline measurements are not portable to another machine or GPU.
+
+## I. Engineering freeze
+
+**Status: frozen for the first real-model pilot.** The implementation freeze is
+`32333fe125c446d043bd422e9bbd86005d1259d8`; the validation tree is
+`1760828b1e90419c7dd91f4ee691344c24fa5f1b`. The commit containing this report
+adds evidence and documentation only. Further general engineering development is
+out of scope unless a real experiment exposes a concrete defect.
+
+* **Implemented:** canonical-signature restore, resume and completed-run reuse;
+  exact subset construction; isolated functional preflight; notebook pin and
+  storage workflow; snapshot/export recovery.
+* **Tested:** 347 passed, 6 skipped; coverage 81%; 90 focused workflow tests;
+  24 notebook/workflow tests; compileall; ResourceWarning-as-error; offline
+  stream with matching reuse, mismatched rejection and restore.
+* **Environment-dependent:** no CUDA GPU, `torch`, `transformers`, `faiss`, or
+  running Ollama/vLLM model is available on this host. No Colab execution or
+  real-model inference was performed.
+* **Notebook readiness:** the notebook and its structural/pin tests pass, so it
+  is ready to *attempt* the pilot. Colab compatibility and the real-model gate
+  remain unverified until an actual GPU session runs it.
+* **Next scientific milestone:** execute `config/colab_pilot_qwen.yaml` with the
+  exact 5,000-passage / 20-query / 12-step scope, then inspect retrieval,
+  exposure, citation, verification, quarantine, provenance, runtime and
+  snapshot integrity. Do not describe that pilot as research validation.

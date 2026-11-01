@@ -1,0 +1,7 @@
+# command: 'C:\Users\athis\roblox-groupfinder\RAGLedger\.venv\Scripts\python.exe' -m pytest -o addopts= -q tests/test_colab_workflow.py
+# tested_git_sha: 1760828b1e90419c7dd91f4ee691344c24fa5f1b
+# python: 3.13.3
+# os: Windows-11-10.0.26200-SP0
+........................                                                 [100%]
+24 passed in 1.51s
+# exit_code: 0
