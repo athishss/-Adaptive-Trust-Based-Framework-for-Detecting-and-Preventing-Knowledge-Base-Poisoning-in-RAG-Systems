@@ -209,6 +209,43 @@ def check_output_state(out_dir: Path, resume: bool) -> Optional[Dict[str, Any]]:
     return checkpoint
 
 
+def completed_run_matches_signature(out_dir: Path, signature: str) -> bool:
+    """Return True only for a completed run with the canonical experiment identity.
+
+    A metrics file is never enough on its own: the manifest and checkpoint must
+    agree with the signature that was just computed from the requested config,
+    dataset, model revisions, seed, scope and code revision. A completed run from
+    another experiment is rejected, never overwritten or silently reused.
+    """
+    metrics_path = out_dir / "metrics.json"
+    if not metrics_path.exists():
+        return False
+    manifest_path = out_dir / "run_manifest.json"
+    if not manifest_path.exists():
+        raise ValueError("metrics.json exists without run_manifest.json; refusing to "
+                         "treat the directory as a completed run")
+    manifest = _read_json(manifest_path)
+    if manifest.get("state") != "completed":
+        raise ValueError("the run has metrics.json but its manifest is not marked completed")
+    completed_signature = manifest.get("signature")
+    if not completed_signature:
+        raise ValueError("the completed run has no experiment signature; refusing to reuse it")
+    if completed_signature != signature:
+        raise ValueError(
+            "completed run belongs to a different experiment "
+            f"(signature {str(completed_signature)[:12]} != {signature[:12]}); "
+            "move or archive the directory, or choose a new --out; completed results "
+            "are never overwritten")
+    checkpoint_path = out_dir / "checkpoint.json"
+    if not checkpoint_path.exists():
+        raise ValueError("the completed run is missing checkpoint.json; refusing to reuse it")
+    checkpoint = _read_json(checkpoint_path)
+    if checkpoint.get("signature") != signature:
+        raise ValueError("the completed run checkpoint has a different experiment signature")
+    _read_json(metrics_path)
+    return True
+
+
 def _http_json(url: str, payload: Optional[Dict[str, Any]] = None,
                timeout: float = 5.0) -> Any:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -578,6 +615,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     signature = run_signature(config, args.run_purpose, args.sample_mode, args.seed,
                               args.steps, args.targets, args.limit, args.n_sources,
                               dataset_identity, [target["qid"] for target in targets])
+    # Reuse is allowed only after the canonical signature exists. This is the
+    # same identity used by restore and resume; the notebook must not keep a
+    # separate metrics.json shortcut that bypasses it.
+    try:
+        if completed_run_matches_signature(out_dir, signature):
+            print(f"completed run matches canonical signature {signature[:12]}…; "
+                  "reusing it without overwriting")
+            return 0
+    except ValueError as exc:
+        print(f"refusing to reuse completed run: {exc}", file=sys.stderr)
+        return 2
     # Restore is deliberately owned by the runner: the canonical signature has
     # just been computed from the effective configuration, dataset contract and
     # code revision.  A snapshot for any other experiment is never installed in

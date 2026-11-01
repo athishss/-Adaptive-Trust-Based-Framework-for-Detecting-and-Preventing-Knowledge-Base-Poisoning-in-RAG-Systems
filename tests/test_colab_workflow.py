@@ -98,11 +98,12 @@ def test_runner_owns_canonical_signature_checked_restore():
     runner = (ROOT / "scripts" / "run_trust_stream.py").read_text(encoding="utf-8")
     assert "expected_signature=signature" in runner
     signature_at = runner.index("signature = run_signature(")
+    reuse_at = runner.index("completed_run_matches_signature(out_dir, signature)")
     restore_at = runner.index("restore_latest_snapshot(")
     state_at = runner.index("check_output_state(out_dir, resume)")
-    assert signature_at < restore_at < state_at, (
-        "recovery must compute the canonical signature, restore, then validate the "
-        "restored active directory")
+    assert signature_at < reuse_at < restore_at < state_at, (
+        "recovery must compute the canonical signature, check completed-run reuse, "
+        "restore, then validate the restored active directory")
     assert "load_existing_index=resume" in runner
 
     notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(
@@ -111,6 +112,8 @@ def test_runner_owns_canonical_signature_checked_restore():
     assert "--restore" in text
     assert "restore_latest_snapshot(out, backup)" not in text
     assert "run_signature(" not in text, "the notebook must not duplicate signature logic"
+    assert "completed run already present" not in text
+    assert "not overwriting" not in text
 
 
 def test_notebook_isolates_preflight_storage_and_requires_data_opt_in():
@@ -205,7 +208,7 @@ def test_scope_validation_rejects_mislabeled_pilot_and_research():
     assert stream.validate_run_scope("smoke", True, None, 10, 1, 10, "zipf")
 
 
-def test_run_signature_changes_with_model_revision():
+def test_run_signature_covers_config_model_dataset_seed_and_scope():
     config = Config.load(ROOT / "config" / "colab_pilot_qwen.yaml")
     dataset = {"corpus": {"sha256": "a"}, "queries": {"sha256": "b"}, "qrels": {"sha256": "c"}}
     base = stream.run_signature(config, "pilot", "zipf", 1, 12, 2, 5000, 2000,
@@ -213,11 +216,62 @@ def test_run_signature_changes_with_model_revision():
     same = stream.run_signature(config, "pilot", "zipf", 1, 12, 2, 5000, 2000,
                                 dataset, ["q1"])
     assert base == same
-    changed = config.model_copy(deep=True)
-    changed.generation.revision = "different"
-    other = stream.run_signature(changed, "pilot", "zipf", 1, 12, 2, 5000, 2000,
-                                 dataset, ["q1"])
-    assert other != base
+
+    changed_config = config.model_copy(deep=True)
+    changed_config.retrieval.top_k = 9
+    assert stream.run_signature(changed_config, "pilot", "zipf", 1, 12, 2, 5000, 2000,
+                                dataset, ["q1"]) != base
+
+    changed_model = config.model_copy(deep=True)
+    changed_model.generation.revision = "different"
+    assert stream.run_signature(changed_model, "pilot", "zipf", 1, 12, 2, 5000, 2000,
+                                dataset, ["q1"]) != base
+
+    changed_dataset = json.loads(json.dumps(dataset))
+    changed_dataset["corpus"]["sha256"] = "different"
+    assert stream.run_signature(config, "pilot", "zipf", 1, 12, 2, 5000, 2000,
+                                changed_dataset, ["q1"]) != base
+    assert stream.run_signature(config, "pilot", "zipf", 2, 12, 2, 5000, 2000,
+                                dataset, ["q1"]) != base
+    assert stream.run_signature(config, "pilot", "zipf", 1, 13, 2, 5000, 2000,
+                                dataset, ["q1"]) != base
+
+
+def test_completed_run_reuse_requires_exact_canonical_signature(tmp_path):
+    import pytest
+
+    assert stream.completed_run_matches_signature(tmp_path, "sig") is False
+    (tmp_path / "metrics.json").write_text(json.dumps({"steps": 4}))
+    (tmp_path / "run_manifest.json").write_text(json.dumps(
+        {"state": "completed", "signature": "sig"}))
+    (tmp_path / "checkpoint.json").write_text(json.dumps(
+        {"signature": "sig", "completed_steps": 4, "in_flight_step": None}))
+    assert stream.completed_run_matches_signature(tmp_path, "sig") is True
+
+    (tmp_path / "run_manifest.json").write_text(json.dumps(
+        {"state": "completed", "signature": "other"}))
+    with pytest.raises(ValueError, match="different experiment"):
+        stream.completed_run_matches_signature(tmp_path, "sig")
+
+    (tmp_path / "run_manifest.json").write_text(json.dumps(
+        {"state": "running", "signature": "sig"}))
+    with pytest.raises(ValueError, match="not marked completed"):
+        stream.completed_run_matches_signature(tmp_path, "sig")
+
+    (tmp_path / "run_manifest.json").write_text(json.dumps(
+        {"state": "completed", "signature": "sig"}))
+    (tmp_path / "checkpoint.json").write_text(json.dumps(
+        {"signature": "other", "completed_steps": 4, "in_flight_step": None}))
+    with pytest.raises(ValueError, match="checkpoint"):
+        stream.completed_run_matches_signature(tmp_path, "sig")
+
+    (tmp_path / "checkpoint.json").unlink()
+    with pytest.raises(ValueError, match="missing checkpoint"):
+        stream.completed_run_matches_signature(tmp_path, "sig")
+
+    (tmp_path / "run_manifest.json").unlink()
+    with pytest.raises(ValueError, match="without run_manifest"):
+        stream.completed_run_matches_signature(tmp_path, "sig")
 
 
 def test_output_guard_refuses_overwrite_and_mixed_resume(tmp_path):
