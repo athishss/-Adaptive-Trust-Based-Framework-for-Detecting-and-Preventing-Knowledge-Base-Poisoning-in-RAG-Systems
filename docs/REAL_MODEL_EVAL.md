@@ -7,8 +7,9 @@ record, not a report of real-model results.
 > **Status: NOT EXECUTED.**
 >
 > * Starting commit for this pass: `9bf18ca69f423ae2d5770c3f472b3d7357ef1638`.
-> * Code/preflight commit: `e84f60390f7011bf69eee1a3d42ff6a54b6a1901`.
-> * Colab workflow/pinned implementation commit: `58de432c3124cc7cf81dcbfc4cc169b91c00af08`.
+> * Earlier preflight/subset commits: `e84f60390f7011bf69eee1a3d42ff6a54b6a1901` and
+>   `58de432c3124cc7cf81dcbfc4cc169b91c00af08`.
+> * Current Colab workflow/pinned implementation commit: `32333fe125c446d043bd422e9bbd86005d1259d8`.
 > * Research scope: a **200,000-passage / 500-query subset** of Natural
 >   Questions, not the full 2.68M-passage corpus.
 > * Current preflight: **BLOCKED** on this Windows host.

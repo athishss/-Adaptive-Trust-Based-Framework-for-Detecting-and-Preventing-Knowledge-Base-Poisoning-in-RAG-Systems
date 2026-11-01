@@ -29,7 +29,7 @@ the actual SHA before any experiment. Do not replace this with a branch name or
 `git pull` for a reported run.
 
 The notebook pins implementation commit
-`8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0`. That commit contains the exact
+`32333fe125c446d043bd422e9bbd86005d1259d8`. That commit contains the exact
 implementation and tests described here; the later notebook/documentation
 commit only changes the pin and documentation, so it is not pinned to itself.
 The notebook was **not** run in Colab.

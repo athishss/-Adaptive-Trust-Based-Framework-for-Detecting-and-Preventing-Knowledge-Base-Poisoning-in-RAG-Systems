@@ -2,7 +2,7 @@
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-11-01
-**Implementation commit under test:** `8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0`
+**Implementation commit under test:** `32333fe125c446d043bd422e9bbd86005d1259d8`
 **Validation tree commit:** `25b582c10fab1b08d2dcd1e4ea082436888bc93a`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
 dependencies plus `pyarrow 26.0.0` installed for the Parquet subset tests
