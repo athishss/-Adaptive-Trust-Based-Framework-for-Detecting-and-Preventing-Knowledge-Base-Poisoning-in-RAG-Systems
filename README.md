@@ -271,13 +271,14 @@ pytest -q --cov=trace_rag --cov-report=term-missing
 pytest -q -W error::ResourceWarning
 ```
 
-Result: **340 passed, 6 skipped**. Coverage: **81%** overall (6299 statements,
-1212 missed). The ResourceWarning run is clean. Skips are optional backends:
+Result: **346 passed, 6 skipped**. Coverage: **81%** overall (6319 statements,
+1214 missed). The ResourceWarning run is clean. Skips are optional backends:
 `faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3). New tests cover exact
 Parquet subset construction, snapshot corruption/interruption/signature mixing,
-preflight storage isolation and the notebook pin. Historical logs remain in
-[`baseline_logs/`](baseline_logs/); this pass's logs were captured outside the
-repository and record the tested Git SHA.
+preflight storage isolation, signature-safe recovery and the notebook pin. Fresh
+logs for the tested SHA are committed in
+[`baseline_logs/`](baseline_logs/); each records the command, exit code, Python
+and OS versions, and the full tested Git SHA.
 
 ### Chronological smoke matrix
 

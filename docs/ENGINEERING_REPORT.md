@@ -2,15 +2,16 @@
 
 **Repository:** `RAGLedger` (TRACE-RAG adaptive trust framework)
 **Audit date:** 2026-10-31
-**Implementation commit under test:** `58de432c3124cc7cf81dcbfc4cc169b91c00af08`
+**Implementation commit under test:** `8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0`
 **Environment:** Windows 11 (10.0.26200), CPython 3.13.3, AMD64, no GPU; core
 dependencies plus `pyarrow 26.0.0` installed for the Parquet subset tests
 (numpy 2.5.4, scikit-learn 1.9.1, pydantic 2.14.1, PyYAML 6.0.3, pytest 9.1.1,
 pytest-cov 7.1.0). Optional backends `faiss-cpu`, `torch`, `transformers` and
 `matplotlib` are **not installed**.
-**Scope:** Colab preflight storage isolation, exact subset construction,
-snapshot/recovery hardening, notebook pin correctness, documentation
-reconciliation and offline validation. No security-policy thresholds changed.
+**Scope:** canonical-signature snapshot restore owned by the runner, exact
+subset construction, Colab active-versus-Drive storage reconciliation, export
+fallback after a runtime reset, notebook pin correctness and offline
+validation. No security-policy thresholds changed.
 
 ---
 
@@ -26,9 +27,9 @@ found four blockers that could invalidate a run before it started:
 * subset construction had no duplicate or blank identifier guard, malformed
   qrels/query rows could be silently dropped, and the tests only checked a loose
   size range;
-* snapshot replacement was in place and metadata was not tied to a run
-  signature, so an interrupted restore or a different experiment's snapshot
-  could be mixed into the active run;
+* snapshot replacement was staged, but the notebook restored before the runner
+  computed the canonical run signature, so the intended experiment identity was
+  not an explicit prerequisite for installation;
 * the notebook pinned a stale implementation commit and downloaded the
   multi-gigabyte NQ corpus implicitly.
 
@@ -36,15 +37,15 @@ After this pass:
 
 | Check | Result |
 |---|---|
-| Full test suite at the tested commit | **340 passed, 6 skipped** |
-| Coverage | **81%** (6299 statements, 1212 missed) |
+| Full test suite at the tested commit | **346 passed, 6 skipped** |
+| Coverage | **81%** (6319 statements, 1214 missed) |
 | Python compilation | `compileall` exit 0 |
 | ResourceWarnings | **0** with `-W error::ResourceWarning` |
-| Subset tests (direct Parquet) | 34 tests: exact size, gold coverage, seeds, duplicates, invalid rows |
-| Snapshot/recovery tests | 16 tests: corruption, interruption, signature mixing, atomic restore |
+| Subset tests | 35 tests: exact size, gold coverage, seeds, duplicates, invalid rows |
+| Snapshot/recovery tests | 20 tests: matching/mismatched signatures, shared backups, corruption, interruption, atomic/idempotent restore |
 | Preflight isolation tests | 12 tests, including a real offline doctor into a fresh directory |
 | Notebook | 30 cells, 15 code cells, all parse, no saved outputs, pin is an ancestor of HEAD |
-| Offline mini stream with `--backup-dir` | exit 0; 4/4 steps; snapshot chain written |
+| Offline mini stream with `--backup-dir` and restore | exit 0; 4/4 steps; final snapshot restored a completed run without re-execution |
 | Answer-level ASR | **NOT MEASURED** (no validated attack-specific answer criterion) |
 | Real-model NQ run / Colab execution | **not run** |
 
@@ -104,8 +105,29 @@ signature/hash, SQLite integrity, stream/checkpoint agreement and the complete
 index file set, records `run_signature` in metadata, refuses to restore a
 snapshot from another experiment signature, installs `checkpoint.json` last as
 the commit marker, and keeps a recoverable `.<name>.previous` index directory.
-Interrupted staging is cleaned or refused. `tests/test_snapshots.py` covers
-corruption, interruption, signature mixing and restore atomicity.
+Interrupted staging is cleaned or refused.
+
+Recovery is now owned by `scripts/run_trust_stream.py`: it resolves the
+configuration and dataset contract, computes the single canonical
+`run_signature()`, restores only that signature before `check_output_state()`,
+and then validates the restored active directory before resuming. The notebook
+only invokes the runner with `--restore --backup-dir`; it contains no second
+signature implementation. A mismatched snapshot is therefore rejected before
+installation. The restore API also refuses to infer an experiment when neither
+an expected signature nor a consistent active signature exists, refuses to
+replace active files carrying a different signature, never replaces a completed
+run with `metrics.json`, and refuses a shared backup directory whose prepared
+index belongs to another signature. `snapshot_summary()` exposes the selected
+`snapshot_name` so the exporter can locate the latest completed Drive snapshot.
+
+The notebook exporter now falls back to that completed snapshot when `/content`
+was deleted, copies the provenance/answer/trust SQLite databases consistently,
+records whether the source was active or a snapshot, and records the index
+digest without duplicating the large index into the archive. `tests/test_snapshots.py`
+covers matching restore, wrong-signature rejection before changes, shared-backup
+separation, retry after a failed install, idempotence and completed-run
+protection; `tests/test_colab_workflow.py` proves the notebook and runner share
+the canonical signature path.
 
 ---
 
@@ -177,10 +199,10 @@ corruption, interruption, signature mixing and restore atomicity.
 | `tests/test_verifier_nli.py` | NLI/lexical false-positive regressions. |
 | `tests/test_generation.py` | Chat-role separation, document-block escaping, blocked-passage filtering, and generation backend failure recorded as an abstention. |
 | `tests/test_resource_lifecycle.py` | **New this pass:** repeated close is a no-op for all three SQLite components; a constructor that fails after opening SQLite closes its connection; pipeline shutdown can be repeated. |
-| `tests/test_snapshots.py` | **New this pass:** 16 tests for atomic backup/restore, corruption, interruption, signature mixing, index rollback and read-only summaries. |
-| `tests/test_ingestion_subset.py` | **New this pass:** 34 direct Parquet tests for exact size, unique IDs, 100% gold coverage, determinism, seeds, all-gold, missing gold, insufficient rows, duplicate IDs, invalid queries and both qrels layouts. |
+| `tests/test_snapshots.py` | **New this pass:** 20 tests for atomic backup/restore, corruption, interruption, wrong-signature rejection before installation, shared-backup separation, index rollback, idempotence and read-only summaries. |
+| `tests/test_ingestion_subset.py` | **New this pass:** 35 direct Parquet tests for exact size, unique IDs, 100% gold coverage, determinism, seeds, all-gold, missing gold, insufficient rows, duplicate IDs, invalid queries and both qrels layouts. |
 | `tests/test_research_preflight.py` | **Extended this pass:** real CLI doctor into disposable storage; fresh experiment directory remains empty; report records isolation and cleanup. |
-| `tests/test_colab_workflow.py` | **Extended this pass:** notebook preflight isolation/opt-in assertions and a stale-pin guard (ancestor, pin ≠ HEAD, no implementation/test diff, sentinel code at pin). |
+| `tests/test_colab_workflow.py` | **Extended this pass:** notebook preflight isolation/opt-in assertions, a stale-pin guard (ancestor, pin ≠ HEAD, no implementation/test diff, sentinel code at pin), and proof that the runner owns canonical-signature restore before active-state validation. |
 | `notebooks/trace_rag_colab.ipynb` | **This pass:** preflight uses `PREFLIGHT_PARENT` and asserts isolation; raw NQ download is opt-in and validates all three files; pin updated to the tested implementation commit. |
 | `README.md` | Rewritten for the integrated system; **this pass:** 250/80 evidence, functional readiness explanation, exposure/citation table, NOT-MEASURED ASR, current limitation wording. |
 | `docs/REAL_MODEL_EVAL.md` | **New** NQ/GPU runbook; **this pass:** explicit status box (subset, not full corpus, not executed, answer ASR not measured). |
@@ -212,8 +234,8 @@ corruption, interruption, signature mixing and restore atomicity.
 | 17 | **High** | `doctor` trusted model names, `/models` metadata and `nli_ready` booleans; a reachable endpoint with a broken completion or an unloaded NLI model could look research-ready. | Readiness checked configuration, not operations. | Functional probes: finite embedding, two-token completion, fixed NLI inference with label/score validation; `PROTECTED` requires all to pass; `research_ready` requires `PROTECTED`. **This pass:** HF empty/whitespace rejected, OpenAI/Ollama completion text validated, HTTP timeouts failed closed, credentials redacted, malformed/missing NLI outputs rejected, NLI-not-loaded is `failed`. | 20 cases in `tests/test_security_wiring.py` plus preflight tests |
 | 18 | **Medium** | Repeated `ResourceWarning: unclosed database`; abandoned ledgers/stores/logs leaked SQLite connections. | Clearance depended on every test closing its own object; failed paths never did. | Idempotent `close()` on `TrustLedger`, `ProvenanceStore`, `AnswerLog`; failed constructors close partial connections; `pipeline.close()` closes all owned resources; finalizers are a last resort; test teardown closes leftovers. | Full suite run with `-W error::ResourceWarning` reports 0 warnings |
 | 19 | **Critical** | Functional preflight created `answers.sqlite3`, `provenance.sqlite3` and `trust.sqlite3` in a fresh experiment directory; the runner then rejected its own clean run as "partial artifacts". | The doctor ran the real pipeline against the experiment's `storage.root`. | `--preflight-storage-root` plus `isolate_storage_config()`: unique disposable probe tree, model/security config unchanged, absolute/`..` storage paths rebased, isolation recorded, probe removed. | `test_functional_doctor_uses_isolated_storage_and_leaves_fresh_run_empty`, notebook assertion on `storage_isolation` |
-| 20 | **High** | Subset construction could emit duplicate IDs, silently skip malformed qrels/query rows, and was tested only with a loose size range. | No identifier/row validation, in-place output, and weak assertions. | Duplicate/blank ID rejection, strict qrels/query validation, atomic write, exact-count/unique-ID/100%-gold verification, direct Parquet tests. | 34 tests in `tests/test_ingestion_subset.py`; `test_subset_always_keeps_gold_passages` now asserts exactly 300 |
-| 21 | **High** | Snapshot restore replaced files in place and metadata was not tied to a run signature; an interrupted restore or another experiment's snapshot could be mixed in. | No staging/commit marker and no signature binding. | Staged restore, `checkpoint.json` installed last, `run_signature`/manifest hash/index digest validation, signature refusal, recoverable `.previous` index, interrupted-staging cleanup. | 16 tests in `tests/test_snapshots.py`, including corruption, interruption and signature mixing |
+| 20 | **High** | Subset construction could emit duplicate IDs, silently skip malformed qrels/query rows, and was tested only with a loose size range. | No identifier/row validation, in-place output, and weak assertions. | Duplicate/blank ID rejection, strict qrels/query validation, atomic write, exact-count/unique-ID/100%-gold verification, direct Parquet tests. | 35 tests in `tests/test_ingestion_subset.py`; `test_subset_always_keeps_gold_passages` now asserts exactly 300 |
+| 21 | **High** | Snapshot restore replaced files in place and metadata was not tied to a run signature; an interrupted restore or another experiment's snapshot could be mixed in. | No staging/commit marker and no signature binding. | Staged restore, `checkpoint.json` installed last, `run_signature`/manifest hash/index digest validation, signature refusal, recoverable `.previous` index, interrupted-staging cleanup. | 20 tests in `tests/test_snapshots.py`, including matching and wrong-signature restore, shared backup directories, corruption, interruption, retry and idempotence |
 | 22 | **Medium** | Notebook pinned stale commit `2bac018…` and downloaded the multi-gigabyte NQ corpus implicitly. | Pin and data switch were not release-gated. | Pin updated to the tested implementation commit; `RUN_DATASET_DOWNLOAD = False`; raw files validated; stale-pin regression requires the pin to be an ancestor of HEAD, different from HEAD, with no implementation/test diff and sentinel code present at the pin. | `test_notebook_pin_contains_the_test_suite_implementation`, `test_notebook_isolates_preflight_storage_and_requires_data_opt_in` |
 
 **Residual defect, not claimed fixed:** the lexical verifier still produces
@@ -343,8 +365,8 @@ No GPU. `faiss-cpu`, `torch`, `transformers`, `matplotlib` absent.
 
 | Check | Result |
 |---|---|
-| `pytest -o addopts="" -q` | **340 passed, 6 skipped** |
-| Coverage | **81%** total (6299 statements, 1212 missed) |
+| `pytest -o addopts="" -q` | **346 passed, 6 skipped** |
+| Coverage | **81%** total (6319 statements, 1214 missed) |
 | `-W error::ResourceWarning` | **0 warnings**; no unclosed SQLite connections |
 | `compileall` | exit 0 |
 | `check_setup.py` | exit 0: pyarrow found; faiss/torch/transformers/Ollama/vLLM warnings expected on this host |
@@ -370,10 +392,11 @@ Coverage caveats:
   `provenance/remediation.py` 100%.
 * These are environment gaps, not passes. They are listed in limitations.
 
-This pass's validation logs were captured outside the repository for the exact
-tested commit (pytest, coverage, ResourceWarning, compileall, notebook check and
-mini stream). They are reproducible with the commands above; no Colab log is
-claimed. The mini-stream manifest records the tested Git commit and
+Fresh validation logs are committed under `baseline_logs/colab_reliability_*.txt`
+for the exact validation commit (pytest, coverage, ResourceWarning, compileall,
+focused workflow tests, notebook checks and mini stream). Each log records the
+command, exit code, Python/OS versions and full tested Git SHA. No Colab GPU log
+is claimed. The mini-stream manifest records the tested Git commit and
 `run_kind: offline_smoke`.
 
 ---
@@ -569,7 +592,7 @@ python scripts/run_trust_stream.py --config config/default.yaml \
   --backup-dir runs/final_trust_stream_backups
 ```
 
-Expected: **340 passed, 6 skipped**; the pin test passes only after the
+Expected: **346 passed, 6 skipped**; the pin test passes only after the
 notebook commit that follows the tested implementation commit; all scripts exit
 0; `doctor` reports `DEGRADED` with no readiness failures; the ResourceWarning
 run is clean. `runs/final_smoke/summary.md` carries the explicit smoke-scope
@@ -583,22 +606,23 @@ label a `DEGRADED` or `UNPROTECTED` run as RAGLedger.
 
 ### Captured evidence
 
-This pass's logs were written outside the repository so they cannot drift from
-the tested tree. They record the exact `git rev-parse HEAD` in the mini-stream
-manifest and were captured for commit
-`58de432c3124cc7cf81dcbfc4cc169b91c00af08`:
+Fresh logs are committed under `baseline_logs/colab_reliability_*.txt`. Each log
+records its command, exit code, Python and operating-system versions, and the
+full Git SHA of the tested validation tree. The implementation commit
+`8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0` is what the notebook pins; the later
+documentation commit only updates this report, the runbook and the pin, so it
+does not alter the tested implementation.
 
 ```
-pytest.txt
-coverage.txt
-resource_warnings.txt          # -W error::ResourceWarning, 0 warnings
-compileall.txt
-notebook_check.txt             # JSON/AST/pin, no saved outputs
-mini_stream.txt
-mini_stream/active/run_manifest.json
-check_setup.txt
+baseline_logs/colab_reliability_pytest.txt
+baseline_logs/colab_reliability_coverage.txt
+baseline_logs/colab_reliability_warnings.txt
+baseline_logs/colab_reliability_compileall.txt
+baseline_logs/colab_reliability_focused.txt
+baseline_logs/colab_reliability_mini_stream.txt
+baseline_logs/colab_reliability_environment.txt
 ```
 
-Historical committed evidence remains in `baseline_logs/` and describes older
-commits; it is not evidence for this pass. No Colab or real-model log exists.
-They are not portable measurements of another machine or GPU.
+Historical logs for older commits remain in `baseline_logs/` and are not
+evidence for this pass. No Colab or real-model log exists. These offline
+measurements are not portable to another machine or GPU.

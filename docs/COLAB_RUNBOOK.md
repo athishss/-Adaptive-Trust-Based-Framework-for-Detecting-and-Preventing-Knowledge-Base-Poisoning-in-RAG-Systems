@@ -29,10 +29,10 @@ the actual SHA before any experiment. Do not replace this with a branch name or
 `git pull` for a reported run.
 
 The notebook pins implementation commit
-`58de432c3124cc7cf81dcbfc4cc169b91c00af08`. That commit contains the exact
-implementation and tests described here; the later notebook commit only changes
-this pin and documentation, so it is not pinned to itself. The notebook was
-**not** run in Colab.
+`8bf874a10ea2f95b30f8b3e7de15aacc99e7baa0`. That commit contains the exact
+implementation and tests described here; the later notebook/documentation
+commit only changes the pin and documentation, so it is not pinned to itself.
+The notebook was **not** run in Colab.
 
 ## 2. Drive persistence
 
@@ -49,30 +49,44 @@ MyDrive/RAGLedger/
   exports/               archives of completed results
   logs/                  vLLM and service logs
 
-Active FAISS indexes, SQLite databases and `stream.jsonl` live in
-`/content/ragledger_active/runs/<run-id>/`; they are never executed from the
-Drive FUSE mount. Temporary Hugging Face weights stay in `/content/hf_cache`.
-At preparation and after every completed stream step the runner writes an
-atomic snapshot under `backups/<run-id>/`: the checkpoint, manifest, stream,
-consistent SQLite backups, and the prepared index. The checkpoint, stream row
-count and SQLite snapshot all describe the same completed step. The prepared
-index is copied once; later snapshots reference its digest without duplicating
-hundreds of megabytes at every step.
+Active execution state is temporary. The FAISS index, provenance/answer/trust
+SQLite databases, `checkpoint.json` and `stream.jsonl` live in
+`/content/ragledger_active/runs/<run-id>/`. They are never executed from the
+Drive FUSE mount, and `/content` does **not** survive a Colab runtime reset.
+Temporary Hugging Face weights stay in `/content/hf_cache`.
 
-Before a run, the notebook calls `restore_latest_snapshot`. Snapshot metadata
-records the run signature, manifest hash, index base/digest/file set, checkpoint
-stream position and SQLite state. Restore refuses a snapshot whose run signature
-differs from the current config/model/dataset/code signature, so two experiments
-can never be mixed. Replacement uses a staging directory and installs
-`checkpoint.json` last as the commit marker; an existing index is kept as a
-recoverable `.<name>.previous` directory until the new one is installed. An
-interrupted backup or restore is detected and cleaned or refused rather than
-being silently resumed. The runner itself refuses any non-empty directory with
-partial ingestion, index or poison artifacts, even when no checkpoint or
-manifest exists. Safe recovery is: preserve the partial active directory for
-diagnosis, restore the latest valid snapshot, or create a new run directory.
-Never delete an incomplete directory and reuse its name as a clean run, and
-never hand-edit `checkpoint.json` to force a resume.
+Persistent Drive storage under `MyDrive/RAGLedger/` holds the raw and prepared
+datasets, model/config locks, preflight results, completed-step snapshots,
+SQLite backups, the prepared index snapshot, exports and logs. At preparation
+and after every completed stream step the runner writes an atomic snapshot
+under `backups/<run-id>/`: checkpoint, manifest, stream, consistent SQLite
+backups and the prepared index. The checkpoint, stream row count and SQLite
+snapshot all describe the same completed step. The prepared index is copied
+once; later snapshots reference its digest without duplicating hundreds of
+megabytes at every step. The active `/content` index is therefore copied **into**
+the persistent snapshot; it is not itself a Drive run directory.
+
+After a runtime reset, the notebook invokes the runner with the same arguments
+plus `--restore --backup-dir <backup-dir>`. The runner computes the canonical
+run signature from the resolved config, model revisions, dataset contract,
+code commit, purpose, sampling, seed, scope and source count, then restores only
+a snapshot with that exact signature. Snapshot metadata records the run
+signature, manifest hash, index base/digest/file set, checkpoint stream position
+and SQLite state. A mismatched snapshot is never installed into the active
+directory, and an active run with a different signature is never replaced. A
+shared backup directory whose prepared index belongs to another signature is
+refused; use one backup directory per run.
+
+Replacement uses a staging directory and installs `checkpoint.json` last as the
+commit marker; an existing index is kept as a recoverable `.<name>.previous`
+directory until the new one is installed. An interrupted backup or restore is
+detected and cleaned or refused rather than being silently resumed. The runner
+itself refuses any non-empty directory with partial ingestion, index or poison
+artifacts, even when no checkpoint or manifest exists. Safe recovery is:
+preserve the partial active directory for diagnosis, restore the latest valid
+matching snapshot, or create a new run directory. Never delete an incomplete
+directory and reuse its name as a clean run, and never hand-edit
+`checkpoint.json` to force a resume.
 
 ## 3. Install and models
 
@@ -258,19 +272,28 @@ in `docs/PERSON_C_TODO.md`; answer-level ASR is **NOT MEASURED**.
 ## 8. Resume after a runtime disconnection
 
 The runner writes `checkpoint.json` before and after every step and appends each
-completed row to `stream.jsonl`. The index, provenance store and SQLite trust
-ledger stay in the run directory.
+completed row to `stream.jsonl`. The index, provenance/answer stores and SQLite
+trust ledger stay in the active `/content` run directory and are snapshotted to
+Drive; only the Drive copies survive a runtime reset.
 
 ```bash
+# /content still present
 python scripts/run_trust_stream.py <the exact original arguments> --resume
+
+# After a runtime reset, let the runner restore a matching Drive snapshot first
+python scripts/run_trust_stream.py <the exact original arguments> \
+  --backup-dir /content/drive/MyDrive/RAGLedger/backups/<run-id> \
+  --restore --resume
 ```
 
-`--resume` requires the same full signature: Git commit, resolved config,
-embedding/generator/NLI revisions, dataset hashes, seed, purpose, sample mode,
-steps, targets, limit, source count and target query ids. A changed model or
-dataset is rejected rather than mixed. Completed steps are read from
-`stream.jsonl`; work resumes at the next step. Snapshot restore performs the
-same signature check before touching the active directory.
+`--resume` and `--restore` require the same full signature: Git commit, resolved
+config, embedding/generator/NLI revisions, dataset hashes, seed, purpose, sample
+mode, steps, targets, limit, source count and target query ids. A changed model
+or dataset is rejected rather than mixed. Completed steps are read from
+`stream.jsonl`; work resumes at the next step. The runner computes the signature
+once, restores only a matching snapshot, then validates the restored active
+directory before entering the resume path. It does not install a snapshot that
+belongs to another experiment.
 
 If the checkpoint says `in_flight_step` is not null, the previous process died
 inside a step. The ledger may contain partial trust effects, so resume fails
@@ -281,9 +304,10 @@ count/SQLite/index disagreement is a refusal, not a repair.
 
 ## 9. Outputs and export
 
-Each run directory contains `run_manifest.json`, `metrics.json`, `stream.jsonl`,
-`trust_history.csv`, `trust.sqlite3`, `checkpoint.json`, the saved FAISS index
-and optional figures. The manifest records:
+Each completed run contains `run_manifest.json`, `metrics.json`, `stream.jsonl`,
+`trust_history.csv`, the provenance/answer/trust SQLite databases,
+`checkpoint.json`, the saved FAISS index and optional figures. The manifest
+records:
 
 * Git commit and full command;
 * resolved config and dataset SHA-256 identities;
@@ -294,8 +318,13 @@ and optional figures. The manifest records:
 * security status and readiness failures.
 
 The notebook exports manifests, metrics, stream, history, checkpoint, figures
-and a consistent SQLite backup to `MyDrive/RAGLedger/exports/`. The large index
-stays in the run directory on Drive for resume.
+and consistent provenance/answer/trust SQLite backups to
+`MyDrive/RAGLedger/exports/`. If `/content` was reset, the exporter falls back
+to the latest completed Drive snapshot and records that provenance instead of
+pretending the active directory still exists. The archive does not duplicate
+the large index: the prepared index remains once under
+`MyDrive/RAGLedger/backups/<run-id>/index` for a future runtime, and its digest
+is recorded in the export metadata.
 
 ## 10. Hardware and limitations
 
