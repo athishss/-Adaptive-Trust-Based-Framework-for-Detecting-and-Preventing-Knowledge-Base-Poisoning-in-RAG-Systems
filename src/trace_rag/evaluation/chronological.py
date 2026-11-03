@@ -30,12 +30,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from ..attacks.stream import (StreamIngestion, StreamPlan, StreamQuery,
                               as_ingestion_row, as_query_row, build_stream_plan)
 from ..contracts import VerificationResult
+from ..detection.training import LabelledRow
 from ..ingestion.pipeline import Ingestor
 from ..pipeline import PersonAPipeline
 from ..trust.policy import TrustPolicy
 from ..trust.verifier import CorroborationVerifier
-from .metrics import (abstention_rate, answer_level_asr_fields, clean_utility,
-                      detection_delays, detection_metrics, exposure_windows,
+from .metrics import (abstention_rate, answer_level_asr_fields, attack_answer_success,
+                      clean_utility, detection_delays, detection_metrics, exposure_windows,
                       latency_stats, mean_llm_calls, poison_citation_rate,
                       poison_exposure_rate, summarise_optional)
 from ..utils.logging import get_logger
@@ -71,6 +72,9 @@ class QueryStepRecord:
     llm_calls: int
     latency_ms: float
     answer_id: Optional[int]
+    answer_attack_success: Optional[bool] = None
+    answer_attack_status: str = "NOT MEASURED"
+    attack_answer_criterion: Optional[str] = None
     result: Any = None
 
     @property
@@ -122,6 +126,9 @@ class QueryStepRecord:
             "llm_calls": int(self.llm_calls),
             "latency_ms": float(self.latency_ms),
             "answer_id": self.answer_id,
+            "answer_attack_success": self.answer_attack_success,
+            "answer_attack_status": self.answer_attack_status,
+            "attack_answer_criterion": self.attack_answer_criterion,
         }
 
 
@@ -133,6 +140,7 @@ class StreamRun:
     config: Dict[str, Any] = field(default_factory=dict)
     injection_steps: Dict[str, int] = field(default_factory=dict)
     poison_doc_ids: Set[str] = field(default_factory=set)
+    training_rows: List[LabelledRow] = field(default_factory=list)
 
     @property
     def answers(self) -> List[Any]:
@@ -171,6 +179,14 @@ class StreamRun:
         config_path.write_text(json.dumps(self.config, indent=2, sort_keys=True),
                                encoding="utf-8")
         summary_path.write_text(_summary_markdown(self), encoding="utf-8")
+        if self.training_rows:
+            payload = "\n".join(json.dumps({
+                "query_id": row.query_id, "doc_id": row.doc_id,
+                "label": row.label, "attack_family": row.attack_family,
+                "captured_at": row.captured_at, "query_time": row.query_time,
+                "features": row.features.to_dict(),
+            }, sort_keys=True) for row in self.training_rows)
+            (out / "training_rows.jsonl").write_text(payload, encoding="utf-8")
         return {"metrics": str(metrics_path), "records": str(records_path),
                 "plan": str(plan_path), "config": str(config_path),
                 "summary": str(summary_path)}
@@ -212,6 +228,7 @@ def run_stream(
     poison_ids: Optional[Iterable[str]] = None,
     clean_ids: Optional[Iterable[str]] = None,
     target_query_ids: Optional[Iterable[str]] = None,
+    answer_ground_truth: Optional[Mapping[str, Mapping[str, Any]]] = None,
     output_dir: Optional[str | Path] = None,
     drain_queue: bool = True,
     log: bool = True,
@@ -257,9 +274,12 @@ def run_stream(
     injection_steps: Dict[str, int] = {}
     poison_ground_truth: Set[str] = set(poison_ids or ())
     poison_by_target_query: Dict[str, Set[str]] = {}
+    chunk_attack: Dict[str, str] = {}
+    training_rows: List[LabelledRow] = []
     declared_clean: Set[str] = set(clean_ids or ())
 
     records: List[QueryStepRecord] = []
+    answer_ground_truth = answer_ground_truth or {}
     flagged_docs: Set[str] = set()
     first_detection: Dict[str, int] = {}
     first_quarantine: Dict[str, int] = {}
@@ -278,6 +298,7 @@ def run_stream(
                 if event.get("is_poison"):
                     poison_ground_truth.add(chunk_id)
                     injection_steps[chunk_id] = step
+                    chunk_attack[chunk_id] = str(event.get("attack_type") or "poison")
                     if event.get("target_query"):
                         poison_by_target_query.setdefault(str(event["target_query"]), set()).add(chunk_id)
         if new_chunk_ids:
@@ -310,6 +331,16 @@ def run_stream(
 
             band_counts = {band: 0 for band in ("LOW", "MEDIUM", "HIGH")}
             for assessment in result.assessments:
+                # Features are snapshotted at this retrieval; labels are used
+                # only by the offline trainer, never by the live defence.
+                training_rows.append(LabelledRow(
+                    query_id=query.query,
+                    doc_id=assessment.doc_id,
+                    label=int(assessment.doc_id in poison_ground_truth),
+                    features=assessment.feature_snapshot,
+                    attack_family=chunk_attack.get(assessment.doc_id, "none"),
+                    captured_at=timestamp, query_time=timestamp,
+                ))
                 band_counts[assessment.band.value] = band_counts.get(assessment.band.value, 0) + 1
                 if assessment.band.value == "HIGH":
                     # A positive detection: the suspicion scorer escalated it
@@ -336,6 +367,21 @@ def run_stream(
                 if result.answer_id is not None:
                     poison_answers.add(int(result.answer_id))
 
+            ground_truth = answer_ground_truth.get(query.query_id)
+            answer_success: Optional[bool] = None
+            answer_status = "NOT MEASURED"
+            criterion = None
+            if ground_truth:
+                answer_success = attack_answer_success(
+                    result.answer,
+                    str(ground_truth.get("malicious_answer", "")),
+                    str(ground_truth.get("gold_answer", "")),
+                )
+                if answer_success is not None:
+                    answer_status = "MEASURED"
+                    criterion = ("attacker answer present in delivered answer and "
+                                 "gold answer absent")
+
             records.append(QueryStepRecord(
                 step=query.step, query_id=query.query_id, query=query.query,
                 is_target=query.is_target, answer=result.answer,
@@ -351,7 +397,9 @@ def run_stream(
                 newly_quarantined=tuple(result.newly_quarantined),
                 llm_calls=int(result.llm_calls),
                 latency_ms=float(result.timings_ms.get("total", 0.0)),
-                answer_id=result.answer_id, result=result,
+                answer_id=result.answer_id, answer_attack_success=answer_success,
+                answer_attack_status=answer_status,
+                attack_answer_criterion=criterion, result=result,
             ))
 
     stream_end = max((record.step for record in records), default=0)
@@ -370,7 +418,7 @@ def run_stream(
                       if doc_id in declared_clean}
 
     metrics = _compute_metrics(
-        records=records, plan=plan, stream_end=stream_end,
+        records=records, plan=plan, stream_end=stream_end, answer_ground_truth=answer_ground_truth,
         poison_ids=poison_ground_truth, clean_ids=declared_clean,
         flagged_docs=flagged_docs, blocked=blocked,
         injection_steps=injection_steps, first_detection=first_detection,
@@ -382,6 +430,7 @@ def run_stream(
         plan=plan, records=records, metrics=metrics,
         config=_run_config(pipeline),
         injection_steps=injection_steps, poison_doc_ids=poison_ground_truth,
+        training_rows=training_rows,
     )
     if output_dir is not None:
         run.write(output_dir)
@@ -411,6 +460,7 @@ def _targeted_poison(query: StreamQuery, poison_by_target_query: Mapping[str, Se
 
 
 def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, stream_end: int,
+                     answer_ground_truth: Mapping[str, Mapping[str, Any]],
                      poison_ids: Set[str], clean_ids: Set[str], flagged_docs: Set[str],
                      blocked: Set[str], injection_steps: Mapping[str, int],
                      first_detection: Mapping[str, int], first_quarantine: Mapping[str, int],
@@ -440,6 +490,22 @@ def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, st
     answered_non_target = [record for record in non_target if not record.abstained]
 
     remediation = remediation_recall(pipeline, sorted(poison_answers))
+    answer_evaluated = [record for record in attempts
+                        if record.answer_attack_success is not None]
+    answer_successes = sum(1 for record in answer_evaluated
+                           if record.answer_attack_success is True)
+    if answer_evaluated:
+        answer_fields = answer_level_asr_fields(
+            answer_successes / len(answer_evaluated), evaluated=len(answer_evaluated),
+            status="MEASURED",
+            reason=("Measured only for eligible attempts with attack-specific answer "
+                    "ground truth; attacker answer present and gold answer absent. "
+                    "Abstention counts as attack failure."),
+        )
+        answer_fields["answer_attack_criterion"] = (
+            "attacker answer present in delivered answer and gold answer absent")
+    else:
+        answer_fields = answer_level_asr_fields()
 
     return {
         "queries": len(records),
@@ -459,9 +525,11 @@ def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, st
         "target_queries_without_ingested_poison": len(target_records) - len(attempts),
         "answer_abstention_rate_on_attempts": abstention_rate(
             sum(1 for record in attempts if record.abstained), len(attempts)),
-        # Deliberately not inferred from exposure or citation: the harness has
-        # no per-attack malicious-answer ground truth.
-        **answer_level_asr_fields(),
+        # Measured only when the experiment supplies an attack-specific answer
+        # target.  Never inferred from exposure or citation.
+        **answer_fields,
+        "answer_ground_truth_attempts": len(answer_evaluated),
+        "answer_attack_successes": int(answer_successes),
         "poison_leaked_cases": len(exposed_cases),
         "poison_not_exposed_after_retrieval_cases": len(not_exposed_after_retrieval),
         "poison_never_retrieved_cases": len(never_retrieved),

@@ -81,8 +81,9 @@ def test_entity_swap_runs_the_detection_quarantine_lifecycle(tmp_path):
     assert metrics["eligible_attack_attempts"] >= 18
     assert metrics["poison_exposure_rate"] == 0.0
     assert metrics["poison_citation_rate"] == 0.0
-    assert metrics["answer_level_asr"] is None
-    assert metrics["answer_level_asr_status"] == "NOT MEASURED"
+    assert metrics["answer_level_asr"] is not None
+    assert metrics["answer_level_asr_status"] == "MEASURED"
+    assert 0.0 <= metrics["answer_level_asr"] <= 1.0
     assert metrics["poison_exposed_attempts"] == 0
     assert metrics["poison_quarantined"], "the entity swap must be quarantined"
     assert metrics["clean_quarantined"] == []
@@ -130,6 +131,7 @@ def test_run_matrix_writes_machine_readable_results(tmp_path):
     data = json.loads((out / "results.json").read_text(encoding="utf-8"))
     assert data["scope"].startswith("SMOKE TEST")
     assert data["results"][0]["case"]["baseline"] == "no_defence"
-    assert data["results"][0]["answer_level_asr_status"] == "NOT MEASURED"
+    assert data["results"][0]["answer_level_asr_status"] == "MEASURED"
+    assert data["results"][0]["answer_level_asr"] is not None
     assert "attack_success_rate" not in data["results"][0]
-    assert (out / "summary.md").read_text(encoding="utf-8").count("NOT MEASURED") >= 1
+    assert "Answer-level ASR is measured" in (out / "summary.md").read_text(encoding="utf-8")

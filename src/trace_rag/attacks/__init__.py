@@ -23,6 +23,14 @@ from trace_rag.attacks.poisoned_rag import (
     make_poisoned_document,
     negation,
 )
+from trace_rag.attacks.research import (
+    RESEARCH_ATTACK_SPECS,
+    adaptive_events,
+    black_box_events,
+    coordinated_injection,
+    sybil_duplication,
+    white_box_events,
+)
 from trace_rag.attacks.stream import (
     INGESTION_ROW_KEYS,
     QUERY_ROW_KEYS,
@@ -46,8 +54,25 @@ ATTACK_GENERATORS = {
     "slow_burn": slow_burn,
     "framing": framing,
     "signal_evasion": signal_evasion,
+    "black_box": black_box_events,
+    "white_box": white_box_events,
+    "sybil": sybil_duplication,
+    "coordinated": coordinated_injection,
+    "adaptive": adaptive_events,
 }
 
+ATTACK_SPECS = {
+    **ATTACK_SPECS,
+    **{name: spec.to_dict() for name, spec in RESEARCH_ATTACK_SPECS.items()},
+    "hit_and_run": {"transform": "fresh source per payload",
+                    "label": "is_poison=True, attack_type='hit_and_run'"},
+    "slow_burn": {"transform": "benign warm-up from the same source before poison",
+                  "label": "warm-up is_poison=False; attack is_poison=True"},
+    "framing": {"transform": "multiple distinct-source denials isolate the true claim",
+                "label": "is_poison=True, attack_type='framing'"},
+    "signal_evasion": {"transform": "remove literal query echo (S1)",
+                       "label": "is_poison=True, attack_type='signal_evasion'"},
+}
 ATTACK_NAMES = tuple(ATTACK_GENERATORS.keys())
 
 __all__ = [

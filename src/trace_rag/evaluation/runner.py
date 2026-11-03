@@ -52,6 +52,8 @@ class EvaluationResult:
     exposure_window: int = 0
     remediation_recall: Optional[float] = None
     llm_calls: int = 0
+    p99_latency_ms: Optional[float] = None
+    peak_memory_mb: Optional[float] = None
     details: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self):
@@ -75,6 +77,8 @@ class EvaluationResult:
             "exposure_window": int(self.exposure_window),
             "remediation_recall": self.remediation_recall,
             "llm_calls": int(self.llm_calls),
+            "p99_latency_ms": self.p99_latency_ms,
+            "peak_memory_mb": self.peak_memory_mb,
             "details": dict(self.details),
         }
 

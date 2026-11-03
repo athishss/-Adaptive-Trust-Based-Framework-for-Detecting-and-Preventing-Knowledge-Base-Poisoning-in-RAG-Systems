@@ -355,15 +355,124 @@ class RobustRAGPolicy:
         )
 
 
-BASELINE_NAMES = (
-    "no_defence",
-    "perplexity",
-    "duplicate_filter",
-    "trust_threshold",
-    "TrustRAG",
-    "RobustRAG",
-    "always_on_loo",
-)
+class SuspicionOnlyPolicy(_BaseBaselinePolicy):
+    """Use the six-signal bands, but no trust state and no verification."""
+
+    name = "suspicion_only"
+
+    def apply(self, query, query_id, documents, assessments, verifier=None, **kwargs):
+        bands = {a.doc_id: a.band for a in assessments}
+        kept, excluded = [], []
+        for doc in documents:
+            if bands.get(doc.doc_id) is Band.HIGH:
+                excluded.append(doc.doc_id)
+            else:
+                kept.append(doc)
+        return BaselineResult(
+            documents=kept, blocked=excluded, verified=[], llm_calls=0,
+            notes={"policy": self.name, "uses_trust": False,
+                   "uses_verification": False},
+        )
+
+
+class CorroborationOnlyPolicy(_BaseBaselinePolicy):
+    """Verify every suspicious document; no hierarchical trust or quarantine."""
+
+    name = "corroboration_only"
+
+    def apply(self, query, query_id, documents, assessments, verifier=None, **kwargs):
+        if verifier is None:
+            raise ValueError("corroboration_only needs a verifier")
+        bands = {a.doc_id: a.band for a in assessments}
+        kept, excluded, verified = [], [], []
+        calls = 0
+        for doc in documents:
+            if bands.get(doc.doc_id, Band.LOW) is Band.LOW:
+                kept.append(doc)
+                continue
+            result = verifier.verify(query, query_id, doc, list(documents))
+            verified.append(result)
+            calls += int(result.llm_calls)
+            if result.outcome is VerificationOutcome.REFUTE:
+                excluded.append(doc.doc_id)
+            elif result.outcome is VerificationOutcome.NEUTRAL:
+                excluded.append(doc.doc_id)       # fail closed, no trust update
+            else:
+                kept.append(doc)
+        return BaselineResult(
+            documents=kept, blocked=excluded, verified=verified, llm_calls=calls,
+            notes={"policy": self.name, "uses_trust": False,
+                   "uses_verification": True, "deferred": False},
+        )
+
+
+class TrustNoDeferredPolicy(_BaseBaselinePolicy):
+    """Trust floor plus inline verification; no queue or historical remediation."""
+
+    name = "trust_no_deferred"
+
+    def __init__(self, threshold: float = 0.20) -> None:
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("threshold must be in [0, 1]")
+        self.threshold = float(threshold)
+
+    def apply(self, query, query_id, documents, assessments, verifier=None, **kwargs):
+        if verifier is None:
+            raise ValueError("trust_no_deferred needs a verifier")
+        bands = {a.doc_id: a.band for a in assessments}
+        kept, excluded, verified = [], [], []
+        calls = 0
+        for doc in documents:
+            if float(doc.trust.t_eff) < self.threshold:
+                excluded.append(doc.doc_id)
+                continue
+            if bands.get(doc.doc_id) is Band.HIGH:
+                excluded.append(doc.doc_id)
+                continue
+            if bands.get(doc.doc_id) is Band.MEDIUM:
+                result = verifier.verify(query, query_id, doc, list(documents))
+                verified.append(result)
+                calls += int(result.llm_calls)
+                if result.outcome is not VerificationOutcome.SUPPORT:
+                    excluded.append(doc.doc_id)
+                    continue
+            kept.append(doc)
+        return BaselineResult(
+            documents=kept, blocked=excluded, verified=verified, llm_calls=calls,
+            notes={"policy": self.name, "uses_trust": True,
+                   "uses_verification": True, "deferred": False},
+        )
+
+
+BASELINE_SPECS = {
+    "no_defence": {"published_method": False, "uses_trust": False,
+                   "uses_verification": False, "deferred": False},
+    "duplicate_filter": {"published_method": False, "uses_trust": False,
+                         "uses_verification": False, "deferred": False},
+    "perplexity": {"published_method": False, "uses_trust": False,
+                   "uses_verification": False, "deferred": False,
+                   "simplification": "order-2 n-gram surrogate, not neural perplexity"},
+    "suspicion_only": {"published_method": False, "uses_trust": False,
+                       "uses_verification": False, "deferred": False},
+    "corroboration_only": {"published_method": False, "uses_trust": False,
+                            "uses_verification": True, "deferred": False},
+    "trust_threshold": {"published_method": False, "uses_trust": True,
+                        "uses_verification": False, "deferred": False},
+    "trust_no_deferred": {"published_method": False, "uses_trust": True,
+                          "uses_verification": True, "deferred": False},
+    "TrustRAG": {"published_method": False, "uses_trust": True,
+                 "uses_verification": False, "deferred": False,
+                 "simplification": "label-free adaptation, not the published algorithm"},
+    "RobustRAG": {"published_method": False, "uses_trust": True,
+                  "uses_verification": False, "deferred": False,
+                  "simplification": "band-blocking adaptation, not certified aggregation"},
+    "always_on_loo": {"published_method": False, "uses_trust": False,
+                      "uses_verification": True, "deferred": False},
+    "RAGLedger": {"published_method": False, "uses_trust": True,
+                  "uses_verification": True, "deferred": True},
+}
+
+BASELINE_NAMES = tuple(name for name in BASELINE_SPECS if name != "RAGLedger")
 
 BASELINE_POLICIES = {
     "no_defence": NoDefencePolicy,
@@ -372,6 +481,9 @@ BASELINE_POLICIES = {
     "trust_threshold": TrustThresholdPolicy,
     "TrustRAG": TrustRAGPolicy,
     "RobustRAG": RobustRAGPolicy,
+    "suspicion_only": SuspicionOnlyPolicy,
+    "corroboration_only": CorroborationOnlyPolicy,
+    "trust_no_deferred": TrustNoDeferredPolicy,
     "always_on_loo": AlwaysOnLOOPolicy,
 }
 
@@ -403,4 +515,6 @@ def build_baseline_policy(name: str, *, ledger: Any = None,
         return PerplexityPolicy(perplexity_model, perplexity_threshold)
     if name == "trust_threshold":
         return TrustThresholdPolicy(threshold=trust_floor)
+    if name == "trust_no_deferred":
+        return TrustNoDeferredPolicy(threshold=trust_floor)
     return BASELINE_POLICIES[name]()
