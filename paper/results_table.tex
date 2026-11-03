@@ -1,0 +1,25 @@
+egin{table}[t]
+\centering
+\caption{Offline fixture matrix. Values are means over one seed and three targeted queries per case; the scope is 	exttt{SMOKE TEST} with a hashing embedder, stub generator, and lexical verifier. These are plumbing results, not benchmark evidence.}
+\label{tab:offline}
+egin{tabular}{lrrrrrrrr}
+	oprule
+Attack & \multicolumn{4}{c}{No defence} & \multicolumn{4}{c}{RAGLedger} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+ & Exp. & ASR & P & R & Exp. & ASR & P & R \\
+\midrule
+adaptive & 0.667 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+black\_box & 1.000 & 1.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+coordinated & 1.000 & 1.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+entity\_swap & 1.000 & 0.667 & 0.000 & 0.000 & 0.333 & 0.333 & 0.000 & 0.000 \\
+framing & 1.000 & 0.000 & 0.000 & 0.000 & 0.333 & 0.000 & 0.000 & 0.000 \\
+hit\_and\_run & 1.000 & 0.667 & 0.000 & 0.000 & 0.333 & 0.333 & 0.000 & 0.000 \\
+instruction\_injection & 0.667 & 0.000 & 0.000 & 0.000 & 0.167 & 0.000 & 0.000 & 0.000 \\
+negation & 1.000 & 0.000 & 0.000 & 0.000 & 0.333 & 0.000 & 0.000 & 0.000 \\
+signal\_evasion & 0.667 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+slow\_burn & 1.000 & 0.667 & 0.000 & 0.000 & 0.333 & 0.333 & 0.000 & 0.000 \\
+sybil & 1.000 & 0.667 & 0.000 & 0.000 & 0.333 & 0.333 & 0.000 & 0.000 \\
+white\_box & 1.000 & 0.667 & 0.000 & 0.000 & 0.333 & 0.333 & 0.000 & 0.000 \\
+ottomrule
+\end{tabular}
+\end{table}

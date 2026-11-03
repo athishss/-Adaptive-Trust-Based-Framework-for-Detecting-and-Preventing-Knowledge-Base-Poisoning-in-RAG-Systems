@@ -58,8 +58,8 @@ probes to pass; a configured model name alone can never earn it.
 service or downloads weights. `UNPROTECTED` means no defence is active and the
 run must not be labelled RAGLedger.
 
-Run the deterministic end-to-end smoke matrix (7 attacks × 8 baselines × 1 seed,
-56 cases):
+Run the deterministic end-to-end offline matrix (12 attacks × 11 policies × 1 seed,
+132 cases; hashing embedder, stub generator, lexical verifier):
 
 ```bash
 python scripts/run_chronological_eval.py --out runs/final_smoke
@@ -98,9 +98,23 @@ python scripts/run_trust_stream.py \
 | `slow_burn` | Benign-looking history from the attacker's source before poison |
 | `hit_and_run` | One-shot injection from a fresh source |
 | `signal_evasion` | Query echo removed / text perturbed to evade cheap signals |
+| `black_box` | No access to detector features |
+| `white_box` | Feature-aware evasion |
+| `sybil` | Corroboration split across synthetic sources |
+| `coordinated` | Near-duplicate injection synchronised across sources |
+| `adaptive` | Strategy changes after quarantine |
 
-Baselines: `no_defence`, `duplicate_filter`, `trust_threshold`, `perplexity`,
-`TrustRAG`, `RobustRAG`, `always_on_loo`, and `RAGLedger`.
+Policies: `no_defence`, `duplicate_filter`, `perplexity`, `suspicion_only`,
+`corroboration_only`, `trust_threshold`, `trust_no_deferred`, adapted
+`TrustRAG`, adapted `RobustRAG`, `always_on_loo`, and `RAGLedger`. The adapted
+baselines are marked `published_method=False` and must not be described as
+reproductions.
+
+The research protocol, 12-attack definitions, statistical plan and real-model
+commands are in [`docs/RESEARCH_PROTOCOL.md`](docs/RESEARCH_PROTOCOL.md). The
+offline result is in [`baseline_logs/research_smoke_full/`](baseline_logs/research_smoke_full/);
+the IEEE draft is [`paper/main.tex`](paper/main.tex). The offline run found zero
+detection precision/recall, so it is negative/plumbing evidence only.
 
 ---
 

@@ -406,11 +406,11 @@ def test_snapshot_summary_is_read_only(tmp_path):
 
 def test_notebook_preserves_layout_and_uses_content_for_active_runs():
     notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(encoding="utf-8"))
-    assert len(notebook["cells"]) == 30
-    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) == 15
+    assert len(notebook["cells"]) >= 40
+    assert sum(cell["cell_type"] == "code" for cell in notebook["cells"]) >= 20
     headings = [line for cell in notebook["cells"] for line in cell["source"]
                 if line.startswith("## ") and line[3:4].isdigit()]
-    assert len(headings) == 13
+    assert len(headings) == 19
     text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
     assert "/content/ragledger_active" in text
     assert "backup-dir" in text and "--restore" in text
@@ -428,3 +428,14 @@ def test_colab_dependency_pins_are_explicit_and_marked_unverified():
     assert "not verified" in doc.lower() and "0.5.7" in doc
     runbook = (ROOT / "docs" / "COLAB_RUNBOOK.md").read_text(encoding="utf-8")
     assert "backups" in runbook
+
+
+def test_notebook_installs_before_importing_heavy_packages():
+    notebook = json.loads((ROOT / "notebooks" / "trace_rag_colab.ipynb").read_text(encoding="utf-8"))
+    code = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
+    first = "".join(code[0]["source"])
+    install = "".join(code[3]["source"])
+    assert "import torch" not in first
+    assert "install" in install and "torch" in install
+    assert "VERSIONS == EXPECTED" not in install
+    assert "torch.cuda.is_available()" in install

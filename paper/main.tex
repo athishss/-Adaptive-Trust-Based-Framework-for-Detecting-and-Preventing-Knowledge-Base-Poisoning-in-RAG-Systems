@@ -1,0 +1,152 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{booktabs,amsmath,url,array}
+\usepackage[hidelinks]{hyperref}
+\title{TRACE-RAG: Chronological Trust, Corroboration and Retroactive Remediation for Knowledge-Base Poisoning}
+\author{Anonymous preprint draft --- author information to be completed}
+\date{November 2026}
+\begin{document}
+\maketitle
+\begin{abstract}
+Retrieval-augmented generation (RAG) systems trust retrieved text, so a small
+amount of poisoned content can alter an answer long before a static corpus
+audit notices. We describe TRACE-RAG, an integrated defence that treats
+ingestion as a chronological stream: it scores passages with cheap signals,
+maintains document-, family- and source-level trust, corroborates suspicious
+claims against independent evidence, defers unresolved release, and re-opens
+answers whose cited content is quarantined later. We implement twelve attack
+families and eleven policies behind one evaluator contract, with explicit
+answer-level attack-success accounting and missing-data markers. This draft
+reports an \emph{offline fixture} matrix, not a benchmark result. It completed
+132/132 cases, but detection precision and recall were zero and the run used a
+hashing embedder, stub generator and lexical verifier. The real-model Natural
+Questions study is specified and instrumented but has not been executed. We
+therefore present the design, protocol and negative/plumbing evidence, and make
+no state-of-the-art or deployment claim.
+\end{abstract}
+\begin{IEEEkeywords}
+retrieval-augmented generation, knowledge-base poisoning, trust, provenance,
+corroboration, retroactive remediation, reproducibility
+\end{IEEEkeywords}
+\section{Introduction}
+RAG grounds generation in retrieved passages, but retrieval is an untrusted
+input channel. PoisonedRAG demonstrated that a few adversarial passages can
+steer answers \cite{poisonedrag}. Defences have since explored trust filtering,
+certified aggregation, forensic tracing and provenance. The open engineering
+question is not whether a detector can be built, but whether trust can be
+maintained over time: evidence arrives in a stream, a passage may look benign
+when released, and an answer may need correction after later evidence arrives.
+TRACE-RAG addresses that lifecycle. Its contributions are (i) a chronological
+evaluation contract shared by twelve attacks and eleven policies; (ii) explicit
+answer-level ASR that cannot be inferred from exposure; (iii) integrated
+suspicion, trust, corroboration, deferred release and retroactive remediation;
+and (iv) a reproducible protocol separating fixture evidence from a real-model
+study. The current evidence is deliberately reported as incomplete.
+\section{Related Work}
+PoisonedRAG establishes knowledge-corruption attacks \cite{poisonedrag}.
+TrustRAG filters retrieval using trust signals \cite{trustrag}; RobustRAG
+aggregates isolated responses with certificates \cite{robustrag}. RAGForensics
+traces poisoning sources \cite{ragforensics}; FilterRAG filters retrieval
+\cite{filterrag}; RAGDefender detects and mitigates poisoned knowledge
+\cite{ragdefender}. SafeRAG and CorruptRAG provide security benchmarks and
+data \cite{saferag,corruptrag}. RAGShield is a recent provenance-oriented
+defence \cite{ragshield}. Our closest distinction is the combination of
+provenance-independent corroboration, deferred release and retroactive answer
+remediation with blast-radius accounting. We do not claim novelty over every
+individual component, and the adapted baselines in this draft are not the
+published algorithms.
+\section{Threat Model}
+An attacker can insert passages through one or more sources at chosen stream
+steps. It may know the retrieval pipeline (white-box), adapt after quarantine,
+split corroboration across Sybil sources, or coordinate near-duplicate claims.
+The defender observes ingestion order and provenance, but not evaluator labels.
+Target queries and evaluator-only gold/attacker answers are fixed before the
+run. The defender may abstain; abstention is counted as attack failure, never as
+attack success. Out of scope: model-weight poisoning, prompt injection in the
+user turn, and attacks that never enter the corpus.
+\section{System}
+The pipeline indexes each chunk with provenance, computes six cheap suspicion
+signals, and stores a feature snapshot. A logistic scorer with isotonic
+calibration maps signals to a suspicion score. Trust is tracked per document,
+near-duplicate family and source. HIGH-suspicion or refuted content is blocked
+or quarantined; unresolved medium-suspicion content is withheld until
+corroboration. Trust-weighted retrieval uses
+$\mathrm{score}=\mathrm{sim}\cdot\max(t_{\mathrm{eff}},\epsilon)^\lambda$.
+Every answer records its context and citations. When later evidence quarantines
+a cited document, the ledger identifies prior answers that relied on it and
+emits remediation records. Labels are used only by the offline trainer, never
+by the live policy.
+\section{Experimental Protocol}
+\subsection{Attacks and policies}
+The twelve attacks are entity swap, negation, instruction injection, framing,
+signal evasion, hit-and-run, slow burn, black box, white box, Sybil, coordinated
+and adaptive. All are deterministic given a seed and emit the same ingestion
+event as benign content. Policies are no defence, duplicate filter, n-gram
+perplexity surrogate, suspicion-only, corroboration-only, trust threshold, trust
+without deferred verification, adapted TrustRAG, adapted RobustRAG, always-on
+leave-one-out verification, and full RAGLedger. Adapted methods are marked
+\texttt{published\_method=False}.
+\subsection{Data and execution tiers}
+Tier 1 is the bundled mini corpus with a hashing embedder, stub generator and
+lexical verifier. Tier 2 is a 5,000-passage Natural Questions pilot on a Colab
+GPU. Tier 3 is a multi-seed NQ/BEIR benchmark with Contriever/FAISS and an NLI
+verifier. Only Tier 1 has been executed. Tiers 2--3 are specified in
+\texttt{docs/RESEARCH\_PROTOCOL.md} and the Colab notebook; their absence is a
+limitation, not an implied result.
+\subsection{Metrics and statistics}
+Primary outcomes are targeted poison exposure and answer-level ASR on eligible
+queries. Detection precision/recall/F1 and clean-passage false-positive rate are
+reported separately. p99 latency and peak traced memory are secondary. Each
+field has a measured/not-measured status. The planned real study uses three to
+five independent seeds, paired policy comparisons, query-clustered bootstrap
+intervals and Holm correction. A single-seed fixture cannot support inferential
+claims.
+\section{Results}
+Table~\ref{tab:offline} reports the measured fixture. All 132 cases completed
+without execution failures. Mean exposure over attacks fell from 0.833 without
+defence to 0.208 with RAGLedger; mean answer ASR fell from 0.444 to 0.139.
+RAGLedger reached zero exposure for adaptive, black-box, coordinated and
+signal-evasion attacks, but retained 0.333 exposure for seven families. These
+are plumbing observations, not benchmark efficacy.
+\input{results_table}
+The important negative result is that detection precision and recall were zero
+for every group. The HIGH-suspicion band produced no labeled true positives in
+this fixture. Exposure reduction therefore cannot be attributed to validated
+detection; it may reflect policy exclusion or retrieval effects. RQ2 is not
+supported. No claim about trust-signal quality is warranted.
+\section{Discussion and Limitations}
+The prototype demonstrates that twelve attacks, eleven policies, answer-level
+ASR, memory/latency and artifact export can run through one chronological
+contract. It does not demonstrate real-model robustness, utility preservation,
+statistical significance, or superiority over published defences. The fixture
+uses a stub generator and lexical verifier; its numbers must not be compared
+with NQ or BEIR results. The adapted TrustRAG/RobustRAG policies are
+simplifications, and the detector's zero recall is a concrete blocker.
+The real study must additionally report clean-answer withholding, abstention,
+retroactive remediation precision and blast radius. If detection remains at
+zero recall, the trust stage must be revised before any efficacy claim.
+\section{Reproducibility}
+The repository pins the notebook to an implementation commit, installs with
+\texttt{pip install -e ".[all,data]"}, verifies a real CUDA matmul and asserts
+that \texttt{trace\_rag} is imported from the checkout. Fixture results are in
+\texttt{baseline\_logs/research\_smoke\_full/}; the full matrix command is in
+\texttt{docs/RESEARCH\_PROTOCOL.md}. The notebook's heavy flags default to
+false and fail visibly when prerequisites are absent. Generated \texttt{runs/}
+artifacts are not committed; the analysis JSON/CSV and logs are.
+\section{Conclusion}
+TRACE-RAG provides an integrated, chronological defence and a reproducible
+evaluation harness. The current evidence supports only the plumbing claim: the
+matrix runs end to end, but detection failed in the fixture and real-model
+experiments remain unexecuted. We release the protocol and negative evidence so
+the next run can test the hypothesis rather than inherit an unverified claim.
+\begin{thebibliography}{99}
+\bibitem{poisonedrag} X.~Zou \emph{et al.}, ``PoisonedRAG: Knowledge Corruption Attacks to Retrieval-Augmented Generation of Large Language Models,'' arXiv:2402.07867, 2024. \url{https://arxiv.org/abs/2402.07867}
+\bibitem{trustrag} ``TrustRAG: Enhancing Robustness and Trustworthiness in RAG,'' arXiv:2501.00879, 2025. \url{https://arxiv.org/abs/2501.00879}
+\bibitem{robustrag} ``RobustRAG: Certified Generation in Retrieval-Augmented Generation,'' arXiv:2405.15556, 2024. \url{https://arxiv.org/abs/2405.15556}
+\bibitem{ragforensics} ``RAGForensics: Tracing Poisoning Sources in Retrieval-Augmented Generation,'' arXiv:2504.21668, 2025. \url{https://arxiv.org/abs/2504.21668}
+\bibitem{filterrag} ``FilterRAG: Robust Retrieval-Augmented Generation against Knowledge Poisoning,'' arXiv:2508.02835, 2025. \url{https://arxiv.org/abs/2508.02835}
+\bibitem{ragdefender} ``RAGDefender: Detecting and Mitigating Knowledge Poisoning in RAG,'' arXiv:2511.01268, 2025. \url{https://arxiv.org/abs/2511.01268}
+\bibitem{saferag} ``SafeRAG: Benchmarking Security in Retrieval-Augmented Generation,'' arXiv:2501.18636, 2025. \url{https://arxiv.org/abs/2501.18636}
+\bibitem{corruptrag} ``CorruptRAG: A Large-Scale Dataset for Security Evaluation of RAG,'' arXiv:2504.03957, 2025. \url{https://arxiv.org/abs/2504.03957}
+\bibitem{ragshield} ``RAGShield: A Provenance-Based Defence for Retrieval-Augmented Generation,'' arXiv:2604.00387, 2026. \url{https://arxiv.org/abs/2604.00387}
+\end{thebibliography}
+\end{document}
