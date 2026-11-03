@@ -113,8 +113,9 @@ reproductions.
 The research protocol, 12-attack definitions, statistical plan and real-model
 commands are in [`docs/RESEARCH_PROTOCOL.md`](docs/RESEARCH_PROTOCOL.md). The
 offline result is in [`baseline_logs/research_smoke_full/`](baseline_logs/research_smoke_full/);
-the IEEE draft is [`paper/main.tex`](paper/main.tex). The offline run found zero
-detection precision/recall, so it is negative/plumbing evidence only.
+the IEEE draft is [`paper/main.tex`](paper/main.tex). The single-seed fixture
+had zero detection precision/recall; a three-seed check found only weak,
+isolated non-zero recall. It is negative/plumbing evidence only.
 
 ---
 

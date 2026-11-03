@@ -109,10 +109,12 @@ signal-evasion attacks, but retained 0.333 exposure for seven families. These
 are plumbing observations, not benchmark efficacy.
 \input{results_table}
 The important negative result is that detection precision and recall were zero
-for every group. The HIGH-suspicion band produced no labeled true positives in
-this fixture. Exposure reduction therefore cannot be attributed to validated
-detection; it may reflect policy exclusion or retrieval effects. RQ2 is not
-supported. No claim about trust-signal quality is warranted.
+for every group in the single-seed table. A three-seed check (396 cases) found
+non-zero precision/recall only for adaptive and entity-swap (0.333/0.167); all
+other groups remained at zero. The HIGH-suspicion band therefore did not yield
+usable detection in this fixture. Exposure reduction cannot be attributed to
+validated detection; it may reflect policy exclusion or retrieval effects. RQ2
+is not supported, and no claim about trust-signal quality is warranted.
 \section{Discussion and Limitations}
 The prototype demonstrates that twelve attacks, eleven policies, answer-level
 ASR, memory/latency and artifact export can run through one chronological

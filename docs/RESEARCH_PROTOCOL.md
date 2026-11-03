@@ -134,6 +134,10 @@ completed, zero failures, one seed, three targets per case.
   The highest-suspicion band produced no labeled true positives in this
   fixture. Exposure reduction therefore cannot be attributed to validated
   detection. This is a negative result and a blocker for RQ2, not a success.
+- A three-seed check (396 cases, two targets per case) kept exposure at 0 for
+  `adaptive`, `black_box` and `coordinated` under RAGLedger. Detection remained
+  weak: only `adaptive` and `entity_swap` produced non-zero precision/recall
+  (0.333/0.167). This does not validate RQ2.
 - The fixture uses a stub generator, hashing embeddings and lexical
   verification. It says nothing about real-model utility.
 
