@@ -138,3 +138,42 @@ def test_beir_fixture_reads_jsonl_and_qrels(tmp_path):
     assert fixture.targets == ["q1", "q2"]
     assert fixture.questions[0]["gold_doc_id"] == "d1"
     assert len(fixture.clean) == 2
+
+
+def test_beir_fixture_loads_multiple_gold_answers(tmp_path):
+    from trace_rag.evaluation.beir import load_beir_fixture
+    corpus = tmp_path / "corpus.jsonl"
+    queries = tmp_path / "queries.jsonl"
+    qrels = tmp_path / "qrels.tsv"
+    answers = tmp_path / "answers.jsonl"
+    corpus.write_text(json.dumps({"_id": "d1", "text": "Paris is in France.", "title": "Paris"}) + "\n")
+    queries.write_text(json.dumps({"_id": "q1", "text": "Where is Paris?"}) + "\n")
+    qrels.write_text("query-id\tcorpus-id\tscore\nq1\td1\t1\n")
+    answers.write_text(json.dumps({"qid": "q1", "gold_answers": ["Paris", "France"]}) + "\n")
+    fixture = load_beir_fixture(corpus, queries, qrels, target_limit=1, answers=answers)
+    assert fixture.questions[0]["gold_answer"] == "Paris"
+    assert fixture.questions[0]["gold_answers"] == ["Paris", "France"]
+
+
+def test_beir_fixture_rejects_partial_answer_coverage(tmp_path):
+    from trace_rag.evaluation.beir import load_beir_fixture
+    corpus = tmp_path / "corpus.jsonl"
+    queries = tmp_path / "queries.jsonl"
+    qrels = tmp_path / "qrels.tsv"
+    answers = tmp_path / "answers.jsonl"
+    corpus.write_text(json.dumps({"_id": "d1", "text": "Paris is in France.", "title": "Paris"}) + "\n")
+    queries.write_text(json.dumps({"_id": "q1", "text": "Where is Paris?"}) + "\n")
+    qrels.write_text("query-id\tcorpus-id\tscore\nq1\td1\t1\n")
+    answers.write_text(json.dumps({"qid": "other", "gold_answer": "Paris"}) + "\n")
+    try:
+        load_beir_fixture(corpus, queries, qrels, target_limit=1, answers=answers)
+    except ValueError as exc:
+        assert "missing gold answers" in str(exc)
+    else:
+        raise AssertionError("partial ASR coverage must be rejected")
+
+
+def test_attack_answer_success_accepts_a_gold_alias():
+    from trace_rag.evaluation.metrics import attack_answer_success
+    assert attack_answer_success("The answer is Paris, France.", "Zog", "Paris", ["France"]) is False
+    assert attack_answer_success("The answer is Zog the Alien.", "Zog the Alien", "Paris", ["France"]) is True

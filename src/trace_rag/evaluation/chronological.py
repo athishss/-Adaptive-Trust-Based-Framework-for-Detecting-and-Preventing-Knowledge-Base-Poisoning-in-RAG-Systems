@@ -376,6 +376,7 @@ def run_stream(
                     result.answer,
                     str(ground_truth.get("malicious_answer", "")),
                     str(ground_truth.get("gold_answer", "")),
+                    gold_answers=ground_truth.get("gold_answers") or (),
                 )
                 if answer_success is not None:
                     answer_status = "MEASURED"

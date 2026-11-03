@@ -82,6 +82,7 @@ class Target:
     wrong_answer: str
     clean_doc_id: str
     clean_text: str
+    gold_answers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -118,7 +119,9 @@ def select_targets(fixture: Fixture, limit: int = 6) -> List[Target]:
     for question in fixture.questions:
         if question["qid"] not in wanted or len(selected) >= limit:
             continue
-        answer = str(question.get("gold_answer", ""))
+        gold_answers = tuple(str(item) for item in (question.get("gold_answers") or [])
+                             if str(item).strip())
+        answer = str(question.get("gold_answer", "")) or (gold_answers[0] if gold_answers else "")
         gold_doc_id = question.get("gold_doc_id")
         candidates = [row for row in fixture.clean + fixture.late_clean
                       if gold_doc_id and row["_id"] == gold_doc_id]
@@ -135,6 +138,7 @@ def select_targets(fixture: Fixture, limit: int = 6) -> List[Target]:
             gold_answer=answer,
             wrong_answer=fixture.false_answers.get(question["qid"], "Zog the Alien"),
             clean_doc_id=passage["_id"], clean_text=passage["text"],
+            gold_answers=gold_answers or ((answer,) if answer else ()),
         ))
     if not selected:
         raise ValueError("no target question has a matching clean passage")
@@ -369,7 +373,8 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
     }
     answer_truth = {
         q.query_id: {"malicious_answer": target_by_step[step].wrong_answer,
-                     "gold_answer": target_by_step[step].gold_answer}
+                     "gold_answer": target_by_step[step].gold_answer,
+                     "gold_answers": list(target_by_step[step].gold_answers)}
         for q in queries if q.is_target
         for step in [q.step] if step in target_by_step
     }

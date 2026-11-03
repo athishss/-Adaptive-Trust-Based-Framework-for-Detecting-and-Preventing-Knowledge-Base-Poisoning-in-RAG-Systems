@@ -300,7 +300,7 @@ code, Python and OS versions, and the full tested Git SHA.
 56/56 cases completed, no failures. RAGLedger results by attack. *Poison
 exposure* is the share of eligible target attempts whose targeted poison reached
 the generation context; *poison citation* is the share cited by the answer.
-Neither is answer success. **Answer-level ASR is NOT MEASURED** because this
+Neither is answer success. **Answer-level ASR is NOT MEASURED unless an evaluator-only answer file is supplied** because this
 harness has no validated, attack-specific criterion for the attacker's intended
 answer.
 
@@ -431,7 +431,7 @@ ledger path, indexed passages, query pool, stream steps and distinct queries. A
 500-step Zipf run is labelled `research_lifecycle` and is never 500 unique
 queries; the primary research run uses `--sample-mode no-repeat`. The runner
 writes exposure/citation and document-level precision/recall/F1/FPR;
-answer-level ASR remains **NOT MEASURED**, and this runner is not the full attack
+answer-level ASR remains **NOT MEASURED** unless `--answers` supplies evaluator-only gold answers; this runner is not the full attack
 × baseline matrix.
 
 ---

@@ -222,7 +222,7 @@ and must never be reported as 500 unique queries.
 
 `--targets 5` means only five target questions are poisoned in this stream.
 It is not the seven-attack × eight-baseline matrix. Do not report the stream as
-the full NQ benchmark; answer-level ASR remains **NOT MEASURED**.
+the full NQ benchmark; answer-level ASR remains **NOT MEASURED** unless `--answers` is supplied. The optional evaluator-only answer file is built with `scripts/prepare_nq_answers.py`; the matrix rejects partial coverage.
 
 ### Resume
 
@@ -275,7 +275,7 @@ false`, with hashing embeddings, a stub LLM and lexical verification.
    names/backends, hardware and counts.
 5. `metrics.json` reports exposure/citation with explicit denominators, plus
    document precision/recall/F1/FPR and quarantine delay.
-6. `answer_level_asr` is `null` / `NOT MEASURED`; no ASR claim is derived from
+6. `answer_level_asr` is `null` / `NOT MEASURED` when no answer file is supplied; no ASR claim is derived from
    exposure or citation.
 7. Clean false quarantines are reported, not hidden.
 8. The run is repeated across seeds before any claim of improvement.

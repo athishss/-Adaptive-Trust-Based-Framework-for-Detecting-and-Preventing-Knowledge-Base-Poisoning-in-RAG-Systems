@@ -18,6 +18,8 @@ def main() -> int:
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--queries", required=True)
     ap.add_argument("--qrels", required=True)
+    ap.add_argument("--answers", default=None,
+                    help="evaluator-only gold answers (JSON/JSONL, qid -> answer(s))")
     ap.add_argument("--config", default="config/default.yaml")
     ap.add_argument("--out", required=True)
     ap.add_argument("--targets", type=int, default=20)
@@ -33,7 +35,8 @@ def main() -> int:
     baselines = [x for x in args.baselines.split(",") if x]
     seeds = [int(x) for x in args.seeds.split(",") if x]
     fixture = load_beir_fixture(args.corpus, args.queries, args.qrels,
-                                target_limit=args.targets, seed=seeds[0])
+                                target_limit=args.targets, seed=seeds[0],
+                                answers=args.answers)
     payload = run_matrix(attacks, baselines, seeds, fixture, args.out,
                          config_path=args.config, target_limit=args.targets,
                          repeat_targets=args.target_repeats, scope_label=args.scope,
@@ -43,6 +46,7 @@ def main() -> int:
         "cases_requested": payload["cases_requested"],
         "failures": payload["failures"],
         "scope": payload["scope"],
+        "answers": str(Path(args.answers)) if args.answers else None,
         "output": str(Path(args.out) / "results.json"),
     }, indent=2))
     return 0 if not payload["failures"] else 1

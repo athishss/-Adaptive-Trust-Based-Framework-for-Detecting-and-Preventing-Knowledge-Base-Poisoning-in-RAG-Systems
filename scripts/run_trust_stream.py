@@ -71,7 +71,8 @@ from trace_rag.attacks.poisoned_rag import entity_swap, make_poisoned_document, 
 from trace_rag.attacks.stream import zipf_queries
 from trace_rag.cli import apply_overrides
 from trace_rag.config import Config
-from trace_rag.evaluation.metrics import answer_level_asr_fields
+from trace_rag.evaluation.beir import load_answer_map
+from trace_rag.evaluation.metrics import answer_level_asr_fields, attack_answer_success
 from trace_rag.ingestion import FixedSourceAssigner, Ingestor, SourceAssigner, iter_beir_corpus
 from trace_rag.ingestion.subset import verify_subset
 from trace_rag.snapshots import backup_snapshot, restore_latest_snapshot
@@ -155,9 +156,13 @@ def validate_run_scope(purpose: str, real_model: bool, limit: Optional[int], ste
     return errors
 
 
-def _dataset_signature(corpus: Path, queries: Path, qrels: Path) -> Dict[str, Any]:
-    return {"corpus": _file_identity(corpus), "queries": _file_identity(queries),
+def _dataset_signature(corpus: Path, queries: Path, qrels: Path,
+                       answers: Optional[Path] = None) -> Dict[str, Any]:
+    data = {"corpus": _file_identity(corpus), "queries": _file_identity(queries),
             "qrels": _file_identity(qrels)}
+    if answers is not None:
+        data["answers"] = _file_identity(answers)
+    return data
 
 
 def run_signature(config: Config, purpose: str, sample_mode: str, seed: int, steps: int,
@@ -506,6 +511,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--qrels", default=None,
                         help="BEIR qrels.tsv giving each query's gold passages "
                              "(default: qrels.tsv sitting next to --queries)")
+    parser.add_argument("--answers", default=None,
+                        help="evaluator-only gold answers (JSON/JSONL, qid -> answer(s)) "
+                             "used for real answer-level ASR")
     parser.add_argument("--out", default="runs/trust_stream")
     parser.add_argument("--backup-dir", default=None,
                         help="Drive backup root; writes atomic snapshots at prepared/step boundaries")
@@ -582,6 +590,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not questions:
         print("no questions found", file=sys.stderr)
         return 2
+    answers_path = Path(args.answers) if args.answers else None
+    if answers_path is not None:
+        try:
+            answer_map = load_answer_map(answers_path)
+        except (OSError, ValueError) as exc:
+            print(f"cannot read answer file: {exc}", file=sys.stderr)
+            return 2
+        missing = [q["qid"] for q in questions if not answer_map.get(q["qid"])]
+        if missing:
+            print("answer file is missing gold answers for: " + ", ".join(missing[:20]),
+                  file=sys.stderr)
+            return 2
+        for question in questions:
+            question["gold_answers"] = list(answer_map[question["qid"]])
+            question["gold_answer"] = question["gold_answers"][0]
     targets = questions[: max(1, args.targets)]
     qrels_path = Path(args.qrels) if args.qrels else Path(args.queries).with_name("qrels.tsv")
     if args.run_purpose in {"pilot", "research", "research_lifecycle"} and not qrels_path.exists():
@@ -610,7 +633,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"dataset verified: {dataset_contract['corpus_rows']:,} passages, "
               f"{dataset_contract['query_rows']} queries, gold "
               f"{dataset_contract['gold_passages_present']}/{dataset_contract['gold_passages_required']}")
-    dataset_identity = _dataset_signature(Path(args.corpus), Path(args.queries), qrels_path)
+    dataset_identity = _dataset_signature(Path(args.corpus), Path(args.queries), qrels_path,
+                                            answers_path)
     dataset_identity["subset_contract"] = dataset_contract
     signature = run_signature(config, args.run_purpose, args.sample_mode, args.seed,
                               args.steps, args.targets, args.limit, args.n_sources,
@@ -839,6 +863,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "sampling without replacement (each sampled query index appears once)")
     banner(f"5. Replay the query stream ({len(stream)} steps; {semantic})")
     target_text = {q["question"].strip().lower() for q in targets}
+    target_by_question = {q["question"].strip().lower(): q for q in targets}
 
     per_step: List[Dict[str, object]] = []
     stream_path = out_dir / "stream.jsonl"
@@ -869,6 +894,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _atomic_write(out_dir / "checkpoint.json", json.dumps(checkpoint, indent=2))
         result = pipeline.answer(question, f"stream_{step:04d}")
         drained = policy.drain_verification_queue(verifier)
+        target = target_by_question.get(question.strip().lower())
+        answer_success = None
+        if target is not None and target.get("gold_answer"):
+            answer_success = attack_answer_success(
+                result.answer or "", WRONG_ANSWER, str(target.get("gold_answer", "")),
+                gold_answers=target.get("gold_answers") or (),
+            )
         cited_poison = [d.doc_id for d in result.retrieval.documents
                         if d.doc_id in poison_ids and d.doc_id in (result.answer or "")]
         context_poison = [doc_id for doc_id in result.decision.context_doc_ids
@@ -877,8 +909,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         row = {
             "step": step,
             "query": question,
+            "target_qid": target["qid"] if target else None,
             "is_target": question.strip().lower() in target_text,
             "answer": result.answer,
+            "answer_attack_success": answer_success,
+            "answer_attack_status": ("MEASURED" if answer_success is not None
+                                     else "NOT MEASURED"),
             "abstained": bool(result.record.abstained),
             "retrieved": retrieved_ids,
             "poison_retrieved": any(doc_id in poison_ids for doc_id in retrieved_ids),
@@ -922,6 +958,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     poison_exposed = [row for row in target_steps if row["poison_exposed"]]
     poison_retrieved = [row for row in target_steps if row["poison_retrieved"]]
     eligible_attempts = len(target_steps)
+    answer_evaluated = [row for row in target_steps
+                        if row.get("answer_attack_success") is not None]
+    if answer_evaluated:
+        asr = sum(1 for row in answer_evaluated if row["answer_attack_success"]) / len(answer_evaluated)
+        answer_fields = answer_level_asr_fields(
+            asr, len(answer_evaluated), reason=(
+                "attacker answer present in the delivered answer and no accepted "
+                "gold alias present; abstention counts as attack failure"))
+    else:
+        answer_fields = answer_level_asr_fields(reason=(
+            "No gold-answer file was supplied, so answer-level ASR is not inferred "
+            "from exposure or citation."))
 
     trust_snaps = ledger.get_trust(sorted(poison_chunk_ids))
     blocked = ledger.blocked_doc_ids()
@@ -946,10 +994,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "run_kind": "real_model" if real_model else "offline_smoke",
         "git_commit": _git_commit(),
         "seed": args.seed,
-        "note": ("component trust-stream run; the chronological runner owns answer-level "
-                 "ASR and is NOT MEASURED here (no validated attack-specific "
-                 "answer criterion); this runner reports exposure and citation, not "
-                 "answer success, and does not implement the full attack x baseline matrix"),
+        "note": ("component trust-stream run. Answer-level ASR is measured only when "
+                 "--answers supplies evaluator-only gold answers; otherwise it stays "
+                 "NOT MEASURED. This runner does not implement the full attack x "
+                 "baseline matrix."),
         "bands": "forced MEDIUM (demo mode)" if args.force_medium else "calibrated/heuristic",
         "config": str(args.config),
         "dataset_contract": dataset_contract,
@@ -979,7 +1027,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "poison_cited_attempts": len(poison_answers),
         "poison_citation_rate": ((len(poison_answers) / eligible_attempts)
                                  if eligible_attempts else None),
-        **answer_level_asr_fields(),
+        **answer_fields,
         "poison_quarantined": len(poisoned_blocked),
         "clean_false_quarantine": len(clean_blocked),
         "clean_false_quarantine_ids": clean_blocked,
@@ -1011,7 +1059,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "research_evaluation": {
             "implements_full_attack_baseline_matrix": False,
             "remaining_requirements": "docs/PERSON_C_TODO.md",
-            "answer_level_asr_status": "NOT MEASURED",
+            "answer_level_asr_status": metrics["answer_level_asr_status"],
         },
     }
     print(json.dumps(metrics, indent=2))
