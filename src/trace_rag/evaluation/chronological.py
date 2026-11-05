@@ -480,6 +480,18 @@ def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, st
     never_retrieved = [record for record in attempts if not record.poison_retrieved]
 
     detection = detection_metrics(flagged_docs, poison_ids, clean_ids, blocked)
+    # "Detected" (flagged) and "kept away from the model" are different claims.  A
+    # defence can withhold poison from the context (MEDIUM band, unresolved
+    # verification, trust floor) without ever escalating it, which the strict
+    # detection metric deliberately does not credit.  Report both.
+    retrieved_poison = {doc for record in records for doc in record.retrieved_ids
+                        if doc in poison_ids}
+    withheld_poison = {doc for record in records for doc in record.excluded_ids
+                       if doc in poison_ids} & retrieved_poison
+    retrieved_clean = {doc for record in records for doc in record.retrieved_ids
+                       if doc in clean_ids}
+    withheld_clean = {doc for record in records for doc in record.excluded_ids
+                      if doc in clean_ids} & retrieved_clean
     delays = detection_delays(injection_steps, first_detection)
     exposures = exposure_windows(injection_steps, first_quarantine, stream_end)
 
@@ -540,6 +552,16 @@ def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, st
         "poison_quarantined": sorted(set(poison_ids) & blocked),
         "clean_quarantined": sorted(set(clean_ids) & blocked),
         "detection": detection.to_dict(),
+        "withholding": {
+            "retrieved_poison_docs": len(retrieved_poison),
+            "withheld_poison_docs": len(withheld_poison),
+            "withheld_poison_recall": (len(withheld_poison) / len(retrieved_poison)
+                                       if retrieved_poison else None),
+            "retrieved_clean_docs": len(retrieved_clean),
+            "withheld_clean_docs": len(withheld_clean),
+            "withheld_clean_rate": (len(withheld_clean) / len(retrieved_clean)
+                                    if retrieved_clean else None),
+        },
         "detection_delay_steps": delays,
         "mean_detection_delay_steps": summarise_optional(delays.values()),
         "exposure_window_steps": exposures,

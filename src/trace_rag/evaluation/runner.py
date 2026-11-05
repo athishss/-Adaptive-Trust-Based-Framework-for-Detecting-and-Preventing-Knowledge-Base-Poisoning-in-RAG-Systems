@@ -48,6 +48,13 @@ class EvaluationResult:
     recall: float = 0.0
     f1: float = 0.0
     false_positive_rate: Optional[float] = None
+    # False when no document was flagged (precision) or no poison existed
+    # (recall).  ``precision``/``recall`` above then hold 0.0 for backward
+    # compatibility, and must be reported as n/a, not as a measured zero.
+    precision_defined: bool = True
+    recall_defined: bool = True
+    withheld_poison_recall: Optional[float] = None
+    withheld_clean_rate: Optional[float] = None
     detection_delay: Optional[int] = None
     exposure_window: int = 0
     remediation_recall: Optional[float] = None
@@ -73,6 +80,10 @@ class EvaluationResult:
             "recall": float(self.recall),
             "f1": float(self.f1),
             "false_positive_rate": self.false_positive_rate,
+            "precision_defined": bool(self.precision_defined),
+            "recall_defined": bool(self.recall_defined),
+            "withheld_poison_recall": self.withheld_poison_recall,
+            "withheld_clean_rate": self.withheld_clean_rate,
             "detection_delay": self.detection_delay,
             "exposure_window": int(self.exposure_window),
             "remediation_recall": self.remediation_recall,

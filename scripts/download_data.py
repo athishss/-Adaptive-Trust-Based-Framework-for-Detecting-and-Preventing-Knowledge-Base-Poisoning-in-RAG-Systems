@@ -160,6 +160,10 @@ def main() -> int:
                         help="build a subset of this many passages (gold passages always kept)")
     parser.add_argument("--queries", type=int, default=500,
                         help="how many test queries the subset must cover")
+    parser.add_argument("--include-queries", default=None, metavar="JSON",
+                        help="always keep these queries (and their gold passages) in the subset: a JSON "
+                             "dict/list whose keys or 'id' fields are BEIR query ids, e.g. PoisonedRAG's "
+                             "results/adv_targeted_results/nq.json. The query count is raised to cover them.")
     parser.add_argument("--seed", type=int, default=20260921)
     parser.add_argument("--skip-download", action="store_true", help="use files already on disk")
     args = parser.parse_args()
@@ -188,7 +192,19 @@ def main() -> int:
     corpus_for_run = corpus_path
     if args.subset:
         _, select_query_ids, _, _ = _subset_helpers()
-        chosen_queries = select_query_ids(gold, args.queries, args.seed)
+        forced: List[str] = []
+        if args.include_queries:
+            payload = json.loads(Path(args.include_queries).read_text(encoding="utf-8"))
+            rows = payload.values() if isinstance(payload, dict) else payload
+            wanted = [str(r["id"]) if isinstance(r, dict) else str(r) for r in rows]
+            forced = [q for q in dict.fromkeys(wanted) if q in gold]
+            print(f"forcing {len(forced)}/{len(set(wanted))} queries from {args.include_queries} "
+                  "into the subset (the rest have no qrels entry and cannot be attacked)")
+        n_queries = max(args.queries, len(forced))
+        chosen_queries = select_query_ids(gold, n_queries, args.seed)
+        if forced:
+            chosen_queries = forced + [q for q in chosen_queries if q not in set(forced)]
+            chosen_queries = chosen_queries[:n_queries]
         gold_ids: Set[str] = set()
         for query_id in chosen_queries:
             gold_ids |= gold[query_id]
@@ -198,7 +214,7 @@ def main() -> int:
         kept, gold_kept = build_subset(corpus_path, gold_ids, args.subset, corpus_for_run, args.seed)
         written = write_queries_subset(queries_path, chosen_queries, out_dir / "queries_subset.jsonl")
         contract = verify_subset(corpus_for_run, out_dir / "queries_subset.jsonl", qrels_path,
-                                 args.subset, args.queries)
+                                 args.subset, n_queries)
         if not contract["ok"]:
             raise SystemExit("subset verification failed: " + "; ".join(contract["errors"]))
         print(f"  wrote {kept:,} passages and {written} queries; gold coverage "

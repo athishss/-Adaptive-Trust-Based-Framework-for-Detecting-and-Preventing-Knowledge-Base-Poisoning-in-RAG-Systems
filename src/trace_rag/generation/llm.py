@@ -11,9 +11,12 @@ supports it, because every reported number has to be reproducible.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import sqlite3
+import threading
 import urllib.error
 import urllib.request
 from typing import List, Mapping, Optional, Sequence
@@ -277,6 +280,75 @@ class HFLocalLLM:
         return LLMResponse(text=completion, llm_calls=1, latency_ms=watch.elapsed_ms, model=self.name)
 
 
+class CachedLLM:
+    """Disk cache around a deterministic (temperature 0) LLM.
+
+    Every defence in an experiment sees the same stream, so many prompts repeat
+    exactly.  Caching them makes the full matrix far cheaper on a Colab GPU.
+
+    Reporting stays honest: a hit still returns ``llm_calls=1`` and the
+    *original* measured latency, because cost and latency are properties of the
+    method, not of the cache.  The key covers the backend, model name, revision,
+    precision, the full prompt or message list, ``max_tokens`` and ``stop``.
+    Only wrap greedy decoding.
+    """
+
+    def __init__(self, inner, path: str) -> None:  # type: ignore[no-untyped-def]
+        self.inner = inner
+        self.name = getattr(inner, "name", "llm")
+        self._lock = threading.Lock()
+        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        self._db = sqlite3.connect(path, check_same_thread=False)
+        self._db.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, text TEXT, "
+                         "latency_ms REAL, model TEXT)")
+        self._db.commit()
+        self.hits = 0
+        self.misses = 0
+
+    def _key(self, kind: str, payload, max_tokens: int, stop: Optional[Sequence[str]]) -> str:
+        ident = [type(self.inner).__name__, self.name,
+                 getattr(self.inner, "model_name", ""),
+                 getattr(self.inner, "revision", None), getattr(self.inner, "precision", None)]
+        blob = json.dumps([ident, kind, payload, int(max_tokens),
+                           list(stop) if stop else None], ensure_ascii=False, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    def _cached(self, key: str, call) -> LLMResponse:  # type: ignore[no-untyped-def]
+        with self._lock:
+            row = self._db.execute("SELECT text, latency_ms, model FROM cache WHERE key=?",
+                                   (key,)).fetchone()
+        if row is not None:
+            self.hits += 1
+            return LLMResponse(text=row[0], llm_calls=1, latency_ms=float(row[1]), model=row[2])
+        response = call()
+        self.misses += 1
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO cache VALUES (?,?,?,?)",
+                             (key, response.text, float(response.latency_ms), response.model))
+            self._db.commit()
+        return response
+
+    def generate(self, prompt: str, max_tokens: int = 256,
+                 stop: Optional[Sequence[str]] = None) -> LLMResponse:
+        return self._cached(self._key("prompt", prompt, max_tokens, stop),
+                            lambda: self.inner.generate(prompt, max_tokens=max_tokens, stop=stop))
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        # ``generate_chat`` is exposed only when the wrapped backend has it, so
+        # ``supports_chat_roles`` keeps reporting the truth.
+        if name == "generate_chat" and callable(getattr(self.inner, "generate_chat", None)):
+            def generate_chat(messages, max_tokens: int = 256, stop=None):  # type: ignore[no-untyped-def]
+                msgs = [dict(m) for m in messages]
+                return self._cached(self._key("chat", msgs, max_tokens, stop),
+                                    lambda: self.inner.generate_chat(msgs, max_tokens=max_tokens, stop=stop))
+            return generate_chat
+        raise AttributeError(name)
+
+    def close(self) -> None:
+        with self._lock:
+            self._db.close()
+
+
 def generate_with_messages(llm, messages: Sequence[Mapping[str, str]], max_tokens: int = 256,
                            stop: Optional[Sequence[str]] = None) -> LLMResponse:
     """Call ``generate_chat`` when the backend supports it, else flatten.
@@ -298,6 +370,16 @@ def supports_chat_roles(llm) -> bool:  # type: ignore[no-untyped-def]
 
 def build_llm(config):  # type: ignore[no-untyped-def]
     """Factory from ``GenerationConfig``."""
+    llm = _build_backend(config)
+    cache_path = getattr(config, "cache_path", None)
+    if cache_path:
+        if float(config.temperature) != 0.0:
+            raise ValueError("generation.cache_path requires temperature 0 (greedy decoding)")
+        llm = CachedLLM(llm, str(cache_path))
+    return llm
+
+
+def _build_backend(config):  # type: ignore[no-untyped-def]
     backend = config.backend
     if backend == "stub":
         return StubLLM()

@@ -116,6 +116,7 @@ class GenerationConfig(BaseModel):
     abstain_evidence_mass: float = Field(0.5, ge=0.0, description="tau_ans: min trust-weighted evidence mass; one neutral-trust source == 0.5, two independent neutral sources == 0.75")
     require_citations: bool = True
     check_citations: bool = False       # needs Person B's NLI verifier
+    cache_path: Optional[str] = Field(None, description="SQLite file caching LLM outputs (temperature 0 only)")
     timeout_s: float = Field(120.0, gt=0)
 
 

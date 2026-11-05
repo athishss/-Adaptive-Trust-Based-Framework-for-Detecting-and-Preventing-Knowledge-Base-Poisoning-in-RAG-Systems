@@ -56,6 +56,11 @@ logger = get_logger(__name__)
 SMOKE_ATTACKS = ("entity_swap", "negation", "instruction_injection",
                  "slow_burn", "hit_and_run", "signal_evasion", "framing",
                  "black_box", "white_box", "sybil", "coordinated", "adaptive")
+# Attacks that inject the PoisonedRAG authors' *published* passages verbatim
+# (``results/adv_targeted_results/<dataset>.json``).  They need ``adv_texts`` on
+# every target, so they are not part of the default smoke matrix.
+OFFICIAL_ATTACKS = ("poisonedrag_official", "poisonedrag_official_sybil")
+ALL_ATTACKS = SMOKE_ATTACKS + OFFICIAL_ATTACKS
 SMOKE_BASELINES = ("no_defence", "duplicate_filter", "trust_threshold",
                    "perplexity", "suspicion_only", "corroboration_only",
                    "trust_no_deferred", "TrustRAG", "RobustRAG", "always_on_loo",
@@ -83,6 +88,7 @@ class Target:
     clean_doc_id: str
     clean_text: str
     gold_answers: tuple[str, ...] = ()
+    adv_texts: tuple[str, ...] = ()
 
 
 @dataclass
@@ -139,6 +145,7 @@ def select_targets(fixture: Fixture, limit: int = 6) -> List[Target]:
             wrong_answer=fixture.false_answers.get(question["qid"], "Zog the Alien"),
             clean_doc_id=passage["_id"], clean_text=passage["text"],
             gold_answers=gold_answers or ((answer,) if answer else ()),
+            adv_texts=tuple(str(t) for t in (question.get("adv_texts") or ()) if str(t).strip()),
         ))
     if not selected:
         raise ValueError("no target question has a matching clean passage")
@@ -205,11 +212,18 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
                     target_start: int = 12, target_every: int = 3,
                     poison_step: int = 8, warmup_step: int = 6,
                     repeat_targets: int = 2) -> CasePlan:
-    if attack not in SMOKE_ATTACKS:
+    if attack not in ALL_ATTACKS:
         raise ValueError(f"unknown attack {attack!r}")
     if repeat_targets < 1:
         raise ValueError("repeat_targets must be >= 1")
     targets = select_targets(fixture, target_limit)
+    if attack in OFFICIAL_ATTACKS:
+        missing = [t.qid for t in targets if not t.adv_texts]
+        if missing:
+            raise ValueError(
+                f"attack {attack!r} injects published PoisonedRAG passages but "
+                f"{len(missing)} target(s) have no adv_texts (first: {missing[:3]}); "
+                "build the fixture with trace_rag.evaluation.poisonedrag.load_poisonedrag_fixture")
     target_steps = [target_start + i * target_every for i in range(len(targets))]
     # Asking each target more than once is what lets repeated negative evidence
     # reach the production quarantine threshold (two refutations) inside a
@@ -258,6 +272,26 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
     poison_doc_ids: List[str] = []
     attack_texts: List[str] = []
     for i, target in enumerate(targets):
+        if attack in OFFICIAL_ATTACKS:
+            attack_texts.extend(target.adv_texts)
+            # One contributor publishes every passage, or each passage comes from
+            # its own new contributor.  PoisonedRAG leaves this threat-model
+            # choice open, so both are reported as separate attacks.  No passage
+            # is rewritten and no family label is given to the defence.
+            n_sources = 1 if attack == "poisonedrag_official" else len(target.adv_texts)
+            for j, adv_text in enumerate(target.adv_texts):
+                official_id = f"poison_{target.qid}_{j}"
+                poison_doc_ids.append(official_id)
+                ingestions.append(StreamIngestion(
+                    step=poison_step, doc_id=official_id, text=adv_text,
+                    source_id=f"attacker_{i}_{j % n_sources}", family_id=None,
+                    is_poison=True, attack_type=attack, target_query=target.question,
+                    metadata={"wrong_answer": target.wrong_answer,
+                              "clean_origin": target.clean_doc_id,
+                              "origin": "PoisonedRAG published adv_texts, unmodified",
+                              "n_sources": n_sources},
+                ))
+            continue
         text = build_attack_text(attack, target)
         attack_texts.append(text)
         doc_id = f"poison_{target.qid}_{i}"
@@ -370,6 +404,7 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
                                  if attack == "signal_evasion" else None),
         "research_attack": attack in {"black_box", "white_box", "sybil",
                                        "coordinated", "adaptive"},
+        "official_published_poison": attack in OFFICIAL_ATTACKS,
     }
     answer_truth = {
         q.query_id: {"malicious_answer": target_by_step[step].wrong_answer,
@@ -517,6 +552,10 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
         recall=detection["recall"] if detection["recall"] is not None else 0.0,
         f1=detection["f1"] if detection["f1"] is not None else 0.0,
         false_positive_rate=detection["false_positive_rate"],
+        precision_defined=detection["precision"] is not None,
+        recall_defined=detection["recall"] is not None,
+        withheld_poison_recall=metrics["withholding"]["withheld_poison_recall"],
+        withheld_clean_rate=metrics["withholding"]["withheld_clean_rate"],
         detection_delay=int(round(statistics.fmean(delays))) if delays else None,
         exposure_window=int(metrics["max_exposure_window_steps"] or 0),
         remediation_recall=metrics["remediation"]["remediation_recall"],
@@ -582,7 +621,9 @@ def _write_csv(results: Sequence[EvaluationResult], path: Path) -> None:
               "poison_exposed_attempts", "poison_exposure_rate",
               "poison_cited_attempts", "poison_citation_rate",
               "answer_level_asr", "answer_level_asr_status",
-              "precision", "recall", "f1", "false_positive_rate", "detection_delay",
+              "precision", "recall", "f1", "false_positive_rate",
+              "precision_defined", "recall_defined",
+              "withheld_poison_recall", "withheld_clean_rate", "detection_delay",
               "exposure_window", "remediation_recall", "llm_calls", "p99_latency_ms",
               "peak_memory_mb", "verifier_mode", "health_status"]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -605,6 +646,10 @@ def _write_csv(results: Sequence[EvaluationResult], path: Path) -> None:
                 "recall": result.recall,
                 "f1": result.f1,
                 "false_positive_rate": result.false_positive_rate,
+                "precision_defined": result.precision_defined,
+                "recall_defined": result.recall_defined,
+                "withheld_poison_recall": result.withheld_poison_recall,
+                "withheld_clean_rate": result.withheld_clean_rate,
                 "detection_delay": result.detection_delay,
                 "exposure_window": result.exposure_window,
                 "remediation_recall": result.remediation_recall,
@@ -624,15 +669,15 @@ def _matrix_markdown(payload: Mapping[str, Any]) -> str:
         f"Cases completed: {payload['cases_completed']} / {payload['cases_requested']}",
         "",
         "| attack | baseline | eligible | exposed | exposure | cited | citation | "
-        "answer ASR | precision | recall | F1 | clean FPR | delay | window | "
-        "remediation | LLM calls |",
-        "|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "answer ASR | precision | recall | F1 | withheld poison | clean FPR | delay | "
+        "window | remediation | LLM calls |",
+        "|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in payload["results"]:
         lines.append(
             "| {attack} | {baseline} | {eligible} | {exposed} | {exposure} | "
-            "{cited} | {citation} | {asr} | {precision:.3f} | {recall:.3f} | "
-            "{f1:.3f} | {fpr} | {delay} | {window} | {remediation} | {llm} |".format(
+            "{cited} | {citation} | {asr} | {precision} | {recall} | "
+            "{f1:.3f} | {withheld} | {fpr} | {delay} | {window} | {remediation} | {llm} |".format(
                 attack=row["case"]["attack"], baseline=row["case"]["baseline"],
                 eligible=row["eligible_attack_attempts"],
                 exposed=row["poison_exposed_attempts"],
@@ -642,7 +687,10 @@ def _matrix_markdown(payload: Mapping[str, Any]) -> str:
                 asr=(f"{row['answer_level_asr']:.3f}"
                      if row["answer_level_asr"] is not None
                      else row["answer_level_asr_status"]),
-                precision=row["precision"], recall=row["recall"], f1=row["f1"],
+                precision=(f"{row['precision']:.3f}" if row.get("precision_defined", True)
+                           else "n/a"),
+                recall=(f"{row['recall']:.3f}" if row.get("recall_defined", True) else "n/a"),
+                f1=row["f1"], withheld=_fmt_rate(row.get("withheld_poison_recall")),
                 fpr=row["false_positive_rate"], delay=row["detection_delay"],
                 window=row["exposure_window"],
                 remediation=row["remediation_recall"], llm=row["llm_calls"],
@@ -653,6 +701,10 @@ def _matrix_markdown(payload: Mapping[str, Any]) -> str:
         for failure in payload["failures"]:
             lines.append(f"- {failure['case']}: `{failure['error']}`")
     lines.extend([
+        "",
+        "precision/recall are *flag-based* (HIGH band, REFUTE, quarantine); n/a means "
+        "no document was flagged, which is not a measured zero. 'withheld poison' is the "
+        "share of retrieved poison documents kept out of the context by any means.",
         "",
         "Exposure and citation are measured against eligible attack attempts and are "
         "not answer-success rates. Answer-level ASR is measured only for attacks "
