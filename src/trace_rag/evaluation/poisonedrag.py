@@ -11,7 +11,7 @@ Rules that keep the denominator honest:
 
 * a question whose gold passage is not in the supplied corpus is *dropped and counted*,
   never replaced;
-* the first ``target_limit`` kept questions are attacked, the others are background traffic;
+* ``target_limit`` kept questions starting at ``target_offset`` are attacked, the others are background traffic;
 * ``max_clean`` shrinks the corpus for cost but always keeps every selected question's
   gold passage; the remainder is a deterministic sample (``seed``);
 * the correct answer comes from the authors' file and is evaluator-only.
@@ -40,7 +40,7 @@ def load_poisonedrag_records(poison_json: str | Path) -> List[Dict[str, Any]]:
 
 
 def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels: str | Path,
-                             *, target_limit: Optional[int] = None,
+                             *, target_limit: Optional[int] = None, target_offset: int = 0,
                              max_clean: Optional[int] = None,
                              seed: int = 20260921,
                              n_sources: int = 20) -> Tuple[Fixture, Dict[str, Any]]:
@@ -87,11 +87,14 @@ def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels:
     # The first ``target_limit`` questions are attacked; the rest are the clean
     # background traffic the stream needs (a background query identical to a target
     # query would break the stream contract, so at least one non-target is required).
-    n_targets = len(questions) if not target_limit else min(int(target_limit), len(questions))
-    if n_targets >= len(questions):
+    offset = max(0, int(target_offset))
+    n_targets = (len(questions) - offset) if not target_limit else min(int(target_limit),
+                                                                       len(questions) - offset)
+    if n_targets < 1 or offset + n_targets >= len(questions):
         raise ValueError(
-            f"{len(questions)} usable question(s) for {n_targets} target(s): the stream also needs "
-            "non-target background questions; lower --targets or supply more questions")
+            f"{len(questions)} usable question(s) cannot supply {target_limit or 'all'} target(s) "
+            f"from offset {offset} plus non-target background questions; lower --targets or "
+            "supply more questions")
     keep_gold = {q["gold_doc_id"] for q in questions}
     pool = [r for r in rows if r["_id"] not in keep_gold]
     if max_clean is not None and len(keep_gold) + len(pool) > int(max_clean):
@@ -104,9 +107,9 @@ def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels:
         clean.append({**row, "source_id": f"beir_source_{int(digest[:8], 16) % int(n_sources):02d}"})
 
     fixture = Fixture(clean=clean, late_clean=[], questions=questions,
-                      targets=[q["qid"] for q in questions[:n_targets]],
+                      targets=[q["qid"] for q in questions[offset:offset + n_targets]],
                       false_answers=false_answers)
-    report = {"records": len(records), "kept": len(questions), "targets": n_targets,
+    report = {"records": len(records), "kept": len(questions), "targets": n_targets, "target_offset": offset,
               "background_questions": len(questions) - n_targets, "dropped": dropped,
               "clean_passages": len(clean), "adv_texts_per_question":
               sum(len(q["adv_texts"]) for q in questions) / len(questions),

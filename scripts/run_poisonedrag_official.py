@@ -41,13 +41,17 @@ def main() -> int:
     ap.add_argument("--baselines", default=",".join(SMOKE_BASELINES))
     ap.add_argument("--seeds", default="20260921")
     ap.add_argument("--scope", default="REAL-DATA: published PoisonedRAG poison")
+    ap.add_argument("--trustrag-dir", default=None,
+                    help="checkout of github.com/HuichiZhou/TrustRAG; required if --baselines "
+                         "includes trustrag_official")
+    ap.add_argument("--target-offset", type=int, default=0)
     ap.add_argument("--set", dest="overrides", action="append", default=[])
     args = ap.parse_args()
 
     seeds = [int(x) for x in args.seeds.split(",") if x]
     fixture, report = load_poisonedrag_fixture(args.poison, args.corpus, args.qrels,
-                                               target_limit=args.targets, max_clean=args.max_clean,
-                                               seed=seeds[0])
+                                               target_limit=args.targets, target_offset=args.target_offset,
+                                               max_clean=args.max_clean, seed=seeds[0])
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "fixture_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -56,7 +60,8 @@ def main() -> int:
                          [x for x in args.baselines.split(",") if x], seeds, fixture, out,
                          config_path=args.config, target_limit=args.targets,
                          repeat_targets=args.target_repeats, scope_label=args.scope,
-                         resume=True, overrides=args.overrides)
+                         resume=True, overrides=args.overrides,
+                         trustrag_dir=args.trustrag_dir)
     print(json.dumps({"cases_completed": payload["cases_completed"],
                       "cases_requested": payload["cases_requested"],
                       "failures": payload["failures"], "output": str(out / "results.json")}, indent=2))

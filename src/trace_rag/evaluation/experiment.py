@@ -555,7 +555,7 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
     metrics = run.metrics
     delays = [value for value in metrics["detection_delay_steps"].values() if value is not None]
     detection = metrics["detection"]
-    return EvaluationResult(
+    result = EvaluationResult(
         case=case,
         eligible_attack_attempts=int(metrics["eligible_attack_attempts"]),
         poison_exposed_attempts=int(metrics["poison_exposed_attempts"]),
@@ -590,6 +590,11 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
             "policy": run.config.get("policy"),
         },
     )
+    # Written last: its presence (with ``_complete``) is what lets a resumed matrix
+    # skip this case after a Colab disconnect.
+    (case_dir / "result.json").write_text(
+        json.dumps({**result.to_dict(), "_complete": True}, default=str), encoding="utf-8")
+    return result
 
 
 def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence[int],
@@ -608,6 +613,12 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
     results: List[EvaluationResult] = []
     failures: List[Dict[str, Any]] = []
     for case in cases:
+        cached = _load_cached_result(out, case) if resume else None
+        if cached is not None:
+            logger.info("resume: reusing finished case %s",
+                        slug(case.attack, case.baseline, case.seed))
+            results.append(cached)
+            continue
         try:
             results.append(execute_case(case, fixture, out, config_path=config_path,
                                         target_limit=target_limit,
@@ -634,6 +645,24 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
     _write_csv(results, out / "results.csv")
     (out / "summary.md").write_text(_matrix_markdown(payload), encoding="utf-8")
     return payload
+
+
+def _load_cached_result(output_root: Path, case: EvaluationCase) -> Optional[EvaluationResult]:
+    """A finished case is reused on resume only if ``result.json`` is complete and matches."""
+    path = (output_root / "cases" / slug(case.attack, case.baseline, case.seed)
+            / "result.json")
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("case") != case.to_dict() or not data.get("_complete"):
+            return None
+        data.pop("_complete", None)
+        data["case"] = EvaluationCase(**data["case"])
+        known = {f.name for f in dataclasses.fields(EvaluationResult)}
+        return EvaluationResult(**{k: v for k, v in data.items() if k in known})
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 def _write_csv(results: Sequence[EvaluationResult], path: Path) -> None:

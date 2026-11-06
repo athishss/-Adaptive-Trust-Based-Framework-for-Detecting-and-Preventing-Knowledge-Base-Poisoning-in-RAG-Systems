@@ -13,7 +13,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from trace_rag.config import Config  # noqa: E402
 from trace_rag.detection.training import TrainingSet, train_scorer  # noqa: E402
 from trace_rag.evaluation.chronological import run_stream  # noqa: E402
-from trace_rag.evaluation.experiment import build_case_plan, build_pipeline, load_fixture  # noqa: E402
+from trace_rag.evaluation.experiment import (OFFICIAL_ATTACKS, build_case_plan,  # noqa: E402
+                                             build_pipeline, load_fixture)
+from trace_rag.evaluation.poisonedrag import load_poisonedrag_fixture  # noqa: E402
 from trace_rag.ingestion.pipeline import Ingestor  # noqa: E402
 
 
@@ -25,14 +27,38 @@ def main() -> int:
     ap.add_argument("--attacks", default="entity_swap,negation,instruction_injection,sybil,adaptive")
     ap.add_argument("--targets", type=int, default=4)
     ap.add_argument("--seed", type=int, default=20260921)
+    real = ap.add_argument_group(
+        "real data (train on disjoint real NQ questions, test on the published poison)")
+    real.add_argument("--poisonedrag-json", help="PoisonedRAG adv_targeted_results/<dataset>.json; its "
+                      "questions give real gold passages. Training poison is still produced by the "
+                      "template attacks, never by the published adv_texts.")
+    real.add_argument("--corpus")
+    real.add_argument("--qrels")
+    real.add_argument("--max-clean", type=int, default=3000)
+    real.add_argument("--target-offset", type=int, default=0,
+                      help="first training question; set it past the evaluation targets so the "
+                           "scorer never sees an evaluated question")
+    ap.add_argument("--set", dest="overrides", action="append", default=[])
     args = ap.parse_args()
-    fixture = load_fixture(args.examples)
+    banned = [a for a in args.attacks.split(",") if a in OFFICIAL_ATTACKS]
+    if banned:
+        raise SystemExit(f"refusing to train on {banned}: those are the evaluation attacks")
+    if args.poisonedrag_json:
+        if not (args.corpus and args.qrels):
+            raise SystemExit("--poisonedrag-json needs --corpus and --qrels")
+        fixture, fx_report = load_poisonedrag_fixture(
+            args.poisonedrag_json, args.corpus, args.qrels, target_limit=args.targets,
+            target_offset=args.target_offset, max_clean=args.max_clean, seed=args.seed)
+        print(json.dumps({"training_fixture": fx_report}, indent=2))
+    else:
+        fixture = load_fixture(args.examples)
     rows = []
     for attack in [x for x in args.attacks.split(",") if x]:
         plan = build_case_plan(fixture, attack, seed=args.seed,
                                target_limit=args.targets, repeat_targets=2)
         root = Path(tempfile.mkdtemp(prefix=f"train_{attack}_"))
-        pipeline = build_pipeline(args.config, root, "no_defence", fixture)
+        pipeline = build_pipeline(args.config, root, "no_defence", fixture,
+                                  overrides=args.overrides)
         try:
             run = run_stream(pipeline, Ingestor(pipeline.store, pipeline.config.ingestion,
                                                 clock=pipeline.clock),
