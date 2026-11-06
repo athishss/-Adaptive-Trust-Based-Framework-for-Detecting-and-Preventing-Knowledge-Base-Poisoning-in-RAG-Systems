@@ -1,5 +1,7 @@
 # TRACE-RAG research protocol
 
+> **Update:** real-data tooling (published PoisonedRAG poison, official TrustRAG stage-1 filter, per-question statistics, benign control, resumable GPU notebooks) now exists; see `docs/REAL_RESULTS_PLAN.md`. The detection precision/recall of 0 recorded below is largely a reporting artefact: undefined precision was stored as 0.0 and poison *withheld* from the context was not credited. Both are fixed (`precision_defined`, `withheld_poison_recall`). No real-model result has been produced yet.
+
 Status: implementation and an **offline fixture matrix** are complete. The
 real-model Natural Questions experiment has **not been run** (no CUDA GPU,
 Contriever/FAISS weights, NLI weights, or generator service on the development
