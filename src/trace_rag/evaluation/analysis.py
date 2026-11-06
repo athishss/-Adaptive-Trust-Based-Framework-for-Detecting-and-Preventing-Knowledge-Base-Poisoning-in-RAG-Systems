@@ -1,7 +1,8 @@
 """Statistical analysis of a finished experiment matrix (reads ``cases/*/stream.jsonl``).
 
 Unit of analysis
-    One *(seed, target question)* pair.  Repeated asks of the same target are not
+    One target question.  ``scripts/run_poisonedrag_official.py`` gives every seed a disjoint
+    block of published questions, so units are independent across seeds.  Repeated asks of the same target are not
     independent samples; they are collapsed into one unit before any interval or test.
     A unit's outcome is reported three ways:
 
@@ -57,10 +58,16 @@ def _qid(query_id: str) -> str:
     return re.sub(r"_s\d+$", "", query_id)
 
 
+def _case_dirs(results_dir: str | Path) -> List[Path]:
+    """Case directories of a single matrix (``cases/``) or one per seed (``seed_*/cases/``)."""
+    root = Path(results_dir)
+    found = sorted((root / "cases").glob("*")) + sorted(root.glob("seed_*/cases/*"))
+    return [p for p in found if p.is_dir()]
+
+
 def load_units(results_dir: str | Path) -> List[Unit]:
-    root = Path(results_dir) / "cases"
     units: List[Unit] = []
-    for case_dir in sorted(root.glob("*")):
+    for case_dir in _case_dirs(results_dir):
         match = _CASE.match(case_dir.name)
         stream = case_dir / "stream.jsonl"
         if not match or not stream.exists():
@@ -170,7 +177,9 @@ def paired_tests(units: Iterable[Unit], reference: str = "RAGLedger",
 def case_cost(results_dir: str | Path) -> Dict[Tuple[str, str], Dict[str, Optional[float]]]:
     """Mean LLM calls per query and p99 latency per (attack, defence), from ``metrics.json``."""
     out: Dict[Tuple[str, str], Dict[str, List[float]]] = defaultdict(lambda: defaultdict(list))
-    for metrics in sorted((Path(results_dir) / "cases").glob("*/metrics.json")):
+    for metrics in [d / "metrics.json" for d in _case_dirs(results_dir)]:
+        if not metrics.exists():
+            continue
         match = _CASE.match(metrics.parent.name)
         if not match:
             continue

@@ -49,23 +49,39 @@ def main() -> int:
     args = ap.parse_args()
 
     seeds = [int(x) for x in args.seeds.split(",") if x]
-    fixture, report = load_poisonedrag_fixture(args.poison, args.corpus, args.qrels,
-                                               target_limit=args.targets, target_offset=args.target_offset,
-                                               max_clean=args.max_clean, seed=seeds[0])
+    attacks = [x for x in args.attacks.split(",") if x]
+    baselines = [x for x in args.baselines.split(",") if x]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "fixture_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps(report, indent=2))
-    payload = run_matrix([x for x in args.attacks.split(",") if x],
-                         [x for x in args.baselines.split(",") if x], seeds, fixture, out,
-                         config_path=args.config, target_limit=args.targets,
-                         repeat_targets=args.target_repeats, scope_label=args.scope,
-                         resume=True, overrides=args.overrides,
-                         trustrag_dir=args.trustrag_dir)
-    print(json.dumps({"cases_completed": payload["cases_completed"],
-                      "cases_requested": payload["cases_requested"],
-                      "failures": payload["failures"], "output": str(out / "results.json")}, indent=2))
-    return 0 if not payload["failures"] else 1
+    # Each seed attacks a DIFFERENT, disjoint block of published questions (seed i uses
+    # questions [offset + i*targets, offset + (i+1)*targets)).  Seeds therefore give
+    # independent samples of questions, which is what the confidence intervals and the
+    # paired tests assume.  The same question is never reused across seeds.
+    failures, completed, requested, summaries = [], 0, 0, []
+    for i, seed in enumerate(seeds):
+        offset = args.target_offset + i * args.targets
+        fixture, report = load_poisonedrag_fixture(
+            args.poison, args.corpus, args.qrels, target_limit=args.targets,
+            target_offset=offset, max_clean=args.max_clean, seed=seed)
+        seed_out = out if len(seeds) == 1 else out / f"seed_{seed}"
+        seed_out.mkdir(parents=True, exist_ok=True)
+        (seed_out / "fixture_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(json.dumps({"seed": seed, **report}, indent=2))
+        payload = run_matrix(attacks, baselines, [seed], fixture, seed_out,
+                             config_path=args.config, target_limit=args.targets,
+                             repeat_targets=args.target_repeats, scope_label=args.scope,
+                             resume=True, overrides=args.overrides,
+                             trustrag_dir=args.trustrag_dir)
+        completed += payload["cases_completed"]
+        requested += payload["cases_requested"]
+        failures += payload["failures"]
+        summaries.append({"seed": seed, "target_offset": offset, "output": str(seed_out)})
+    (out / "run_summary.json").write_text(json.dumps(
+        {"seeds": summaries, "cases_completed": completed, "cases_requested": requested,
+         "failures": failures}, indent=2), encoding="utf-8")
+    print(json.dumps({"cases_completed": completed, "cases_requested": requested,
+                      "failures": failures, "output": str(out)}, indent=2))
+    return 0 if not failures else 1
 
 
 if __name__ == "__main__":

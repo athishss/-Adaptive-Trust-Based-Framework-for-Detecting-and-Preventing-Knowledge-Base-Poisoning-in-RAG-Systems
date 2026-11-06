@@ -80,3 +80,16 @@ def test_answer_matching_respects_word_boundaries():
     assert gold_answer_present("Season 4 has 23 episodes.", "23") is True
     assert gold_answer_present("in 2023", "23") is False
     assert gold_answer_present("anything", "") is None
+
+
+def test_per_seed_subdirectories_are_read_and_costs_averaged(tmp_path):
+    for seed in (1, 2):
+        sub = tmp_path / f"seed_{seed}"
+        _case(sub, "a", "RAGLedger", seed, {f"s{seed}q{i}": [(False, True, False)] for i in range(6)})
+        _case(sub, "a", "no_defence", seed, {f"s{seed}q{i}": [(True, False, False)] for i in range(6)})
+    units = load_units(tmp_path)
+    assert len(units) == 24 and {u.seed for u in units} == {1, 2}
+    payload = analyse_directory(tmp_path, min_units=10)
+    t = payload["paired_tests"][0]
+    assert t["paired_units"] == 12 and t["p_exact"] < 0.01
+    assert payload["cost"]["a|RAGLedger"]["llm_calls_per_query"] == 2.0
