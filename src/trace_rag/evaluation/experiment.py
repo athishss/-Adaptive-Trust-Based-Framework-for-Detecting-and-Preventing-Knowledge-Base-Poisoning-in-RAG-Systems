@@ -67,6 +67,12 @@ SMOKE_BASELINES = ("no_defence", "duplicate_filter", "trust_threshold",
                    "RAGLedger")
 
 
+# Baselines that run a *published* method's own code and therefore need an
+# external checkout.  Not in the default matrix.
+OPT_IN_BASELINES = ("trustrag_official",)
+ALL_BASELINES = SMOKE_BASELINES + OPT_IN_BASELINES
+
+
 @dataclass
 class Fixture:
     clean: List[Dict[str, Any]]
@@ -427,8 +433,9 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
 
 def build_pipeline(config_path: Optional[str | Path], root: str | Path,
                    baseline: str, fixture: Fixture,
-                   overrides: Sequence[str] = ()) -> PersonAPipeline:
-    if baseline not in SMOKE_BASELINES:
+                   overrides: Sequence[str] = (),
+                   trustrag_dir: Optional[str | Path] = None) -> PersonAPipeline:
+    if baseline not in ALL_BASELINES:
         raise ValueError(f"unknown baseline {baseline!r}")
     config = Config.load(
         config_path,
@@ -479,6 +486,17 @@ def build_pipeline(config_path: Optional[str | Path], root: str | Path,
             )
         return pipeline
 
+    if baseline == "trustrag_official":
+        if not trustrag_dir:
+            raise ValueError("baseline 'trustrag_official' needs trustrag_dir (a checkout of "
+                             "github.com/HuichiZhou/TrustRAG)")
+        from ..baselines.trustrag_official import TrustRAGOfficialStage1Policy
+        pipeline.policy = TrustRAGOfficialStage1Policy(
+            trustrag_dir,
+            lambda texts: pipeline.embedder.encode_documents(
+                list(texts), batch_size=config.embedding.batch_size))
+        return pipeline
+
     if baseline in ("TrustRAG", "RobustRAG"):
         queue = VerificationQueue(max_size=config.security.queue_size)
         pipeline.policy = build_baseline_policy(
@@ -506,7 +524,8 @@ def slug(attack: str, baseline: str, seed: int) -> str:
 def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path,
                  config_path: Optional[str | Path] = None,
                  target_limit: int = 6, repeat_targets: int = 2,
-                 overrides: Sequence[str] = ()) -> EvaluationResult:
+                 overrides: Sequence[str] = (),
+                 trustrag_dir: Optional[str | Path] = None) -> EvaluationResult:
     """Build, run and score one (attack, baseline, seed) case."""
     plan = build_case_plan(fixture, case.attack, seed=case.seed,
                            target_limit=target_limit,
@@ -518,7 +537,7 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
     case_dir.mkdir(parents=True, exist_ok=True)
 
     pipeline = build_pipeline(config_path, case_dir / "run", case.baseline, fixture,
-                              overrides=overrides)
+                              overrides=overrides, trustrag_dir=trustrag_dir)
     ingestor = Ingestor(pipeline.store, pipeline.config.ingestion, clock=pipeline.clock)
     tracemalloc.start()
     try:
@@ -579,7 +598,8 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
                target_limit: int = 6, repeat_targets: int = 2,
                scope_label: str | None = None,
                resume: bool = False,
-               overrides: Sequence[str] = ()) -> Dict[str, Any]:
+               overrides: Sequence[str] = (),
+               trustrag_dir: Optional[str | Path] = None) -> Dict[str, Any]:
     """Run every case and write ``results.json`` / ``results.csv``."""
     out = Path(output_root)
     out.mkdir(parents=True, exist_ok=True)
@@ -592,7 +612,7 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
             results.append(execute_case(case, fixture, out, config_path=config_path,
                                         target_limit=target_limit,
                                         repeat_targets=repeat_targets,
-                                        overrides=overrides))
+                                        overrides=overrides, trustrag_dir=trustrag_dir))
         except Exception as exc:  # noqa: BLE001 - keep the matrix running, report loudly
             logger.error("case %s failed: %s", slug(case.attack, case.baseline, case.seed),
                          exc, exc_info=True)

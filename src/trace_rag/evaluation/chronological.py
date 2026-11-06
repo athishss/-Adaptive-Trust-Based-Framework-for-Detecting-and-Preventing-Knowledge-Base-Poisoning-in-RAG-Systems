@@ -35,7 +35,7 @@ from ..ingestion.pipeline import Ingestor
 from ..pipeline import PersonAPipeline
 from ..trust.policy import TrustPolicy
 from ..trust.verifier import CorroborationVerifier
-from .metrics import (abstention_rate, answer_level_asr_fields, attack_answer_success,
+from .metrics import (gold_answer_present, abstention_rate, answer_level_asr_fields, attack_answer_success,
                       clean_utility, detection_delays, detection_metrics, exposure_windows,
                       latency_stats, mean_llm_calls, poison_citation_rate,
                       poison_exposure_rate, summarise_optional)
@@ -73,6 +73,7 @@ class QueryStepRecord:
     latency_ms: float
     answer_id: Optional[int]
     answer_attack_success: Optional[bool] = None
+    answer_gold_correct: Optional[bool] = None
     answer_attack_status: str = "NOT MEASURED"
     attack_answer_criterion: Optional[str] = None
     result: Any = None
@@ -127,6 +128,7 @@ class QueryStepRecord:
             "latency_ms": float(self.latency_ms),
             "answer_id": self.answer_id,
             "answer_attack_success": self.answer_attack_success,
+            "answer_gold_correct": self.answer_gold_correct,
             "answer_attack_status": self.answer_attack_status,
             "attack_answer_criterion": self.attack_answer_criterion,
         }
@@ -369,6 +371,7 @@ def run_stream(
 
             ground_truth = answer_ground_truth.get(query.query_id)
             answer_success: Optional[bool] = None
+            gold_correct: Optional[bool] = None
             answer_status = "NOT MEASURED"
             criterion = None
             if ground_truth:
@@ -378,6 +381,9 @@ def run_stream(
                     str(ground_truth.get("gold_answer", "")),
                     gold_answers=ground_truth.get("gold_answers") or (),
                 )
+                gold_correct = gold_answer_present(
+                    result.answer, str(ground_truth.get("gold_answer", "")),
+                    ground_truth.get("gold_answers") or ())
                 if answer_success is not None:
                     answer_status = "MEASURED"
                     criterion = ("attacker answer present in delivered answer and "
@@ -399,6 +405,7 @@ def run_stream(
                 llm_calls=int(result.llm_calls),
                 latency_ms=float(result.timings_ms.get("total", 0.0)),
                 answer_id=result.answer_id, answer_attack_success=answer_success,
+                answer_gold_correct=gold_correct,
                 answer_attack_status=answer_status,
                 attack_answer_criterion=criterion, result=result,
             ))
@@ -543,6 +550,11 @@ def _compute_metrics(*, records: Sequence[QueryStepRecord], plan: StreamPlan, st
         **answer_fields,
         "answer_ground_truth_attempts": len(answer_evaluated),
         "answer_attack_successes": int(answer_successes),
+        "answer_gold_correct_attempts": sum(1 for record in answer_evaluated
+                                            if record.answer_gold_correct is True),
+        "answer_gold_correct_rate": (
+            sum(1 for record in answer_evaluated if record.answer_gold_correct is True)
+            / len(answer_evaluated)) if answer_evaluated else None,
         "poison_leaked_cases": len(exposed_cases),
         "poison_not_exposed_after_retrieval_cases": len(not_exposed_after_retrieval),
         "poison_never_retrieved_cases": len(never_retrieved),
