@@ -98,6 +98,63 @@ def load_units(results_dir: str | Path) -> List[Unit]:
     return units
 
 
+def load_clean_units(results_dir: str | Path, control: str = "none") -> List[Dict[str, Any]]:
+    """Benign-control outcomes: gold-answer accuracy and abstention on target questions, no poison.
+
+    This is what a defence *costs* when nobody is attacking.  One unit per (seed, question);
+    repeated asks are averaged.
+    """
+    units: List[Dict[str, Any]] = []
+    for case_dir in _case_dirs(results_dir):
+        match = _CASE.match(case_dir.name)
+        stream = case_dir / "stream.jsonl"
+        if not match or match["attack"] != control or not stream.exists():
+            continue
+        by_q: Dict[str, List[Mapping[str, Any]]] = defaultdict(list)
+        for line in stream.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("is_target") and row.get("answer_gold_correct") is not None:
+                by_q[_qid(row["query_id"])].append(row)
+        for qid, rows in sorted(by_q.items()):
+            units.append({"baseline": match["baseline"], "seed": int(match["seed"]), "qid": qid,
+                          "accuracy": float(np.mean([1.0 if r["answer_gold_correct"] else 0.0 for r in rows])),
+                          "accuracy_first": 1.0 if rows[0]["answer_gold_correct"] else 0.0,
+                          "abstention": float(np.mean([1.0 if r["abstained"] else 0.0 for r in rows]))})
+    return units
+
+
+def summarise_clean(units: Sequence[Mapping[str, Any]], reference: str = "no_defence",
+                    bootstrap_seed: int = 20260921, min_units: int = 10) -> List[Dict[str, Any]]:
+    """Per defence: clean accuracy with CI, and the paired accuracy loss versus ``reference``."""
+    by_def: Dict[str, Dict[Tuple[int, str], Mapping[str, Any]]] = defaultdict(dict)
+    for u in units:
+        by_def[u["baseline"]][(u["seed"], u["qid"])] = u
+    rows: List[Dict[str, Any]] = []
+    ref = by_def.get(reference, {})
+    for baseline, table in sorted(by_def.items()):
+        acc = [u["accuracy"] for u in table.values()]
+        ab = [u["abstention"] for u in table.values()]
+        lo, hi = _ci(acc, bootstrap_seed)
+        row: Dict[str, Any] = {"baseline": baseline, "units": len(table), "clean_accuracy": float(np.mean(acc)),
+                               "clean_accuracy_ci": [lo, hi], "clean_abstention": float(np.mean(ab)),
+                               "accuracy_loss_vs_reference": None, "p_exact": None}
+        shared = sorted(set(table) & set(ref))
+        if baseline != reference and len(shared) >= min_units:
+            # binary first-attempt correctness, paired by question
+            lost = sum(1 for k in shared if ref[k]["accuracy_first"] == 1.0 and table[k]["accuracy_first"] == 0.0)
+            gained = sum(1 for k in shared if ref[k]["accuracy_first"] == 0.0 and table[k]["accuracy_first"] == 1.0)
+            row["accuracy_loss_vs_reference"] = float(np.mean([ref[k]["accuracy"] - table[k]["accuracy"] for k in shared]))
+            row["lost_only"], row["gained_only"] = lost, gained
+            row["p_exact"] = mcnemar_exact(lost, gained)
+        rows.append(row)
+    adjusted = holm([r["p_exact"] for r in rows])
+    for r, a in zip(rows, adjusted):
+        r["p_holm"] = a
+    return rows
+
+
 def _ci(values: Sequence[float], seed: int) -> Tuple[Optional[float], Optional[float]]:
     if len(values) < 2:
         return None, None
@@ -205,7 +262,8 @@ def _fmt(value: Optional[float], ci: Optional[Sequence[Optional[float]]] = None)
 
 
 def to_markdown(rows: Sequence[Mapping[str, Any]], tests: Sequence[Mapping[str, Any]],
-                cost: Mapping[Tuple[str, str], Mapping[str, float]], scope: str) -> str:
+                cost: Mapping[Tuple[str, str], Mapping[str, float]], scope: str,
+                clean: Sequence[Mapping[str, Any]] = ()) -> str:
     lines = [f"# Analysis: {scope}", "",
              "Unit = (seed, target question). CIs are 95% percentile bootstrap over units. "
              "ASR counts abstention as failure; read it with accuracy and abstention.", "",
@@ -228,6 +286,16 @@ def to_markdown(rows: Sequence[Mapping[str, Any]], tests: Sequence[Mapping[str, 
             lines.append(f"| {t['attack']} | {t['outcome']} | {t['reference']} | {t['baseline']} | "
                          f"{t['paired_units']} | {t['reference_succeeds_only']} | "
                          f"{t['baseline_succeeds_only']} | {p} | {ph} |")
+    if clean:
+        lines += ["", "## Benign control (no attack): what each defence costs", "",
+                  "| defence | units | clean accuracy | clean abstention | accuracy loss vs no_defence | p | p (Holm) |",
+                  "|---|---:|---|---:|---:|---:|---:|"]
+        for c in clean:
+            loss = "n/a" if c["accuracy_loss_vs_reference"] is None else f"{c['accuracy_loss_vs_reference']:+.3f}"
+            p = "n/a" if c["p_exact"] is None else f"{c['p_exact']:.4f}"
+            ph = "n/a" if c.get("p_holm") is None else f"{c['p_holm']:.4f}"
+            lines.append(f"| {c['baseline']} | {c['units']} | {_fmt(c['clean_accuracy'], c['clean_accuracy_ci'])} | "
+                         f"{c['clean_abstention']:.3f} | {loss} | {p} | {ph} |")
     return "\n".join(lines) + "\n"
 
 
@@ -246,12 +314,13 @@ def analyse_directory(results_dir: str | Path, reference: str = "RAGLedger",
         for t, a in zip(fam, holm([t["p_exact"] for t in fam])):
             t["p_holm"] = a
     cost = case_cost(results_dir)
+    clean_rows = summarise_clean(load_clean_units(results_dir), min_units=min_units)
     out = Path(results_dir)
     payload = {"scope": scope, "reference": reference, "units": len(units), "summary": rows,
-               "paired_tests": tests,
+               "paired_tests": tests, "clean_control": clean_rows,
                "cost": {f"{a}|{b}": v for (a, b), v in cost.items()}}
     (out / "analysis.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    (out / "analysis.md").write_text(to_markdown(rows, tests, cost, scope), encoding="utf-8")
+    (out / "analysis.md").write_text(to_markdown(rows, tests, cost, scope, clean_rows), encoding="utf-8")
     with (out / "analysis.csv").open("w", newline="", encoding="utf-8") as fh:
         fields = ["attack", "baseline", "units", "seeds", "asr_first", "asr_last", "asr_mean",
                   "accuracy", "abstention", "exposure"]

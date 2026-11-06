@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -93,3 +94,37 @@ def test_per_seed_subdirectories_are_read_and_costs_averaged(tmp_path):
     t = payload["paired_tests"][0]
     assert t["paired_units"] == 12 and t["p_exact"] < 0.01
     assert payload["cost"]["a|RAGLedger"]["llm_calls_per_query"] == 2.0
+
+
+def test_benign_control_reports_the_accuracy_cost_of_a_defence(tmp_path):
+    from trace_rag.evaluation.analysis import load_clean_units, summarise_clean
+
+    def clean_case(baseline, correct):
+        d = tmp_path / "cases" / f"none__{baseline}__seed1"
+        d.mkdir(parents=True)
+        rows = [{"step": i, "query_id": f"q{i}_s{i}", "is_target": True, "poison_targeted": [],
+                 "answer_gold_correct": ok, "abstained": not ok, "answer_attack_status": "MEASURED"}
+                for i, ok in enumerate(correct)]
+        (d / "stream.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+    clean_case("no_defence", [True] * 20)
+    clean_case("strict", [True] * 12 + [False] * 8)
+    rows = {r["baseline"]: r for r in summarise_clean(load_clean_units(tmp_path))}
+    assert rows["no_defence"]["clean_accuracy"] == 1.0
+    assert rows["strict"]["clean_accuracy"] == 0.6 and rows["strict"]["clean_abstention"] == 0.4
+    assert rows["strict"]["accuracy_loss_vs_reference"] == pytest.approx(0.4)
+    assert rows["strict"]["p_exact"] < 0.01
+
+
+def test_none_attack_ingests_no_poison_and_still_measures_accuracy(tmp_path):
+    from trace_rag.evaluation.experiment import build_case_plan, load_fixture, run_matrix
+
+    fixture = load_fixture(Path(__file__).resolve().parent.parent / "examples")
+    plan = build_case_plan(fixture, "none", target_limit=3)
+    assert plan.poison_doc_ids == [] and not any(e.is_poison for e in plan.ingestions)
+    payload = run_matrix(["none"], ["no_defence"], [1], fixture, tmp_path / "o", target_limit=3,
+                         scope_label="plumbing")
+    assert payload["failures"] == []
+    from trace_rag.evaluation.analysis import load_clean_units
+    units = load_clean_units(tmp_path / "o")
+    assert units and all(u["baseline"] == "no_defence" for u in units)

@@ -60,7 +60,9 @@ SMOKE_ATTACKS = ("entity_swap", "negation", "instruction_injection",
 # (``results/adv_targeted_results/<dataset>.json``).  They need ``adv_texts`` on
 # every target, so they are not part of the default smoke matrix.
 OFFICIAL_ATTACKS = ("poisonedrag_official", "poisonedrag_official_sybil")
-ALL_ATTACKS = SMOKE_ATTACKS + OFFICIAL_ATTACKS
+# ``none`` ingests no poison: the benign control that measures what a defence costs.
+CONTROL_ATTACKS = ("none",)
+ALL_ATTACKS = SMOKE_ATTACKS + OFFICIAL_ATTACKS + CONTROL_ATTACKS
 SMOKE_BASELINES = ("no_defence", "duplicate_filter", "trust_threshold",
                    "perplexity", "suspicion_only", "corroboration_only",
                    "trust_no_deferred", "TrustRAG", "RobustRAG", "always_on_loo",
@@ -278,6 +280,8 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
     poison_doc_ids: List[str] = []
     attack_texts: List[str] = []
     for i, target in enumerate(targets):
+        if attack in CONTROL_ATTACKS:
+            continue
         if attack in OFFICIAL_ATTACKS:
             attack_texts.extend(target.adv_texts)
             # One contributor publishes every passage, or each passage comes from
