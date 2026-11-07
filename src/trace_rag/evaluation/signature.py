@@ -39,10 +39,17 @@ def file_sha256(path: str | Path | None) -> Optional[str]:
 def git_state(root: str | Path | None = None) -> Dict[str, Any]:
     cwd = str(root or Path(__file__).resolve().parent)
     try:
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True,
+        # ``git status`` pathspecs are relative to the working directory, so run
+        # from the repository top level.  Running from this module's subdirectory
+        # makes ``-- src scripts config`` match nothing and silently reports a
+        # dirty tree as clean.
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd,
+                             capture_output=True, text=True, timeout=20,
+                             check=True).stdout.strip()
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=top, capture_output=True,
                               text=True, timeout=20, check=True).stdout.strip()
         dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "src", "scripts", "config"],
-                                    cwd=cwd, capture_output=True, text=True, timeout=20,
+                                    cwd=top, capture_output=True, text=True, timeout=20,
                                     check=True).stdout.strip())
         return {"head": head, "dirty": dirty}
     except Exception:  # noqa: BLE001 - not a git checkout (e.g. an installed wheel)

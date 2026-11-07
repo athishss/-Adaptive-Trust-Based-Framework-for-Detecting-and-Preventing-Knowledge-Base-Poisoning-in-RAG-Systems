@@ -286,9 +286,9 @@ pytest -q --cov=trace_rag --cov-report=term-missing
 pytest -q -W error::ResourceWarning
 ```
 
-Result (offline; optional torch/faiss/matplotlib tests skip): **370 passed, 4 skipped**. Coverage: **81%** overall (6319 statements,
+Result (offline; optional torch/faiss/matplotlib/nltk tests skip): **401 passed, 7 skipped**. Coverage: **81%** overall (6319 statements,
 1214 missed). The ResourceWarning run is clean. Skips are optional backends:
-`faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3). New tests cover exact
+`faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3), `nltk` (1). New tests cover exact
 Parquet subset construction, snapshot corruption/interruption/signature mixing,
 completed-run identity reuse and rejection, preflight storage isolation,
 signature-safe recovery and the notebook pin. Fresh logs for the tested SHA are

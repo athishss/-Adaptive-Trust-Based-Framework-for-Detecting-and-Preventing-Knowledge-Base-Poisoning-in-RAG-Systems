@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from trace_rag.config import Config
@@ -58,6 +59,23 @@ def test_baseline_verifier_matches_the_ragledger_verifier():
 def _tiny_fixture():
     from trace_rag.evaluation.experiment import load_fixture
     return load_fixture(Path(__file__).resolve().parent.parent / "examples")
+
+
+def test_git_state_detects_dirty_source_from_a_package_subdirectory(tmp_path):
+    """The signature's dirty flag must work from ``src/trace_rag/evaluation``."""
+    from trace_rag.evaluation.signature import git_state
+
+    repo = tmp_path / "repo"
+    module_dir = repo / "src" / "trace_rag" / "evaluation"
+    module_dir.mkdir(parents=True)
+    (repo / "src" / "code.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com",
+                    "commit", "-qm", "base"], cwd=repo, check=True)
+    assert git_state(repo)["dirty"] is False
+    (repo / "src" / "code.py").write_text("x = 2\n", encoding="utf-8")
+    assert git_state(module_dir)["dirty"] is True
 
 
 def test_signature_changes_with_config_overrides_and_extras():
