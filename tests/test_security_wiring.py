@@ -284,6 +284,43 @@ def test_ollama_probe_rejects_empty_generated_response(config, monkeypatch):
         pipeline.close()
 
 
+def test_generation_probe_through_cache_uses_backend_base_url(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from trace_rag.generation.llm import CachedLLM
+
+    inner = _ReadyLLM()
+    inner.name = "qwen2.5:7b"
+    inner.base_url = "http://127.0.0.1:11434"
+    llm = CachedLLM(inner, str(tmp_path / "cache.sqlite"))
+    pipeline = SimpleNamespace(
+        generator=SimpleNamespace(llm=llm),
+        config=SimpleNamespace(
+            generation=SimpleNamespace(backend="ollama"),
+            security=SimpleNamespace(probe_timeout_s=1.0),
+        ),
+    )
+    seen = []
+
+    def fake_json(url, **kwargs):
+        seen.append(url)
+        return {"models": [{"name": "qwen2.5:7b"}]}
+
+    def fake_post(url, payload, **kwargs):
+        seen.append(url)
+        return {"model": "qwen2.5:7b", "response": "OK"}
+
+    monkeypatch.setattr(security_module, "_http_json", fake_json)
+    monkeypatch.setattr(security_module, "_http_post_json", fake_post)
+    try:
+        probe = security_module._probe_generation(pipeline)
+    finally:
+        llm.close()
+    assert probe["status"] == "ready", probe
+    assert seen == ["http://127.0.0.1:11434/api/tags",
+                    "http://127.0.0.1:11434/api/generate"]
+
+
 def test_http_timeout_is_a_failed_probe_not_protected(config, monkeypatch):
     pipeline = PersonAPipeline.from_config(config, load_existing_index=False)
     try:

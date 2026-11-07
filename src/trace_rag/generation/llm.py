@@ -342,7 +342,9 @@ class CachedLLM:
                 return self._cached(self._key("chat", msgs, max_tokens, stop),
                                     lambda: self.inner.generate_chat(msgs, max_tokens=max_tokens, stop=stop))
             return generate_chat
-        raise AttributeError(name)
+        # Readiness probes and provenance code need the same endpoint metadata
+        # as an unwrapped backend (base_url, api_key, tokenizer, ...).
+        return getattr(self.inner, name)
 
     def close(self) -> None:
         with self._lock:
