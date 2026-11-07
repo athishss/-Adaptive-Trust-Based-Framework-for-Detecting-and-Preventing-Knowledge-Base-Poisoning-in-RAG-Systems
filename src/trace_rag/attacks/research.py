@@ -69,7 +69,7 @@ RESEARCH_ATTACK_SPECS: Dict[str, ResearchAttackSpec] = {
         "overwhelm corroboration with a coordinated burst",
         "question, target answer and a small set of paraphrases", 3),
     "adaptive": ResearchAttackSpec(
-        "adaptive", "white-box plus feedback on detector signals",
+        "adaptive", "NON-REACTIVE: white-box warm history plus fixed S1 evasion; does NOT observe quarantine or change strategy",
         "evade query-echo and source-maturity signals with a warm history",
         "question, gold passage, answer and public detector description", 2),
 }

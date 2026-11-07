@@ -74,6 +74,8 @@ class QueryStepRecord:
     answer_id: Optional[int]
     answer_attack_success: Optional[bool] = None
     answer_gold_correct: Optional[bool] = None
+    attacker_string_present: Optional[bool] = None   # looser than ASR: ignores the gold answer
+    malicious_answer: Optional[str] = None           # evaluator-only, kept for the manual audit
     answer_attack_status: str = "NOT MEASURED"
     attack_answer_criterion: Optional[str] = None
     result: Any = None
@@ -129,6 +131,8 @@ class QueryStepRecord:
             "answer_id": self.answer_id,
             "answer_attack_success": self.answer_attack_success,
             "answer_gold_correct": self.answer_gold_correct,
+            "attacker_string_present": self.attacker_string_present,
+            "malicious_answer": self.malicious_answer,
             "answer_attack_status": self.answer_attack_status,
             "attack_answer_criterion": self.attack_answer_criterion,
         }
@@ -374,7 +378,12 @@ def run_stream(
             gold_correct: Optional[bool] = None
             answer_status = "NOT MEASURED"
             criterion = None
+            attacker_present: Optional[bool] = None
+            malicious_text: Optional[str] = None
             if ground_truth:
+                malicious_text = str(ground_truth.get("malicious_answer", "")) or None
+                if malicious_text:
+                    attacker_present = attack_answer_success(result.answer, malicious_text, "")
                 answer_success = attack_answer_success(
                     result.answer,
                     str(ground_truth.get("malicious_answer", "")),
@@ -406,6 +415,7 @@ def run_stream(
                 latency_ms=float(result.timings_ms.get("total", 0.0)),
                 answer_id=result.answer_id, answer_attack_success=answer_success,
                 answer_gold_correct=gold_correct,
+                attacker_string_present=attacker_present, malicious_answer=malicious_text,
                 answer_attack_status=answer_status,
                 attack_answer_criterion=criterion, result=result,
             ))

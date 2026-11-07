@@ -46,7 +46,28 @@ def main() -> int:
                          "includes trustrag_official")
     ap.add_argument("--target-offset", type=int, default=0)
     ap.add_argument("--set", dest="overrides", action="append", default=[])
+    ap.add_argument("--hash-file", action="append", default=[], metavar="NAME=PATH",
+                    help="extra file whose SHA-256 is bound into the run signature "
+                         "(queries file, trained scorer, ...); repeatable")
+    ap.add_argument("--sig", action="append", default=[], metavar="NAME=VALUE",
+                    help="extra identity string bound into the run signature "
+                         "(model digest, quantisation, serving version, ...); repeatable")
     args = ap.parse_args()
+    from trace_rag.evaluation.signature import file_sha256
+    sig_extra = {"poison_json_sha256": file_sha256(args.poison),
+                 "corpus_sha256": file_sha256(args.corpus),
+                 "qrels_sha256": file_sha256(args.qrels),
+                 "max_clean": args.max_clean, "attacks": args.attacks,
+                 "baselines": args.baselines}
+    for item in args.hash_file:
+        name, _, path = item.partition("=")
+        digest = file_sha256(path)
+        if digest is None:
+            ap.error(f"--hash-file {item!r}: file not found")
+        sig_extra[f"{name}_sha256"] = digest
+    for item in args.sig:
+        name, _, value = item.partition("=")
+        sig_extra[name] = value
 
     seeds = [int(x) for x in args.seeds.split(",") if x]
     attacks = [x for x in args.attacks.split(",") if x]
@@ -71,7 +92,9 @@ def main() -> int:
                              config_path=args.config, target_limit=args.targets,
                              repeat_targets=args.target_repeats, scope_label=args.scope,
                              resume=True, overrides=args.overrides,
-                             trustrag_dir=args.trustrag_dir)
+                             trustrag_dir=args.trustrag_dir,
+                             signature_extra={**sig_extra, "seed": seed,
+                                              "target_offset": offset})
         completed += payload["cases_completed"]
         requested += payload["cases_requested"]
         failures += payload["failures"]

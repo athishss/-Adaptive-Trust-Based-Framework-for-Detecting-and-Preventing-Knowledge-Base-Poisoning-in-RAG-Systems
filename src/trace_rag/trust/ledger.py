@@ -405,15 +405,20 @@ class TrustLedger:
         return True
 
     def record_high_band(self, doc_id: str, source_id: str, family_id: str,
-                         timestamp: Optional[float] = None) -> None:
+                         timestamp: Optional[float] = None) -> bool:
         """Apply a small trust penalty for a HIGH-band assessment (no verification).
 
         The passage was too suspicious for even the verifier, so it gets a mild
         beta bump.  This is weaker than a full REFUTE — it only moves the
         Beta distribution slightly towards distrust.
+
+        Returns True when this penalty moved the document into a blocked state
+        (QUARANTINED/REJECTED).  The caller must then run retroactive
+        remediation, exactly as it does for a quarantine from verification.
         """
         ts = self._now(timestamp)
         with self._lock:
+            was_blocked = self._status_of(doc_id) in ("QUARANTINED", "REJECTED")
             self._register_doc(doc_id, source_id, family_id)
             is_burst = self._detect_burst(source_id, ts)
             self._update_entity("doc", doc_id,
@@ -424,8 +429,17 @@ class TrustLedger:
                                     beta_delta=self.config.high_band_beta_penalty * 0.3, ts=ts)
             # Check if trust dropped below thresholds
             self._check_demotion(doc_id, ts, trigger="HIGH_BAND")
+            now_blocked = self._status_of(doc_id) in ("QUARANTINED", "REJECTED")
             self._conn.commit()
             self._blocked_cache = None
+        return bool(now_blocked and not was_blocked)
+
+    def _status_of(self, doc_id: str) -> Optional[str]:
+        row = self._conn.execute(
+            "SELECT status FROM trust_entities WHERE entity_id = ? AND entity_type = 'doc'",
+            (doc_id,),
+        ).fetchone()
+        return row["status"] if row is not None else None
 
     def quarantine(self, doc_ids: Sequence[str], reason: str = "quarantined",
                    timestamp: Optional[float] = None) -> List[str]:
@@ -618,9 +632,16 @@ class TrustLedger:
         ``quarantine_refutations=1``), a single refute can cascade
         TRUSTED -> MONITORED -> QUARANTINED in one call.
 
-        Also checks T_eff-based transitions (plan Section 4.7):
-          - T_eff < monitored_t_eff (0.60) -> MONITORED
-          - T_eff < quarantine_t_eff (0.20) -> QUARANTINED
+        Also checks trust-threshold transitions (plan Section 4.7).  NOTE: the
+        quantity compared with ``monitored_t_eff`` / ``quarantine_t_eff`` is the
+        document's own Beta mean ``t_doc = alpha / (alpha + beta)``, NOT the
+        hierarchical ``t_eff`` used for retrieval ranking.  A document with a
+        bad family/source but a clean own history is therefore not demoted by
+        these two rules.  (Behaviour kept as is: using ``t_eff`` here would
+        demote every cold-start document capped by ``t_cap`` and change every
+        published number; it is an open design decision, see docs/AUDIT_RESPONSE.md.)
+          - t_doc < monitored_t_eff (0.60) -> MONITORED
+          - t_doc < quarantine_t_eff (0.20) -> QUARANTINED
         """
         for _ in range(3):  # at most 3 transitions
             row = self._conn.execute(

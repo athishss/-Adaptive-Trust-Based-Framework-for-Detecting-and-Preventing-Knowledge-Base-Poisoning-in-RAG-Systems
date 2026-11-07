@@ -45,11 +45,12 @@ from ..pipeline import PersonAPipeline
 from ..security import build_trust_config
 from ..trust.ledger import TrustLedger
 from ..trust.queue import VerificationQueue
-from ..trust.verifier import CorroborationVerifier
+from ..trust.verifier import CorroborationVerifier, configure_nli
 from ..utils.logging import get_logger
 from .chronological import StreamRun, run_stream
 from .metrics import percentile
 from .runner import EvaluationCase, EvaluationResult
+from .signature import run_signature
 
 logger = get_logger(__name__)
 
@@ -435,6 +436,32 @@ def build_case_plan(fixture: Fixture, attack: str, seed: int = 20260921,
 # ---------------------------------------------------------------------------
 
 
+def build_baseline_verifier(pipeline: PersonAPipeline, config: Config) -> CorroborationVerifier:
+    """The verifier a baseline uses: identical settings to RAGLedger's.
+
+    A baseline that verifies (``corroboration_only``, ``trust_no_deferred``, ...)
+    must differ from RAGLedger in POLICY only.  Giving it a weaker (lexical)
+    verifier than RAGLedger's NLI one would confound every ablation, so both are
+    built from the same ``security.*`` settings.
+    """
+    security = config.security
+    use_nli = {"nli": True, "lexical": False, "auto": None}[security.verifier]
+    if use_nli is not False:
+        configure_nli(security.nli_model, security.nli_revision)
+    return CorroborationVerifier(
+        llm=pipeline.generator.llm,
+        max_corroboration=security.max_corroboration,
+        use_nli=use_nli,
+        min_refute_topical_overlap=security.min_refute_topical_overlap,
+        min_refute_topic_coverage=security.min_refute_topic_coverage,
+        min_refute_query_coverage=security.min_refute_query_coverage,
+        support_threshold=security.support_threshold,
+        refute_threshold=security.refute_threshold,
+        max_source_mass=security.max_source_mass,
+        counterfactual_influence=security.counterfactual_influence,
+    )
+
+
 def build_pipeline(config_path: Optional[str | Path], root: str | Path,
                    baseline: str, fixture: Fixture,
                    overrides: Sequence[str] = (),
@@ -464,8 +491,7 @@ def build_pipeline(config_path: Optional[str | Path], root: str | Path,
                          config=build_trust_config(config.trust), clock=pipeline.clock)
     pipeline.trust_provider = ledger
     pipeline.retriever.trust = ledger
-    verifier = CorroborationVerifier(llm=pipeline.generator.llm, use_nli=False,
-                                     max_corroboration=config.security.max_corroboration)
+    verifier = build_baseline_verifier(pipeline, config)
     pipeline.verifier = verifier
 
     if baseline in ("suspicion_only", "corroboration_only", "trust_no_deferred"):
@@ -529,7 +555,8 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
                  config_path: Optional[str | Path] = None,
                  target_limit: int = 6, repeat_targets: int = 2,
                  overrides: Sequence[str] = (),
-                 trustrag_dir: Optional[str | Path] = None) -> EvaluationResult:
+                 trustrag_dir: Optional[str | Path] = None,
+                 signature: Optional[Mapping[str, Any]] = None) -> EvaluationResult:
     """Build, run and score one (attack, baseline, seed) case."""
     plan = build_case_plan(fixture, case.attack, seed=case.seed,
                            target_limit=target_limit,
@@ -597,7 +624,9 @@ def execute_case(case: EvaluationCase, fixture: Fixture, output_root: str | Path
     # Written last: its presence (with ``_complete``) is what lets a resumed matrix
     # skip this case after a Colab disconnect.
     (case_dir / "result.json").write_text(
-        json.dumps({**result.to_dict(), "_complete": True}, default=str), encoding="utf-8")
+        json.dumps({**result.to_dict(), "_complete": True,
+                    "_signature": (signature or {}).get("digest")}, default=str),
+        encoding="utf-8")
     return result
 
 
@@ -608,16 +637,26 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
                scope_label: str | None = None,
                resume: bool = False,
                overrides: Sequence[str] = (),
-               trustrag_dir: Optional[str | Path] = None) -> Dict[str, Any]:
-    """Run every case and write ``results.json`` / ``results.csv``."""
+               trustrag_dir: Optional[str | Path] = None,
+               signature_extra: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Run every case and write ``results.json`` / ``results.csv``.
+
+    ``resume`` reuses a finished case only if its stored run signature equals the
+    current one (code commit, config, overrides, fixture content, target block,
+    plus ``signature_extra``: dataset/scorer hashes and model digests supplied by
+    the caller).  A stale or foreign cache is therefore recomputed, never reused.
+    """
     out = Path(output_root)
     out.mkdir(parents=True, exist_ok=True)
+    signature = run_signature(fixture, config_path=config_path, overrides=overrides,
+                              target_limit=target_limit, repeat_targets=repeat_targets,
+                              extra=signature_extra)
     cases = [EvaluationCase(attack=attack, baseline=baseline, seed=seed)
              for attack in attacks for baseline in baselines for seed in seeds]
     results: List[EvaluationResult] = []
     failures: List[Dict[str, Any]] = []
     for case in cases:
-        cached = _load_cached_result(out, case) if resume else None
+        cached = _load_cached_result(out, case, signature["digest"]) if resume else None
         if cached is not None:
             logger.info("resume: reusing finished case %s",
                         slug(case.attack, case.baseline, case.seed))
@@ -627,7 +666,8 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
             results.append(execute_case(case, fixture, out, config_path=config_path,
                                         target_limit=target_limit,
                                         repeat_targets=repeat_targets,
-                                        overrides=overrides, trustrag_dir=trustrag_dir))
+                                        overrides=overrides, trustrag_dir=trustrag_dir,
+                                        signature=signature))
         except Exception as exc:  # noqa: BLE001 - keep the matrix running, report loudly
             logger.error("case %s failed: %s", slug(case.attack, case.baseline, case.seed),
                          exc, exc_info=True)
@@ -642,6 +682,7 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
         "cases_completed": len(results),
         "failures": failures,
         "results": [result.to_dict() for result in results],
+        "run_signature": signature,
         "resume_requested": bool(resume),
     }
     (out / "results.json").write_text(json.dumps(payload, indent=2, sort_keys=True),
@@ -651,8 +692,10 @@ def run_matrix(attacks: Sequence[str], baselines: Sequence[str], seeds: Sequence
     return payload
 
 
-def _load_cached_result(output_root: Path, case: EvaluationCase) -> Optional[EvaluationResult]:
-    """A finished case is reused on resume only if ``result.json`` is complete and matches."""
+def _load_cached_result(output_root: Path, case: EvaluationCase,
+                        signature_digest: Optional[str] = None) -> Optional[EvaluationResult]:
+    """A finished case is reused on resume only if ``result.json`` is complete, is for
+    the same case AND was produced under the same run signature."""
     path = (output_root / "cases" / slug(case.attack, case.baseline, case.seed)
             / "result.json")
     if not path.exists():
@@ -661,7 +704,12 @@ def _load_cached_result(output_root: Path, case: EvaluationCase) -> Optional[Eva
         data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("case") != case.to_dict() or not data.get("_complete"):
             return None
+        if data.get("_signature") != signature_digest:
+            logger.info("resume: ignoring cached case %s (produced under a different run signature)",
+                        slug(case.attack, case.baseline, case.seed))
+            return None
         data.pop("_complete", None)
+        data.pop("_signature", None)
         data["case"] = EvaluationCase(**data["case"])
         known = {f.name for f in dataclasses.fields(EvaluationResult)}
         return EvaluationResult(**{k: v for k, v in data.items() if k in known})

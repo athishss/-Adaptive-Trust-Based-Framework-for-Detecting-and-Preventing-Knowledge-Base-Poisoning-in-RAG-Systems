@@ -286,7 +286,7 @@ pytest -q --cov=trace_rag --cov-report=term-missing
 pytest -q -W error::ResourceWarning
 ```
 
-Result: **347 passed, 6 skipped**. Coverage: **81%** overall (6319 statements,
+Result (offline; optional torch/faiss/matplotlib tests skip): **370 passed, 4 skipped**. Coverage: **81%** overall (6319 statements,
 1214 missed). The ResourceWarning run is clean. Skips are optional backends:
 `faiss-cpu` (2 tests), `torch` (1), `matplotlib` (3). New tests cover exact
 Parquet subset construction, snapshot corruption/interruption/signature mixing,
@@ -448,8 +448,8 @@ answer-level ASR remains **NOT MEASURED** unless `--answers` supplies evaluator-
   was observed in three smoke cases.
 * `negation`, `instruction_injection` and `framing` evade the cheap signals and
   the lexical verifier often enough to leave poison exposure at 0.33–0.42.
-  Answer-level ASR is not measured, so this is not evidence that answers were
-  successfully manipulated.
+  These are fixture-era numbers; answer-level ASR is now measured by the real-data
+  matrix (a string-presence proxy, see docs/AUDIT_RESPONSE.md) but has not yet been run on a GPU.
 * The smoke corpus is trivially separable; all signals can separate the toy
   poison. It is unsuitable for measuring detection quality.
 * Optional real backends (`faiss`, `torch`, `transformers`, `pyarrow`,
@@ -461,10 +461,9 @@ answer-level ASR remains **NOT MEASURED** unless `--answers` supplies evaluator-
 * The `run_trust_stream.py` mini run does not train the suspicion scorer; it
   uses the heuristic thresholds. Real runs should train and validate the scorer
   on labelled rows first.
-* There is no real-NQ attack/baseline matrix runner yet. The chronological
-  matrix is fixture-only; `run_trust_stream.py` is the available real-data
-  end-to-end path, and it reports exposure/citation rather than answer-level
-  ASR.
+* `scripts/run_poisonedrag_official.py` is the real-data matrix runner (published
+  PoisonedRAG poison on BEIR NQ). It is tested offline only; no GPU result exists yet.
+  `docs/REAL_RESULTS_PLAN.md` says what may and may not be claimed.
 * The repository still contains historical Person A/B handover documents whose
   statements may predate the integration. Code, README and the engineering
   report are authoritative.

@@ -217,7 +217,7 @@ class SecurityConfig(BaseModel):
     refute_threshold: float = Field(0.10, ge=0.0, le=1.0)
     max_source_mass: float = Field(0.6, gt=0.0, le=1.0)
     counterfactual_influence: bool = True
-    max_verifier_llm_calls: int = Field(2, ge=1, description="hard upper bound per verification")
+    max_verifier_llm_calls: int = Field(2, ge=1, description="NOT enforced: the verifier makes at most two LLM calls by construction (single-document answer + counterfactual); kept for config compatibility")
     probe_timeout_s: float = Field(
         10.0, gt=0.0, le=120.0,
         description="timeout for the functional model-readiness probes, in seconds",

@@ -123,6 +123,7 @@ class TrustPolicy:
         excluded: List[str] = []
         verified: List[VerificationResult] = []
         newly_quarantined: List[str] = []
+        high_band_quarantined: List[str] = []
         decisions: Dict[str, Dict[str, Any]] = {}
 
         for doc in documents:
@@ -144,9 +145,13 @@ class TrustPolicy:
             if band is Band.HIGH:
                 excluded.append(doc.doc_id)
                 record["reason"] = "high_band_excluded"
-                self.ledger.record_high_band(
+                if self.ledger.record_high_band(
                     doc.doc_id, doc.source_id, doc.family_id, timestamp=ts,
-                )
+                ):
+                    # The passive penalty itself crossed the quarantine line:
+                    # earlier answers that used this passage must be flagged too.
+                    high_band_quarantined.append(doc.doc_id)
+                    record["quarantined_by"] = "high_band_penalty"
                 if self.queue is not None:
                     self.queue.enqueue(query, query_id, doc, pool,
                                        reason="HIGH band", timestamp=ts)
@@ -196,6 +201,9 @@ class TrustPolicy:
             decisions[doc.doc_id] = record
 
         self._remediate(newly_quarantined, "refuted by corroboration-gated verifier", ts)
+        self._remediate(high_band_quarantined, "quarantined by repeated HIGH-band penalties", ts)
+        newly_quarantined = newly_quarantined + [d for d in high_band_quarantined
+                                                 if d not in newly_quarantined]
         self.last_decisions = decisions
 
         notes: Dict[str, Any] = {

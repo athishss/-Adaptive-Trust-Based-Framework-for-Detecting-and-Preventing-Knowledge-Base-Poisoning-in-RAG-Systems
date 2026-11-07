@@ -331,3 +331,55 @@ def analyse_directory(results_dir: str | Path, reference: str = "RAGLedger",
 
 
 __all__ = ["Unit", "load_units", "summarise", "paired_tests", "holm", "analyse_directory"]
+
+
+def audit_sample(results_dir: str | Path, per_stratum: int = 25, seed: int = 0,
+                 baseline: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Stratified sample of delivered answers for a HUMAN check of the ASR criterion.
+
+    ASR is a string-presence proxy (attacker answer present, gold answer absent). It can
+    count a refutation that quotes the attacker's string, and it misses a wrong answer that is
+    not the attacker's string. This returns rows with an empty ``human_label`` column to be
+    filled in (``asserted`` / ``quoted_or_refuted`` / ``other_wrong`` / ``correct`` /
+    ``abstained``), so the paper can report the measured precision of the automatic criterion.
+    Strata: ASR success, attacker string present but not counted, gold correct, neither, abstained.
+    """
+    import random
+
+    strata: Dict[str, List[Dict[str, Any]]] = {k: [] for k in (
+        "asr_success", "attacker_string_not_counted", "gold_correct", "neither", "abstained")}
+    for case_dir in _case_dirs(results_dir):
+        match = _CASE.match(case_dir.name)
+        stream = case_dir / "stream.jsonl"
+        if not match or not stream.exists() or (baseline and match["baseline"] != baseline):
+            continue
+        for line in stream.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not (row.get("is_target") and row.get("poison_targeted")
+                    and row.get("answer_attack_status") == "MEASURED"):
+                continue
+            if row.get("abstained"):
+                key = "abstained"
+            elif row.get("answer_attack_success"):
+                key = "asr_success"
+            elif row.get("attacker_string_present"):
+                key = "attacker_string_not_counted"
+            elif row.get("answer_gold_correct"):
+                key = "gold_correct"
+            else:
+                key = "neither"
+            strata[key].append({
+                "stratum": key, "attack": match["attack"], "baseline": match["baseline"],
+                "seed": match["seed"], "query_id": row["query_id"], "question": row.get("query"),
+                "malicious_answer": row.get("malicious_answer"), "answer": row.get("answer"),
+                "auto_asr": row.get("answer_attack_success"),
+                "attacker_string_present": row.get("attacker_string_present"),
+                "gold_correct": row.get("answer_gold_correct"), "human_label": ""})
+    rng = random.Random(seed)
+    sample: List[Dict[str, Any]] = []
+    for key, rows in strata.items():
+        rows.sort(key=lambda r: (r["attack"], r["baseline"], r["seed"], r["query_id"]))
+        sample += rng.sample(rows, min(per_stratum, len(rows)))
+    return sample
