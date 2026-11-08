@@ -70,6 +70,8 @@ security:
   queue_size: 1000
   drain_queue: true
   fail_open_without_verifier: false
+  # A cold qwen2.5:7b load takes ~13 s on a T4; the old 10 s probe timed out.
+  probe_timeout_s: 60
 
 trust:
   quarantine_refutations: 2
