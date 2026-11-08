@@ -57,6 +57,13 @@ def test_black_box_uses_only_question_and_white_box_keeps_retrieval_surface():
                              gold_answer="Alice")
     assert "Bob" in white and "Alice" not in white
 
+    # A numeric answer can match the substring guard only inside a larger
+    # number; the word-boundary swap cannot replace it.  Do not abort training.
+    embedded = white_box_poison("The 2023 report has 300 pages.",
+                                "How many pages?", "9", gold_answer="3")
+    assert "The 2023 report has 300 pages." in embedded
+    assert "The correct answer is 9." in embedded
+
     adaptive = adaptive_events("X was written by Alice.", "Who wrote X?", "Bob",
                                gold_answer="Alice", start_step=1, warmup_steps=2)
     assert [e.phase for e in adaptive if not e.is_poison] == ["warmup", "warmup"]

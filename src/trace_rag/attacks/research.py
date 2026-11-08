@@ -107,14 +107,22 @@ def white_box_poison(clean_text: str, question: str, false_answer: str, *,
                      deny: bool = False) -> str:
     """Corrupt a known passage while retaining its retrieval surface.
 
-    With a gold answer the generator performs the minimal entity swap.  Without
-    one it appends a false assertion instead of silently returning an unchanged
-    passage.  ``deny`` emits a negation for the negation attack family.
+    With a gold answer the generator performs the minimal entity swap.  If the
+    answer is only a substring of a larger number (for example ``"3"`` inside
+    ``"2023"``), it appends a false assertion instead of aborting training.
+    Without a gold answer it does the same.  ``deny`` emits a negation for the
+    negation attack family.
     """
     if not clean_text.strip() or not question.strip():
         raise ValueError("clean_text and question must be non-empty")
-    if gold_answer and gold_answer.lower() in clean_text.lower():
-        text = entity_swap(clean_text, gold_answer, false_answer)
+    if gold_answer:
+        try:
+            text = entity_swap(clean_text, gold_answer, false_answer)
+        except ValueError:
+            # A word-boundary swap is impossible when the answer only appears
+            # inside a larger token.  Keep the passage and add the false claim
+            # rather than turning a data quirk into a failed training run.
+            text = f"{clean_text.strip()} The correct answer is {false_answer.strip()}."
         if deny:
             text = f"It is not true that {text.rstrip()}"
         return f"{question.strip()} {text}"
