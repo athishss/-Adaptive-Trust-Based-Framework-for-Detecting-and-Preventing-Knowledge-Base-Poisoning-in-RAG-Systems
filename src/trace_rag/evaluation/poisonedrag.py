@@ -10,7 +10,8 @@ verbatim.
 Rules that keep the denominator honest:
 
 * a question whose gold passage is not in the supplied corpus is *dropped and counted*,
-  never replaced;
+  never replaced; a blank corpus passage is skipped and a question whose gold
+  passage is blank is dropped separately;
 * ``target_limit`` kept questions starting at ``target_offset`` are attacked, the others are background traffic;
 * ``max_clean`` shrinks the corpus for cost but always keeps every selected question's
   gold passage; the remainder is a deterministic sample (``seed``);
@@ -51,17 +52,25 @@ def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels:
 
     texts: Dict[str, Dict[str, str]] = {}
     rows: List[Dict[str, str]] = []
+    blank_doc_ids: set[str] = set()
     for row in iter_beir_corpus(corpus):
-        doc_id = str(row.get("doc_id") or "")
-        entry = {"_id": doc_id, "title": str(row.get("title") or ""),
-                 "text": str(row.get("text") or "")}
+        doc_id = str(row.get("doc_id") or "").strip()
+        text = str(row.get("text") or "").strip()
+        if not text:
+            # BEIR corpora can contain title-only/empty rows.  They cannot be
+            # ingested under the stream contract and must not consume a clean
+            # passage budget; count them instead of failing mid-run.
+            blank_doc_ids.add(doc_id)
+            continue
+        entry = {"_id": doc_id, "title": str(row.get("title") or ""), "text": text}
         rows.append(entry)
         if doc_id in wanted:
             texts[doc_id] = entry
 
     questions: List[Dict[str, Any]] = []
     false_answers: Dict[str, str] = {}
-    dropped = {"incomplete_record": 0, "no_qrels": 0, "gold_passage_not_in_corpus": 0}
+    dropped = {"incomplete_record": 0, "no_qrels": 0,
+               "gold_passage_not_in_corpus": 0, "gold_passage_empty_text": 0}
     for r in records:
         qid = str(r.get("id"))
         adv = [str(t) for t in (r.get("adv_texts") or []) if str(t).strip()]
@@ -75,7 +84,10 @@ def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels:
             continue
         doc_id = next((d for d in gold_ids[qid] if d in texts), None)
         if doc_id is None:
-            dropped["gold_passage_not_in_corpus"] += 1
+            if any(d in blank_doc_ids for d in gold_ids[qid]):
+                dropped["gold_passage_empty_text"] += 1
+            else:
+                dropped["gold_passage_not_in_corpus"] += 1
             continue
         questions.append({"qid": qid, "question": str(r["question"]), "gold_answer": correct,
                           "gold_answers": [correct], "gold_doc_id": doc_id, "adv_texts": adv})
@@ -111,6 +123,7 @@ def load_poisonedrag_fixture(poison_json: str | Path, corpus: str | Path, qrels:
                       false_answers=false_answers)
     report = {"records": len(records), "kept": len(questions), "targets": n_targets, "target_offset": offset,
               "background_questions": len(questions) - n_targets, "dropped": dropped,
+              "blank_passages_skipped": len(blank_doc_ids),
               "clean_passages": len(clean), "adv_texts_per_question":
               sum(len(q["adv_texts"]) for q in questions) / len(questions),
               "source": SOURCE_NOTE}

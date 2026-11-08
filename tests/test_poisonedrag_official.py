@@ -48,9 +48,29 @@ def test_loader_keeps_gold_passages_and_reports_every_drop(tmp_path):
     assert [q["qid"] for q in fixture.questions] == ["q1", "q2"]
     assert fixture.targets == ["q1"] and report["background_questions"] == 1
     assert report["dropped"] == {"incomplete_record": 1, "no_qrels": 1,
-                                 "gold_passage_not_in_corpus": 1}
+                                 "gold_passage_not_in_corpus": 1,
+                                 "gold_passage_empty_text": 0}
     assert fixture.false_answers == {"q1": "Sylvania", "q2": "Sylvania"}
     assert fixture.questions[0]["adv_texts"] == ADV            # verbatim, not regenerated
+
+
+def test_loader_skips_blank_corpus_rows_and_drops_blank_gold(tmp_path):
+    records = [_record("q1"), _record("q2"), _record("q3")]
+    poison, corpus, qrels = _write(
+        tmp_path, records, gold={"q1": "d1", "q2": "d2", "q3": "blank_gold"})
+    with corpus.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + json.dumps({"_id": "blank_clean", "title": "T", "text": " "}))
+        handle.write("\n" + json.dumps({"_id": "blank_gold", "title": "T", "text": ""}))
+
+    fixture, report = load_poisonedrag_fixture(poison, corpus, qrels, target_limit=1)
+
+    assert [q["qid"] for q in fixture.questions] == ["q1", "q2"]
+    ids = {row["_id"] for row in fixture.clean}
+    assert {"d1", "d2"} <= ids
+    assert "blank_clean" not in ids and "blank_gold" not in ids
+    assert report["blank_passages_skipped"] == 2
+    assert report["dropped"]["gold_passage_empty_text"] == 1
+    assert report["clean_passages"] == 6
 
 
 def test_max_clean_always_keeps_selected_gold_passages(tmp_path):
