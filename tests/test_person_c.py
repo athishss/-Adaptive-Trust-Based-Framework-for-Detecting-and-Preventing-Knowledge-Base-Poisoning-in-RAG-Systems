@@ -1,3 +1,5 @@
+import math
+
 from trace_rag.attacks import ATTACK_NAMES
 from trace_rag.attacks.adaptive import hit_and_run
 from trace_rag.contracts import (
@@ -88,6 +90,16 @@ def test_adaptive_event_serialization():
     assert data["attack_type"] == "hit_and_run"
     assert data["source_id"] == "attacker_0"
     assert data["payload"] == "payload"
+
+
+def test_perplexity_threshold_ignores_non_finite_passages():
+    """A punctuation-only passage must not abort the whole matrix case."""
+    from trace_rag.evaluation.experiment import _perplexity_threshold
+
+    threshold = _perplexity_threshold([1.0, 2.0, float("inf"), float("nan")])
+
+    assert math.isfinite(threshold)
+    assert threshold == 2.0
 
 
 def test_baseline_registry():

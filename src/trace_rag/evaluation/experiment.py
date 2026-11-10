@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import json
+import math
 import shutil
 import statistics
 import tracemalloc
@@ -462,6 +463,22 @@ def build_baseline_verifier(pipeline: PersonAPipeline, config: Config) -> Corrob
     )
 
 
+def _perplexity_threshold(scores: Sequence[float]) -> float:
+    """Calibrate the perplexity baseline from finite passage scores.
+
+    ``NGramPerplexityModel.score`` returns ``inf`` for a passage with no
+    alphanumeric tokens (for example a punctuation-only BEIR row).  Such a row
+    is genuinely out-of-vocabulary and should be filtered at query time, but it
+    must not make the clean-corpus mean and standard deviation non-finite.
+    """
+    finite = [float(score) for score in scores if math.isfinite(float(score))]
+    if not finite:
+        raise ValueError(
+            "cannot calibrate the perplexity baseline: no finite clean-passage scores")
+    return max(percentile(finite, 0.95) or 0.0,
+               statistics.fmean(finite) + statistics.pstdev(finite))
+
+
 def build_pipeline(config_path: Optional[str | Path], root: str | Path,
                    baseline: str, fixture: Fixture,
                    overrides: Sequence[str] = (),
@@ -509,8 +526,7 @@ def build_pipeline(config_path: Optional[str | Path], root: str | Path,
         else:
             model = NGramPerplexityModel(order=2).fit(fixture.clean_texts())
             scores = [model.score(text) for text in fixture.clean_texts()]
-            threshold = max(percentile(scores, 0.95) or 0.0,
-                            statistics.fmean(scores) + statistics.pstdev(scores))
+            threshold = _perplexity_threshold(scores)
             pipeline.policy = build_baseline_policy(
                 "perplexity", perplexity_model=model, perplexity_threshold=threshold,
             )

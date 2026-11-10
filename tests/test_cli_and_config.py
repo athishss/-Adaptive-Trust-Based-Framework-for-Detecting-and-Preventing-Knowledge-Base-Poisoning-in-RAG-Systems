@@ -30,6 +30,40 @@ def test_config_overrides_apply():
     assert config.retrieval.top_k == 9 and config.retrieval.trust_lambda == 2.0
 
 
+def test_nested_config_overrides_preserve_other_fields(tmp_path):
+    """A partial section override must not reset the rest of that section.
+
+    The experiment runner changes only security.enabled for baselines.  A
+    shallow merge silently switched the verifier back to lexical, so every
+    matrix case ran without the configured NLI model.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "security:\n"
+        "  enabled: true\n"
+        "  verifier: nli\n"
+        "  nli_revision: deadbeef\n"
+        "  support_threshold: 0.77\n"
+        "trust:\n"
+        "  quarantine_refutations: 4\n"
+        "  reject_refutations: 5\n",
+        encoding="utf-8",
+    )
+
+    config = Config.load(
+        path,
+        security={"enabled": False},
+        trust={"reject_refutations": 6},
+    )
+
+    assert config.security.enabled is False
+    assert config.security.verifier == "nli"
+    assert config.security.nli_revision == "deadbeef"
+    assert config.security.support_threshold == pytest.approx(0.77)
+    assert config.trust.quarantine_refutations == 4
+    assert config.trust.reject_refutations == 6
+
+
 def _write_corpus(path):
     rows = [
         {"_id": "c1", "title": "Eiffel", "text": "Gustave Eiffel designed the Eiffel Tower in 1889."},

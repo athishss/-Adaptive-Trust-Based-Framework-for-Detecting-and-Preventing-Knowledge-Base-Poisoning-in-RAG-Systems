@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -224,6 +225,25 @@ class SecurityConfig(BaseModel):
     )
 
 
+def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
+    """Recursively merge override dictionaries into a copy of ``base``.
+
+    Config sections are nested models.  Replacing a section with a partial
+    override (for example ``security={"enabled": False}``) must not silently
+    reset every other field in that section to its default.  The experiment
+    runner relies on this: it changes only ``security.enabled`` for baselines,
+    but must retain the configured verifier, model revision and trust settings.
+    """
+    merged: Dict[str, Any] = dict(base)
+    for key, value in override.items():
+        current = merged.get(key)
+        if isinstance(current, Mapping) and isinstance(value, Mapping):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 class Config(BaseModel):
     seed: int = 20260921
     ingestion: IngestionConfig = IngestionConfig()
@@ -244,8 +264,7 @@ class Config(BaseModel):
         if path is not None:
             with open(path, "r", encoding="utf-8") as handle:
                 data = yaml.safe_load(handle) or {}
-        for key, value in overrides.items():
-            data[key] = value
+        data = _deep_merge(data, overrides)
         return cls.model_validate(data)
 
     def dump(self, path: str | Path) -> None:

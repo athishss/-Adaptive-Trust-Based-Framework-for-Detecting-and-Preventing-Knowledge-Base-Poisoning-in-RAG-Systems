@@ -46,6 +46,16 @@ def _warm_sources(ledger, *sources):
                                   "NEUTRAL", timestamp=1.0)
 
 
+def _lexical_verifier() -> CorroborationVerifier:
+    """Deterministic verifier for policy mechanics tests.
+
+    Auto-detection makes these tests depend on whether the optional DeBERTa
+    model happens to be cached; the NLI path has its own dedicated regression
+    tests.  These tests assert lexical support/refutation mechanics.
+    """
+    return CorroborationVerifier(use_nli=False)
+
+
 def _assessment(doc_id, band=Band.LOW, suspicion=0.1):
     return SecurityAssessment(
         doc_id=doc_id, chunk_id=doc_id, query_id="q",
@@ -374,7 +384,7 @@ class TestTrustPolicy:
         assert decision.notes["decisions"]["d1"]["reason"] == "medium_no_verifier_fail_open"
 
     def test_medium_band_with_verifier_support(self, policy):
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
         # Give both sources history so the cold-start influence cap does not
         # suppress their corroboration mass.  A brand-new source deliberately
         # contributes only 0.25x; see the cold-start test below.
@@ -392,7 +402,7 @@ class TestTrustPolicy:
         assert len(decision.verified) >= 1
 
     def test_refuted_passage_is_excluded(self, policy):
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
         target = _doc("poison", "Zog the Alien designed the Eiffel Tower.", "attacker", "fp")
         clean = _doc("clean", "Gustave Eiffel designed and built the Eiffel Tower.", "wiki", "fc")
         docs = [target, clean]
@@ -406,7 +416,7 @@ class TestTrustPolicy:
         assert "clean" in decision.context_doc_ids
 
     def test_trust_is_updated_after_verification(self, policy, ledger):
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
         target = _doc("t1", "Gustave Eiffel designed the Eiffel Tower.", "s1", "f1")
         corr = _doc("t2", "Gustave Eiffel was the designer.", "s2", "f2")
         docs = [target, corr]
@@ -438,7 +448,7 @@ class TestTrustPolicy:
             quarantined.extend(doc_ids)
 
         policy = TrustPolicy(ledger=ledger, on_quarantine=on_q)
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
 
         target = _doc("poison", "Zog the Alien designed the Eiffel Tower.", "attacker", "fp")
         clean = _doc("clean", "Gustave Eiffel designed and built the Eiffel Tower.", "wiki", "fc")
@@ -464,7 +474,7 @@ class TestTrustPolicy:
         from trace_rag.contracts import Policy, TrustProvider, Verifier
         assert isinstance(policy, Policy)
         assert isinstance(ledger, TrustProvider)
-        assert isinstance(CorroborationVerifier(), Verifier)
+        assert isinstance(CorroborationVerifier(use_nli=False), Verifier)
 
 
 # ===========================================================================
@@ -476,7 +486,7 @@ class TestTrustIntegration:
     @pytest.fixture
     def components(self, tmp_path):
         ledger = TrustLedger(tmp_path / "trust.db")
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
         policy = TrustPolicy(ledger=ledger)
         return ledger, verifier, policy
 
@@ -515,7 +525,7 @@ class TestTrustIntegration:
     def test_repeated_refutations_quarantine(self, tmp_path):
         """Multiple refutations lead to quarantine."""
         ledger = TrustLedger(tmp_path / "trust.db")
-        verifier = CorroborationVerifier()
+        verifier = _lexical_verifier()
         policy = TrustPolicy(ledger=ledger)
 
         poison = _doc("poison", "Zog the Alien designed the Eiffel Tower.",
